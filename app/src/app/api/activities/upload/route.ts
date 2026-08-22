@@ -12,6 +12,20 @@ export const runtime = 'nodejs' // fit-file-parser needs Node APIs, not edge
  * Returns a per-file result array so the UI can show partial success.
  */
 export async function POST(request: Request) {
+  try {
+    return await handleUpload(request)
+  } catch (err) {
+    // Anything that escapes the per-file loop lands here as readable JSON,
+    // never a bare 500 HTML page.
+    console.error('[activities/upload] fatal error', err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Upload handler crashed' },
+      { status: 500 }
+    )
+  }
+}
+
+async function handleUpload(request: Request) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -24,8 +38,12 @@ export async function POST(request: Request) {
   let formData: FormData
   try {
     formData = await request.formData()
-  } catch {
-    return NextResponse.json({ error: 'Invalid multipart form' }, { status: 400 })
+  } catch (e) {
+    console.error('[activities/upload] formData parse failed', e)
+    return NextResponse.json(
+      { error: 'Could not read the upload (file too large or malformed multipart)' },
+      { status: 400 }
+    )
   }
 
   const files = formData.getAll('files').filter((f): f is File => f instanceof File)

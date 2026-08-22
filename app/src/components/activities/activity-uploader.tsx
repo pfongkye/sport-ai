@@ -56,7 +56,41 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
 
     try {
       const res = await fetch('/api/activities/upload', { method: 'POST', body: form })
-      const json = await res.json()
+
+      // Read the response as text first so we can surface non-JSON errors
+      // (500 HTML pages, 413 payload-too-large, ngrok error pages, etc.)
+      const raw = await res.text()
+      let json: {
+        results?: { filename: string; status: FileStatus; message?: string; activityId?: string }[]
+        created?: number
+        error?: string
+      } = {}
+      try {
+        json = raw ? JSON.parse(raw) : {}
+      } catch {
+        // Non-JSON response — surface status + a snippet
+        const snippet = raw.slice(0, 120).replace(/\s+/g, ' ').trim()
+        setItems((prev) =>
+          prev.map((i) =>
+            i.status === 'uploading'
+              ? { ...i, status: 'error', message: `HTTP ${res.status}${snippet ? `: ${snippet}` : ''}` }
+              : i
+          )
+        )
+        return
+      }
+
+      // Top-level error (401/400/etc.) with no per-file results
+      if (!json.results && json.error) {
+        setItems((prev) =>
+          prev.map((i) =>
+            i.status === 'uploading'
+              ? { ...i, status: 'error', message: `${json.error} (HTTP ${res.status})` }
+              : i
+          )
+        )
+        return
+      }
 
       const byName = new Map<
         string,
@@ -81,10 +115,11 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
         router.refresh()
         onDone?.()
       }
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Network error'
       setItems((prev) =>
         prev.map((i) =>
-          i.status === 'uploading' ? { ...i, status: 'error', message: 'Upload failed' } : i
+          i.status === 'uploading' ? { ...i, status: 'error', message: `Upload failed: ${message}` } : i
         )
       )
     } finally {
