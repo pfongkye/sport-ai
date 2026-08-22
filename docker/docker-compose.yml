@@ -377,8 +377,10 @@ services:
       - ../app/.env.local
     environment:
       NODE_ENV: development
-      # Point app at the Envoy gateway (same network)
-      NEXT_PUBLIC_SUPABASE_URL: http://api-gw:8000
+      # NEXT_PUBLIC_SUPABASE_URL stays as localhost:8000 (from .env.local) so the
+      # browser bundle points at the host-reachable URL.
+      # Server-side code uses this internal URL to reach the gateway on the Docker network:
+      SUPABASE_INTERNAL_URL: http://api-gw:8000
     volumes:
       - ../app:/app
       - /app/node_modules
