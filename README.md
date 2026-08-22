@@ -20,10 +20,13 @@ sportai/
 ├── docker/               # Docker Compose + Supabase self-hosted stack
 │   ├── docker-compose.yml
 │   ├── .env              # Docker stack secrets (you create this)
-│   ├── kong.yml          # Kong API gateway config
-│   └── vector.yml        # Log aggregation config
+│   └── volumes/          # Supabase config (Envoy gateway, DB init, pooler)
+│       ├── api/envoy/    # Envoy API gateway config
+│       ├── db/           # Postgres init scripts (roles, jwt, _supabase, ...)
+│       └── pooler/       # Supavisor pooler config
 ├── supabase/
-│   └── migrations/       # Ordered SQL migration files
+│   └── migrations/       # Ordered SQL migration files (001–008)
+├── AGENTS.md             # Notes for AI agents working in this repo
 └── .kiro/specs/          # Feature specs (requirements, design, tasks)
 ```
 
@@ -49,19 +52,15 @@ This file controls the Supabase self-hosted stack (Postgres, Auth, Storage, Stud
 cp docker/.env.example docker/.env
 ```
 
-The `.env.example` is pre-filled with generated secrets. The only values you need to add are OAuth provider credentials if you want Google/Facebook login locally:
+The `.env.example` is pre-filled with generated secrets (Postgres password, JWT secret,
+ANON/SERVICE keys, and the various encryption keys the current Supabase stack requires:
+`VAULT_ENC_KEY`, `REALTIME_DB_ENC_KEY`, `PG_META_CRYPTO_KEY`, `S3_PROTOCOL_*`).
 
-```bash
-# docker/.env — only these need real values for OAuth to work locally
-ENABLE_GOOGLE_SIGNUP=true
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-```
+For a first local run you don't need to change anything — email login works out of the box.
+To enable social login later, see [Enabling Google Sign-In](#enabling-google-sign-in).
 
-> **OAuth setup**: Create a project at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials).
-> Set the authorised redirect URI to: `http://localhost:8000/auth/v1/callback`
-
-For local testing without OAuth, you can leave them empty — email/password login still works.
+> **Do not change `POSTGRES_PASSWORD` after the stack has been initialized** without a
+> volume reset — see [Troubleshooting](#troubleshooting).
 
 ---
 
@@ -106,24 +105,32 @@ docker compose --env-file .env up -d
 
 First run pulls ~1.5 GB of images — takes 2–3 minutes. Subsequent starts take ~20 seconds.
 
+First run pulls ~1.5 GB of images — takes 2–3 minutes. Subsequent starts take ~20 seconds.
+
 **Verify everything is healthy:**
 
 ```bash
 docker compose --env-file .env ps
 ```
 
-All services should show `running` or `healthy`. If `auth` or `rest` show unhealthy, wait another 30 seconds and check again — they depend on Postgres being fully ready.
+All 11 services should show `healthy`. If `auth`, `rest`, `realtime`, or `storage` show
+`Restarting`, see [Troubleshooting](#troubleshooting) — this is almost always a stale
+database volume with a mismatched password.
 
 **Services started:**
 
 | Service | URL | Purpose |
 |---|---|---|
-| Kong (API gateway) | http://localhost:8000 | Supabase API entry point |
+| Envoy (API gateway) | http://localhost:8000 | Supabase API entry point (replaced Kong) |
 | Supabase Studio | http://localhost:8080 | DB browser and admin UI |
-| Postgres | localhost:5432 | Database (user: `postgres`) |
+| Postgres 17 | localhost:5432 | Database (user: `postgres`) |
+| Supavisor | localhost:6543 | Connection pooler (transaction mode) |
 | Auth (GoTrue) | internal | OAuth + JWT |
+| PostgREST | internal | Auto REST API |
 | Storage | internal | File storage |
 | Realtime | internal | Websocket subscriptions |
+| postgres-meta | internal | Schema introspection for Studio |
+| imgproxy | internal | Image transformation |
 
 ---
 
@@ -157,7 +164,30 @@ docker exec -it sportai-db psql -U postgres -d postgres
 
 ---
 
-## 4. Start the App
+## 4. Set the encryption key (one-time, for AI provider API keys)
+
+The `encrypt_api_key`/`decrypt_api_key` functions need a DB-level encryption key.
+Set it once after the first migration run (must use the `supabase_admin` role):
+
+```bash
+# From workspace root — reads SUPABASE_ENCRYPTION_KEY from app/.env.local
+ENC_KEY=$(grep SUPABASE_ENCRYPTION_KEY app/.env.local | cut -d= -f2)
+source docker/.env
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i sportai-db \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres \
+  -c "ALTER DATABASE postgres SET app.encryption_key TO '$ENC_KEY';"
+```
+
+---
+
+## 5. Start the App
+
+You can run the app **two ways**. Pick one.
+
+### Option A — App on the host (recommended for development)
+
+Fastest hot reload, easiest debugging. The browser and the Next.js server both run on
+your host, so both use `http://localhost:8000` to reach Supabase.
 
 ```bash
 cd app
@@ -165,13 +195,29 @@ npm install        # first time only
 npm run dev
 ```
 
+### Option B — App inside Docker
+
+The `app` service is included in the compose stack. In this mode the browser uses
+`http://localhost:8000` (baked into the bundle via `NEXT_PUBLIC_SUPABASE_URL`) while the
+Next.js server uses the internal `http://api-gw:8000` (via `SUPABASE_INTERNAL_URL`). This
+split is handled automatically in `src/lib/supabase/config.ts`.
+
+```bash
+cd docker
+docker compose --env-file .env up -d --build app
+```
+
+> If you change `NEXT_PUBLIC_*` variables, you MUST rebuild the app image
+> (`--build`) — these are baked into the browser bundle at build time.
+
 Open [http://localhost:3000](http://localhost:3000).
 
-You'll be redirected to `/login`. On first login you'll be sent through `/onboarding` to set your profile and goal, then land on `/dashboard`.
+You'll be redirected to `/login`. On first login you'll be sent through `/onboarding` to
+set your profile and goal, then land on `/dashboard`.
 
 ---
 
-## 5. Mobile Testing with Ngrok
+## 6. Mobile Testing with Ngrok
 
 To test on your phone or share with other athletes:
 
@@ -210,7 +256,7 @@ Also update your OAuth provider redirect URIs to include `https://sportai.ngrok.
 
 ---
 
-## 6. Regenerating Secrets (optional)
+## 7. Regenerating Secrets (optional)
 
 If you need fresh secrets — for example when sharing the project with another developer:
 
@@ -234,6 +280,116 @@ console.log('SERVICE_ROLE_KEY=' + j({role:'service_role',iss:'supabase',iat:1700
 ```
 
 After updating secrets, run `docker compose --env-file .env down -v && docker compose --env-file .env up -d` to reset the stack with the new values.
+
+> **Important**: changing `POSTGRES_PASSWORD` on an existing stack **requires** a volume
+> reset (`down -v`). Service-role passwords are only seeded on first DB init — see
+> [Troubleshooting](#troubleshooting).
+
+---
+
+## Enabling Google Sign-In
+
+Social login is wired in the app but disabled in the auth service by default. To enable Google:
+
+1. Create OAuth credentials at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials)
+2. Add authorised redirect URI: `http://localhost:8000/auth/v1/callback`
+   (and your Ngrok equivalent if testing on mobile)
+3. In `docker/.env`, set:
+   ```bash
+   GOOGLE_ENABLED=true
+   GOOGLE_CLIENT_ID=your-client-id
+   GOOGLE_SECRET=your-client-secret
+   ```
+4. In `docker/docker-compose.yml`, uncomment the four `GOTRUE_EXTERNAL_GOOGLE_*` lines in the `auth` service
+5. Restart auth:
+   ```bash
+   cd docker && docker compose --env-file .env restart auth
+   ```
+
+The same pattern applies to Facebook (`FACEBOOK_*`) and other providers.
+
+---
+
+## Troubleshooting
+
+### `auth` / `rest` / `storage` containers stuck `Restarting`, or Envoy returns "no healthy upstream"
+
+**Symptom**: `docker compose ps` shows services restarting. Logs show:
+```
+password authentication failed for user "supabase_auth_admin" (SQLSTATE 28P01)
+```
+
+**Cause**: Supabase seeds service-role passwords (`supabase_auth_admin`, `authenticator`,
+`supabase_storage_admin`, etc.) from `POSTGRES_PASSWORD` **only on the first database
+initialization**. If the `db-data` volume was created with a different password, every
+dependent service fails to authenticate.
+
+**Fix** (wipes local DB data — safe for dev):
+```bash
+cd docker
+docker compose --env-file .env down -v   # -v removes the stale volume
+docker compose --env-file .env up -d
+# then re-run migrations (step 3) and re-set the encryption key (step 4)
+```
+
+---
+
+### Browser shows "This site can't be reached — check if there is a typo in api-gw"
+
+**Cause**: A `NEXT_PUBLIC_SUPABASE_URL` pointing at the Docker-internal hostname
+`api-gw` leaked into the browser bundle. The browser runs on your host and can't resolve
+Docker network hostnames.
+
+**Fix**: `NEXT_PUBLIC_SUPABASE_URL` must be `http://localhost:8000` (host-reachable).
+Server-side code uses `SUPABASE_INTERNAL_URL=http://api-gw:8000` separately. If you edited
+these, rebuild the app image so the corrected value is baked in:
+```bash
+cd docker && docker compose --env-file .env up -d --build app
+```
+
+---
+
+### Envoy 400 on `/auth/v1/authorize?provider=google`
+
+Auth is running but Google OAuth isn't enabled. See [Enabling Google Sign-In](#enabling-google-sign-in).
+
+---
+
+### Supavisor (`sportai-pooler`) restarting with "EVAL expects an expression as argument"
+
+**Cause**: The `pooler.exs` config file isn't mounted into the container.
+
+**Fix**: Ensure `docker-compose.yml` mounts it in the `supavisor` service:
+```yaml
+volumes:
+  - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro
+```
+Then `docker compose --env-file .env up -d supavisor`. Note: Supavisor is not required
+for the app or OAuth — it's the transaction pooler on port 6543.
+
+---
+
+### `permission denied to set parameter "app.encryption_key"`
+
+**Cause**: The `postgres` user in the Supabase image can't set database-level parameters.
+
+**Fix**: Use the `supabase_admin` role over TCP (see step 4).
+
+---
+
+### `NEXT_PUBLIC_*` changes not taking effect
+
+These are compiled into the browser bundle at build time. A running dev server picks up
+changes on restart; a Docker `app` container needs `--build`. Never expect a `NEXT_PUBLIC_*`
+change to apply without a restart/rebuild.
+
+---
+
+### OAuth works locally but breaks after Ngrok restart
+
+Free Ngrok URLs rotate on restart. Either use a stable Ngrok domain (paid/reserved) or
+update `SITE_URL` + `ADDITIONAL_REDIRECT_URLS` in `docker/.env`, the OAuth provider's
+redirect URI, and `NEXT_PUBLIC_APP_URL` every time, then `restart auth`.
 
 ---
 
