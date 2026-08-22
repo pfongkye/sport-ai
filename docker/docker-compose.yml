@@ -1,88 +1,96 @@
+# Official Supabase self-hosted stack — image versions as of August 2025
+# Source: https://github.com/supabase/supabase/blob/master/docker/docker-compose.yml
+#
+# Usage:
+#   Start:  docker compose --env-file .env up -d
+#   Stop:   docker compose --env-file .env down
+#   Reset:  docker compose --env-file .env down -v
+
 services:
-  # ============================================================
-  # SportAI Next.js Application
-  # ============================================================
-  app:
-    build:
-      context: ../app
-      dockerfile: ../docker/Dockerfile
-    container_name: sportai-app
-    ports:
-      - "3000:3000"
-    env_file:
-      - ../app/.env.local
-    environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_SUPABASE_URL=http://kong:8000
-    volumes:
-      - ../app:/app
-      - /app/node_modules
-      - /app/.next
-    depends_on:
-      - db
-      - kong
-    networks:
-      - sportai-network
+
+  # ── Supabase Studio (dashboard) ───────────────────────────────────────────
+  studio:
+    container_name: sportai-studio
+    image: supabase/studio:2026.08.03-sha-022b374
     restart: unless-stopped
-
-  # ============================================================
-  # Supabase Stack
-  # Based on: https://github.com/supabase/supabase/tree/master/docker
-  # ============================================================
-
-  db:
-    image: supabase/postgres:15.8.1.073
-    container_name: sportai-db
     healthcheck:
-      test: pg_isready -U postgres -h localhost
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    command:
-      - postgres
-      - -c
-      - config_file=/etc/postgresql/postgresql.conf
-      - -c
-      - log_min_messages=fatal
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_HOST: /var/run/postgresql
-      PGPORT: "${POSTGRES_PORT:-5432}"
-      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
-      PGPASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
-      PGDATABASE: "${POSTGRES_DB:-postgres}"
-      POSTGRES_DB: "${POSTGRES_DB:-postgres}"
-      JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      JWT_EXP: "${JWT_EXPIRY:-3600}"
-    volumes:
-      - db-data:/var/lib/postgresql/data
-      - ../supabase/migrations:/docker-entrypoint-initdb.d/migrations
-    networks:
-      - sportai-network
-
-  vector:
-    image: timberio/vector:0.28.1-alpine
-    container_name: sportai-vector
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://vector:9001/health"]
-      timeout: 5s
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})\""
+      timeout: 10s
       interval: 5s
       retries: 3
-    volumes:
-      - ./vector.yml:/etc/vector/vector.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      - db
+      start_period: 20s
+    ports:
+      - "${STUDIO_PORT:-8080}:3000"
+    environment:
+      HOSTNAME: "0.0.0.0"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER_READ_WRITE: postgres
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS}
+      PGRST_DB_MAX_ROWS: ${PGRST_DB_MAX_ROWS:-1000}
+      PGRST_DB_EXTRA_SEARCH_PATH: ${PGRST_DB_EXTRA_SEARCH_PATH:-public}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      ENABLED_FEATURES_LOGS_ALL: "false"
     networks:
       - sportai-network
-    restart: unless-stopped
 
+  # ── Envoy API gateway (replaces Kong) ────────────────────────────────────
+  api-gw:
+    container_name: sportai-envoy
+    image: envoyproxy/envoy:v1.39.0
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [envoy, kong]
+      sportai-network:
+        aliases: [envoy, kong]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      studio:
+        condition: service_healthy
+    ports:
+      - "${API_GW_HTTP_PORT:-${KONG_HTTP_PORT:-8000}}:8000/tcp"
+    volumes:
+      - ./volumes/api/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./volumes/api/envoy/cds.yaml:/etc/envoy/cds.yaml:ro
+      - ./volumes/api/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
+      - ./volumes/api/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      ANON_KEY_ASYMMETRIC: ${ANON_KEY_ASYMMETRIC:-}
+      SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY_ASYMMETRIC:-}
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+
+  # ── GoTrue (auth) ─────────────────────────────────────────────────────────
   auth:
-    image: supabase/gotrue:v2.170.0
     container_name: sportai-auth
+    image: supabase/gotrue:v2.189.0
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
       timeout: 5s
@@ -91,125 +99,161 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
     environment:
-      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
-      API_EXTERNAL_URL: "${API_EXTERNAL_URL:-http://localhost:8000}"
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: "postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-your-super-secret-password}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}"
-      GOTRUE_SITE_URL: "${SITE_URL:-http://localhost:3000}"
-      GOTRUE_URI_ALLOW_LIST: "${ADDITIONAL_REDIRECT_URLS}"
-      GOTRUE_DISABLE_SIGNUP: "${DISABLE_SIGNUP:-false}"
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP}
       GOTRUE_JWT_ADMIN_ROLES: service_role
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
-      GOTRUE_JWT_EXP: "${JWT_EXPIRY:-3600}"
-      GOTRUE_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: "${ENABLE_EMAIL_SIGNUP:-true}"
-      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "${ENABLE_ANONYMOUS_USERS:-false}"
-      GOTRUE_MAILER_AUTOCONFIRM: "${ENABLE_EMAIL_AUTOCONFIRM:-false}"
-      GOTRUE_SMTP_ADMIN_EMAIL: "${SMTP_ADMIN_EMAIL:-admin@example.com}"
-      GOTRUE_SMTP_HOST: "${SMTP_HOST:-supabase-mail}"
-      GOTRUE_SMTP_PORT: "${SMTP_PORT:-2500}"
-      GOTRUE_SMTP_USER: "${SMTP_USER:-fake@example.com}"
-      GOTRUE_SMTP_PASS: "${SMTP_PASS:-fake-mail-password}"
-      GOTRUE_SMTP_SENDER_NAME: "${SMTP_SENDER_NAME:-SportAI}"
-      GOTRUE_MAILER_URLPATHS_INVITE: "${MAILER_URLPATHS_INVITE:-/auth/v1/verify}"
-      GOTRUE_MAILER_URLPATHS_CONFIRMATION: "${MAILER_URLPATHS_CONFIRMATION:-/auth/v1/verify}"
-      GOTRUE_MAILER_URLPATHS_RECOVERY: "${MAILER_URLPATHS_RECOVERY:-/auth/v1/verify}"
-      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: "${MAILER_URLPATHS_EMAIL_CHANGE:-/auth/v1/verify}"
-      GOTRUE_EXTERNAL_PHONE_ENABLED: "${ENABLE_PHONE_SIGNUP:-false}"
-      # OAuth providers — configure in Supabase dashboard or via env
-      GOTRUE_EXTERNAL_GOOGLE_ENABLED: "${ENABLE_GOOGLE_SIGNUP:-false}"
-      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
-      GOTRUE_EXTERNAL_GOOGLE_SECRET: "${GOOGLE_CLIENT_SECRET}"
-      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: "${API_EXTERNAL_URL:-http://localhost:8000}/auth/v1/callback"
-      GOTRUE_EXTERNAL_FACEBOOK_ENABLED: "${ENABLE_FACEBOOK_SIGNUP:-false}"
-      GOTRUE_EXTERNAL_FACEBOOK_CLIENT_ID: "${FACEBOOK_CLIENT_ID}"
-      GOTRUE_EXTERNAL_FACEBOOK_SECRET: "${FACEBOOK_CLIENT_SECRET}"
-      GOTRUE_EXTERNAL_FACEBOOK_REDIRECT_URI: "${API_EXTERNAL_URL:-http://localhost:8000}/auth/v1/callback"
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP}
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME}
+      GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE}
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION}
+      GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY}
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${MAILER_URLPATHS_EMAIL_CHANGE}
+      GOTRUE_EXTERNAL_PHONE_ENABLED: ${ENABLE_PHONE_SIGNUP}
+      GOTRUE_SMS_AUTOCONFIRM: ${ENABLE_PHONE_AUTOCONFIRM}
+      # OAuth providers — uncomment to enable
+      # GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOOGLE_ENABLED}
+      # GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      # GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_SECRET}
+      # GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${API_EXTERNAL_URL}/callback
+      # GOTRUE_EXTERNAL_GITHUB_ENABLED: ${GITHUB_ENABLED}
+      # GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      # GOTRUE_EXTERNAL_GITHUB_SECRET: ${GITHUB_SECRET}
+      # GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: ${API_EXTERNAL_URL}/callback
     networks:
       - sportai-network
 
+  # ── PostgREST ─────────────────────────────────────────────────────────────
   rest:
-    image: postgrest/postgrest:v12.2.8
     container_name: sportai-rest
+    image: postgrest/postgrest:v14.12
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
     environment:
-      PGRST_DB_URI: "postgres://authenticator:${POSTGRES_PASSWORD:-your-super-secret-password}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}"
-      PGRST_DB_SCHEMAS: "${PGRST_DB_SCHEMAS:-public,storage,graphql_public}"
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS}
+      PGRST_DB_MAX_ROWS: ${PGRST_DB_MAX_ROWS:-1000}
+      PGRST_DB_EXTRA_SEARCH_PATH: ${PGRST_DB_EXTRA_SEARCH_PATH:-public}
       PGRST_DB_ANON_ROLE: anon
-      PGRST_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_JWKS:-${JWT_SECRET}}
       PGRST_DB_USE_LEGACY_GUCS: "false"
-      PGRST_APP_SETTINGS_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      PGRST_APP_SETTINGS_JWT_EXP: "${JWT_EXPIRY:-3600}"
-    command: "postgrest"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY}
+    command: ["postgrest"]
     networks:
       - sportai-network
 
+  # ── Realtime ──────────────────────────────────────────────────────────────
   realtime:
-    image: supabase/realtime:v2.34.47
-    container_name: sportai-realtime
+    container_name: realtime-dev.supabase-realtime
+    image: supabase/realtime:v2.102.3
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
     environment:
       PORT: 4000
-      DB_HOST: db
-      DB_PORT: "${POSTGRES_PORT:-5432}"
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
       DB_USER: supabase_admin
-      DB_PASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
-      DB_NAME: "${POSTGRES_DB:-postgres}"
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
       DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
-      DB_ENC_KEY: supabaserealtime
-      API_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      FLY_ALLOC_ID: fly123
-      FLY_APP_NAME: realtime
-      SECRET_KEY_BASE: "${SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}"
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
       ERL_AFLAGS: -proto_dist inet_tcp
-      ENABLE_TAILSCALE: "false"
       DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
     networks:
       - sportai-network
-    command: >
-      sh -c "/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server"
 
+  # ── Storage ───────────────────────────────────────────────────────────────
   storage:
-    image: supabase/storage-api:v1.22.17
     container_name: sportai-storage
+    image: supabase/storage-api:v1.60.4
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       rest:
         condition: service_started
-    restart: unless-stopped
+      imgproxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+      start_period: 10s
     environment:
-      ANON_KEY: "${ANON_KEY:-your-anon-key}"
-      SERVICE_KEY: "${SERVICE_ROLE_KEY:-your-service-role-key}"
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
       POSTGREST_URL: http://rest:3000
-      PGRST_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      DATABASE_URL: "postgres://supabase_storage_admin:${POSTGRES_PASSWORD:-your-super-secret-password}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}"
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      STORAGE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
       FILE_SIZE_LIMIT: 52428800
       STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: ${GLOBAL_S3_BUCKET}
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      TENANT_ID: stub
-      REGION: stub
-      GLOBAL_S3_BUCKET: stub
+      TENANT_ID: ${STORAGE_TENANT_ID}
+      REGION: ${REGION}
       ENABLE_IMAGE_TRANSFORMATION: "true"
       IMGPROXY_URL: http://imgproxy:5001
+      S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID}
+      S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET}
     volumes:
       - storage-data:/var/lib/storage
     networks:
       - sportai-network
 
+  # ── imgproxy ──────────────────────────────────────────────────────────────
   imgproxy:
-    image: darthsim/imgproxy:v3.8.0
     container_name: sportai-imgproxy
+    image: darthsim/imgproxy:v3.30.1
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "imgproxy", "health"]
       timeout: 5s
@@ -219,100 +263,132 @@ services:
       IMGPROXY_BIND: ":5001"
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
       IMGPROXY_USE_ETAG: "true"
-      IMGPROXY_ENABLE_WEBP_DETECTION: "${IMGPROXY_ENABLE_WEBP_DETECTION:-true}"
+      IMGPROXY_AUTO_WEBP: ${IMGPROXY_AUTO_WEBP:-true}
+      IMGPROXY_MAX_SRC_RESOLUTION: 16.8
     volumes:
       - storage-data:/var/lib/storage:ro
     networks:
       - sportai-network
-    restart: unless-stopped
 
+  # ── postgres-meta ─────────────────────────────────────────────────────────
   meta:
-    image: supabase/postgres-meta:v0.87.3
     container_name: sportai-meta
+    image: supabase/postgres-meta:v0.96.6
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
     environment:
       PG_META_PORT: 8080
-      PG_META_DB_HOST: db
-      PG_META_DB_PORT: "${POSTGRES_PORT:-5432}"
-      PG_META_DB_NAME: "${POSTGRES_DB:-postgres}"
-      PG_META_DB_USER: supabase_admin
-      PG_META_DB_PASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
+      PG_META_DB_HOST: ${POSTGRES_HOST}
+      PG_META_DB_PORT: ${POSTGRES_PORT}
+      PG_META_DB_NAME: ${POSTGRES_DB}
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
     networks:
       - sportai-network
 
-  kong:
-    image: kong:2.8.1
-    container_name: sportai-kong
+  # ── Postgres 17 ───────────────────────────────────────────────────────────
+  db:
+    container_name: sportai-db
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: ${POSTGRES_PORT}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      POSTGRES_DB: ${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXPIRY}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+    networks:
+      - sportai-network
+
+  # ── Supavisor (connection pooler) ────────────────────────────────────────
+  supavisor:
+    container_name: sportai-pooler
+    image: supabase/supavisor:2.9.5
     restart: unless-stopped
     ports:
-      - "${KONG_HTTP_PORT:-8000}:8000/tcp"
-      - "${KONG_HTTPS_PORT:-8443}:8443/tcp"
+      - "${POOLER_PROXY_PORT_TRANSACTION:-6543}:6543"
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
     environment:
-      KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
-      KONG_DNS_ORDER: LAST,A,CNAME
-      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
-      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
-      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      PORT: 4000
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ecto://supabase_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/_supabase
+      CLUSTER_POSTGRES: "true"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      VAULT_ENC_KEY: ${VAULT_ENC_KEY}
+      API_JWT_SECRET: ${JWT_SECRET}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      REGION: local
+      ERL_AFLAGS: -proto_dist inet_tcp
+      POOLER_TENANT_ID: ${POOLER_TENANT_ID}
+      POOLER_DEFAULT_POOL_SIZE: ${POOLER_DEFAULT_POOL_SIZE}
+      POOLER_MAX_CLIENT_CONN: ${POOLER_MAX_CLIENT_CONN}
+      POOLER_POOL_MODE: transaction
+      DB_POOL_SIZE: ${POOLER_DB_POOL_SIZE}
+    command:
+      - /bin/sh
+      - -c
+      - "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
+    networks:
+      - sportai-network
+
+  # ── SportAI Next.js App ───────────────────────────────────────────────────
+  app:
+    build:
+      context: ../app
+      dockerfile: ../docker/Dockerfile
+      target: development
+    container_name: sportai-app
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../app/.env.local
+    environment:
+      NODE_ENV: development
+      # Point app at the Envoy gateway (same network)
+      NEXT_PUBLIC_SUPABASE_URL: http://api-gw:8000
     volumes:
-      - ./kong.yml:/home/kong/kong.yml:ro
+      - ../app:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      api-gw:
+        condition: service_healthy
     networks:
       - sportai-network
-
-  studio:
-    image: supabase/studio:2025.05.19-sha-22e1ac8
-    container_name: sportai-studio
     restart: unless-stopped
-    ports:
-      - "${STUDIO_PORT:-8080}:3000"
-    environment:
-      STUDIO_PG_META_URL: http://meta:8080
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
-      DEFAULT_ORGANIZATION_NAME: "${STUDIO_DEFAULT_ORGANIZATION:-SportAI}"
-      DEFAULT_PROJECT_NAME: "${STUDIO_DEFAULT_PROJECT:-sportai}"
-      SUPABASE_URL: http://kong:8000
-      SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL:-http://localhost:8000}"
-      SUPABASE_ANON_KEY: "${ANON_KEY:-your-anon-key}"
-      SUPABASE_SERVICE_KEY: "${SERVICE_ROLE_KEY:-your-service-role-key}"
-      AUTH_JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-token}"
-      LOGFLARE_API_KEY: "${LOGFLARE_API_KEY:-your-super-secret-and-long-logflare-key}"
-      LOGFLARE_URL: http://analytics:4000
-      NEXT_PUBLIC_ENABLE_LOGS: "true"
-      NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
-    networks:
-      - sportai-network
-
-  analytics:
-    image: supabase/logflare:1.12.0
-    container_name: sportai-analytics
-    restart: unless-stopped
-    ports:
-      - "4000:4000"
-    healthcheck:
-      test: ["CMD", "curl", "http://localhost:4000/health"]
-      timeout: 5s
-      interval: 5s
-      retries: 10
-    environment:
-      LOGFLARE_NODE_HOST: 127.0.0.1
-      DB_USERNAME: supabase_admin
-      DB_DATABASE: "${POSTGRES_DB:-postgres}"
-      DB_HOSTNAME: db
-      DB_PORT: "${POSTGRES_PORT:-5432}"
-      DB_PASSWORD: "${POSTGRES_PASSWORD:-your-super-secret-password}"
-      DB_SCHEMA: _analytics
-      LOGFLARE_API_KEY: "${LOGFLARE_API_KEY:-your-super-secret-and-long-logflare-key}"
-      LOGFLARE_SINGLE_TENANT: "true"
-      LOGFLARE_SUPABASE_MODE: "true"
-      LOGFLARE_MIN_CLUSTER_SIZE: 1
-    networks:
-      - sportai-network
 
 networks:
   sportai-network:

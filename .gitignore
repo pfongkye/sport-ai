@@ -17,8 +17,10 @@ app/.vercel/
 app/*.tsbuildinfo
 app/next-env.d.ts
 
-# ── Docker volumes / generated data ──────────────────────────
-docker/volumes/
+# ── Docker volumes ────────────────────────────────────────────
+# Exclude persisted data but keep config files
+docker/volumes/db/data/
+docker/volumes/storage/
 
 # ── OS ────────────────────────────────────────────────────────
 .DS_Store
