@@ -1,15 +1,17 @@
 import type { Metadata } from 'next'
+import { ChatInterface } from '@/components/chat/chat-interface'
 
 export const metadata: Metadata = { title: 'AI Coach' }
 
 export default function CoachPage() {
   return (
-    <div className="flex flex-col h-full p-4 md:p-6 items-center justify-center text-center">
-      <p className="text-4xl mb-3" aria-hidden>🤖</p>
-      <h1 className="text-xl font-bold text-[var(--foreground)]">AI Coach</h1>
-      <p className="text-sm text-[var(--muted-foreground)] mt-1 max-w-xs">
-        Voice-first coaching chat coming in Phase 2. The agent, tools, and MCP servers are already wired up.
-      </p>
+    <div className="flex flex-col h-[calc(100vh-0px)] md:h-screen">
+      <header className="border-b border-[var(--border)] px-4 md:px-6 py-3 shrink-0">
+        <h1 className="text-lg font-bold text-[var(--foreground)]">AI Coach</h1>
+      </header>
+      <div className="flex-1 min-h-0">
+        <ChatInterface />
+      </div>
     </div>
   )
 }

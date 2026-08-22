@@ -7,6 +7,7 @@ import { http } from '@/lib/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MetricsChart } from './metrics-chart'
+import { ActivityInsight } from './activity-insight'
 import {
   SPORT_EMOJI,
   SPORT_LABELS,
@@ -106,6 +107,9 @@ export function ActivityDetail({
           </div>
         </CardContent>
       </Card>
+
+      {/* AI coach insight */}
+      <ActivityInsight activityId={activity.id} />
 
       {/* Map */}
       {path.length > 1 && (
