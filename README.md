@@ -511,6 +511,18 @@ needed — ngrok sets the forwarded headers automatically.
 
 ---
 
+### File upload fails on mobile with "Failed to fetch" (works on desktop)
+
+**Cause**: On Android Chrome, a file picked from Downloads/Drive/Recent can have its OS handle
+revoked before `fetch` reads the body — so `fetch` throws "Failed to fetch" before sending
+anything. Not a tunnel/network issue; often only affects some files.
+
+**Fix**: `ActivityUploader` reads each picked file into an in-memory Blob immediately at
+selection (shows "Reading…"), then uploads that — independent of the OS handle. Already
+handled; no action needed. If a file can't be read it shows "Could not read file — re-pick it".
+
+---
+
 ### A feature works on localhost but fails through the ngrok URL (e.g. upload on mobile)
 
 **Cause**: ngrok's free tier serves a browser interstitial warning page for requests without

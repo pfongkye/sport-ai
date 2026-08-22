@@ -9,13 +9,30 @@ import { Button } from '@/components/ui/button'
 type FileStatus = 'pending' | 'uploading' | 'created' | 'duplicate' | 'error'
 
 interface FileItem {
-  file: File
+  name: string
+  /** In-memory snapshot taken at selection time (see snapshotFile). */
+  blob?: Blob
+  size: number
   status: FileStatus
   message?: string
   activityId?: string
 }
 
 const ACCEPT = '.fit,.gpx,.tcx'
+
+/**
+ * Read the picked File fully into memory immediately.
+ *
+ * On mobile (esp. Android Chrome), a File selected from Downloads/Drive/Recent
+ * can have its underlying OS handle revoked before the later `fetch` reads its
+ * body — which surfaces as "Failed to fetch" with no request sent. Snapshotting
+ * to an in-memory Blob at selection time makes the upload independent of the OS
+ * file handle. Failure to read is caught and surfaced per-file.
+ */
+async function snapshotFile(file: File): Promise<Blob> {
+  const buf = await file.arrayBuffer()
+  return new Blob([buf], { type: file.type || 'application/octet-stream' })
+}
 
 export function ActivityUploader({ onDone }: { onDone?: () => void }) {
   const router = useRouter()
@@ -25,13 +42,37 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
   const [busy, setBusy] = useState(false)
 
   const addFiles = useCallback((fileList: FileList | File[]) => {
-    const incoming = Array.from(fileList).filter((f) =>
-      /\.(fit|gpx|tcx)$/i.test(f.name)
-    )
-    setItems((prev) => [
-      ...prev,
-      ...incoming.map((file) => ({ file, status: 'pending' as FileStatus })),
-    ])
+    const incoming = Array.from(fileList).filter((f) => /\.(fit|gpx|tcx)$/i.test(f.name))
+
+    // Add rows immediately as "pending" (no blob yet), then snapshot each into
+    // memory. Reading now — while the OS file handle is still valid — avoids the
+    // mobile "Failed to fetch" that happens when a revoked handle is read later.
+    incoming.forEach((file) => {
+      const key = `${file.name}-${file.size}-${Date.now()}-${Math.random()}`
+      setItems((prev) => [
+        ...prev,
+        { name: file.name, size: file.size, status: 'pending', message: 'Reading…', _key: key } as FileItem & { _key: string },
+      ])
+      snapshotFile(file)
+        .then((blob) => {
+          setItems((prev) =>
+            prev.map((i) =>
+              (i as FileItem & { _key?: string })._key === key
+                ? { ...i, blob, message: undefined }
+                : i
+            )
+          )
+        })
+        .catch(() => {
+          setItems((prev) =>
+            prev.map((i) =>
+              (i as FileItem & { _key?: string })._key === key
+                ? { ...i, status: 'error', message: 'Could not read file — re-pick it' }
+                : i
+            )
+          )
+        })
+    })
   }, [])
 
   const onDrop = useCallback(
@@ -44,16 +85,17 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
   )
 
   async function upload() {
-    const pending = items.filter((i) => i.status === 'pending')
-    if (!pending.length) return
+    // Only files that have finished snapshotting are ready to send.
+    const ready = items.filter((i) => i.status === 'pending' && i.blob)
+    if (!ready.length) return
 
     setBusy(true)
     setItems((prev) =>
-      prev.map((i) => (i.status === 'pending' ? { ...i, status: 'uploading' } : i))
+      prev.map((i) => (i.status === 'pending' && i.blob ? { ...i, status: 'uploading' } : i))
     )
 
     const form = new FormData()
-    pending.forEach((i) => form.append('files', i.file))
+    ready.forEach((i) => form.append('files', i.blob as Blob, i.name))
 
     try {
       const res = await http('/api/activities/upload', { method: 'POST', body: form })
@@ -107,7 +149,7 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
 
       setItems((prev) =>
         prev.map((i) => {
-          const r = byName.get(i.file.name)
+          const r = byName.get(i.name)
           return r ? { ...i, ...r } : i
         })
       )
@@ -128,7 +170,8 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
     }
   }
 
-  const pendingCount = items.filter((i) => i.status === 'pending').length
+  const pendingCount = items.filter((i) => i.status === 'pending' && i.blob).length
+  const readingCount = items.filter((i) => i.status === 'pending' && !i.blob).length
 
   return (
     <div className="space-y-4">
@@ -182,11 +225,11 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
         <ul className="space-y-1.5">
           {items.map((item, idx) => (
             <li
-              key={`${item.file.name}-${idx}`}
+              key={`${item.name}-${idx}`}
               className="flex items-center gap-3 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
             >
               <StatusIcon status={item.status} />
-              <span className="flex-1 truncate">{item.file.name}</span>
+              <span className="flex-1 truncate">{item.name}</span>
               <span className="text-xs text-[var(--muted-foreground)]">
                 {item.message ?? statusLabel(item.status)}
               </span>
@@ -195,9 +238,13 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
         </ul>
       )}
 
-      {pendingCount > 0 && (
-        <Button className="w-full" onClick={upload} disabled={busy}>
-          {busy ? 'Uploading…' : `Upload ${pendingCount} file${pendingCount > 1 ? 's' : ''}`}
+      {(pendingCount > 0 || readingCount > 0) && (
+        <Button className="w-full" onClick={upload} disabled={busy || pendingCount === 0}>
+          {busy
+            ? 'Uploading…'
+            : readingCount > 0
+              ? 'Reading files…'
+              : `Upload ${pendingCount} file${pendingCount > 1 ? 's' : ''}`}
         </Button>
       )}
     </div>

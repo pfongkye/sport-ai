@@ -96,6 +96,19 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 19. Mobile "Failed to fetch" on upload — snapshot the File to memory at pick time
+Symptom: file upload works on desktop but fails on mobile with "Failed to fetch"; the request
+never reaches the server/tunnel; often only SOME files fail (not all).
+Cause: on Android Chrome, a `File` picked from Downloads/Drive/Recent can have its underlying
+OS handle revoked between selection and the later `fetch`. When `fetch` streams the body it
+throws "Failed to fetch" BEFORE sending anything — which looks like a network/tunnel bug but
+isn't. This is NOT ngrok (was misdiagnosed as such initially).
+Fix: `ActivityUploader` snapshots each picked file into an in-memory `Blob`
+(`file.arrayBuffer()`) immediately in `addFiles`, and uploads that Blob — independent of the
+OS file handle. Shows "Reading…" while snapshotting; "Could not read file — re-pick it" if the
+handle is already dead. Apply the same pattern to any future mobile file upload (nutrition
+photos, voice notes).
+
 ### 18. ngrok free tier breaks fetch/POST via the browser interstitial (dev-only, env-gated)
 Symptom: a feature works on localhost but fails only through the ngrok URL (e.g. file upload
 "failed" on mobile, succeeds on desktop). The POST gets ngrok's HTML warning page, not JSON.
