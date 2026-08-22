@@ -73,6 +73,18 @@ The Google OAuth client must register `http://localhost:8000/auth/v1/callback` (
 gateway callback, NOT the app's `:3000/api/auth/callback`) or Google returns
 `redirect_uri_mismatch`.
 
+### 10. PKCE verifier not found — browser and server clients must share a storageKey
+Symptom: OAuth callback fails with `pkce_code_verifier_not_found` (HTTP 400); user bounces
+back to `/login?error=auth_callback_failed`.
+Cause: `@supabase/ssr` derives the auth cookie name from the Supabase URL's project ref.
+Our browser client uses the PUBLIC url (`localhost:8000`) and the server client uses the
+INTERNAL url (`api-gw:8000`) — so they compute DIFFERENT cookie keys. The verifier written
+by the browser is never found by the server callback.
+Fix: pin an explicit `storageKey` (`SUPABASE_STORAGE_KEY` in `lib/supabase/config.ts`) and
+`flowType: 'pkce'` on ALL three clients (browser, server, middleware) so cookie names match
+regardless of URL. After changing the storageKey, clear existing `sb-*` cookies in the
+browser or old cookies linger under the previous key.
+
 ### 9. Auth middleware must whitelist `/api/auth/*` and static assets
 The OAuth callback route (`/api/auth/callback`) runs BEFORE the user has a session — it's
 the thing that creates the session by exchanging the code. If middleware treats it as

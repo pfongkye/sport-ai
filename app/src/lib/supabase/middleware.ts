@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/types/database'
-import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY } from './config'
+import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY, SUPABASE_STORAGE_KEY } from './config'
 
 /**
  * Refreshes the Supabase auth session in middleware.
@@ -14,6 +14,10 @@ export async function updateSession(request: NextRequest) {
     SUPABASE_SERVER_URL,
     SUPABASE_ANON_KEY,
     {
+      auth: {
+        storageKey: SUPABASE_STORAGE_KEY,
+        flowType: 'pkce',
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll()

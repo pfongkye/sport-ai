@@ -386,6 +386,19 @@ Note it's the `:8000/auth/v1/callback` gateway URL, not `:3000/api/auth/callback
 
 ---
 
+### `auth_callback_failed` / `pkce_code_verifier_not_found` after Google login
+
+**Cause**: The browser client (uses `localhost:8000`) and the server client (uses
+`api-gw:8000` inside Docker) derived **different** auth cookie names, so the PKCE code
+verifier written by the browser couldn't be found by the server callback.
+
+**Fix**: all Supabase clients pin the same `storageKey` (`SUPABASE_STORAGE_KEY` in
+`app/src/lib/supabase/config.ts`) and `flowType: 'pkce'`. If you change the storage key,
+**clear existing `sb-*` cookies** in your browser (DevTools → Application → Cookies →
+delete all for `localhost`) and retry, or stale cookies under the old key interfere.
+
+---
+
 ### OAuth completes at Google but you land back on `/login?redirectTo=%2Fapi%2Fauth%2Fcallback`
 
 **Cause**: The auth middleware treated the OAuth callback route as protected. The callback

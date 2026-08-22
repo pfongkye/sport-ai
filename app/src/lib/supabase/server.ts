@@ -1,17 +1,24 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types/database'
-import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY } from './config'
+import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY, SUPABASE_STORAGE_KEY } from './config'
 
 /**
  * Supabase client for use in Server Components, Server Actions, and Route Handlers.
  * Uses the internal Docker URL when running in a container so it can reach the
  * gateway on the Docker network. Reads/writes auth cookies via next/headers.
+ *
+ * storageKey is pinned so cookie names match the browser client (which reaches
+ * Supabase via a different URL) — required for the PKCE verifier to be found.
  */
 export async function createClient() {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(SUPABASE_SERVER_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      storageKey: SUPABASE_STORAGE_KEY,
+      flowType: 'pkce',
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll()

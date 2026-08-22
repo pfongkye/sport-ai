@@ -25,3 +25,17 @@ export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
  */
 export const SUPABASE_SERVER_URL =
   process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!
+
+/**
+ * Explicit, stable auth cookie storage key.
+ *
+ * @supabase/ssr derives the cookie name from the Supabase URL's project ref by
+ * default. Because the browser uses the PUBLIC url (localhost:8000) and the
+ * server uses the INTERNAL url (api-gw:8000), the derived keys would DIFFER —
+ * so the PKCE code verifier written by the browser can't be found by the server
+ * callback ("pkce_code_verifier_not_found").
+ *
+ * Pinning the same storageKey on both browser and server clients makes the
+ * cookie names match regardless of which URL each side uses.
+ */
+export const SUPABASE_STORAGE_KEY = 'sb-sportai-auth'
