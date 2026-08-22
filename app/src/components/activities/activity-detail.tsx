@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { useState } from 'react'
-import { apiFetch } from '@/lib/api-fetch'
+import { http } from '@/lib/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MetricsChart } from './metrics-chart'
@@ -47,7 +47,7 @@ export function ActivityDetail({
   async function handleDelete() {
     if (!confirm('Delete this activity? This cannot be undone.')) return
     setDeleting(true)
-    const res = await apiFetch(`/api/activities/${activity.id}`, { method: 'DELETE' })
+    const res = await http(`/api/activities/${activity.id}`, { method: 'DELETE' })
     if (res.ok) {
       router.push('/activities')
       router.refresh()

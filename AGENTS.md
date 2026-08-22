@@ -96,17 +96,23 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
-### 18. ngrok free tier breaks fetch/POST via the browser interstitial
+### 18. ngrok free tier breaks fetch/POST via the browser interstitial (dev-only, env-gated)
 Symptom: a feature works on localhost but fails only through the ngrok URL (e.g. file upload
-"failed" on mobile, succeeds on desktop). The POST never reaches the app; the response is
-ngrok's HTML warning page, not JSON.
-Cause: ngrok free tier serves a browser interstitial on requests lacking the
-`ngrok-skip-browser-warning` header (https://ngrok.com/abuse). Normal page loads pass it
-after the user clicks through once, but `fetch()`/XHR calls don't send it, so they get HTML.
-Fix: all browser→API calls go through `src/lib/api-fetch.ts` (`apiFetch`) which sets
-`ngrok-skip-browser-warning: true`. Belt-and-suspenders: `docker/ngrok.yml` also adds the
-header per-tunnel via `request_header.add` (restart ngrok to apply). Header is harmless on
-localhost/prod. Any NEW client fetch to our API should use `apiFetch`, not raw `fetch`.
+"failed" on mobile, succeeds on desktop). The POST gets ngrok's HTML warning page, not JSON.
+Cause: ngrok free tier serves a browser interstitial on requests lacking
+`ngrok-skip-browser-warning` (https://ngrok.com/abuse). Page navigations pass it after a
+one-time click-through, but `fetch()`/XHR calls don't, so they receive HTML.
+IMPORTANT — what does NOT work: ngrok decides the interstitial at its EDGE before the agent
+runs, so agent-side `request_header.add` in ngrok.yml does NOT suppress it, and Traffic
+Policy add-header is explicitly blocked on free accounts. The header must come FROM the
+browser.
+Fix (kept vendor-neutral + dev-only): `src/lib/http.ts` `http()` wraps fetch and adds the
+header ONLY when `NEXT_PUBLIC_TUNNEL_MODE === 'ngrok'` — so production fetches are pristine.
+The browser Supabase client (`lib/supabase/client.ts`) injects the same header via its
+`global.fetch` option, also gated on tunnel mode (its calls hit the separate Supabase
+tunnel). `ngrok-sync.sh` sets `NEXT_PUBLIC_TUNNEL_MODE=ngrok` and clears it on `--local`.
+New client→API calls should use `http()` not raw `fetch`. Cleaner long-term options: a custom
+domain on ngrok (paid) or Cloudflare Tunnel (free) have no interstitial and need no app code.
 
 ### 17. FIT files come in variants — only activities are importable
 `.FIT` is a container format: **activity** (recorded workout, has session + timed records),

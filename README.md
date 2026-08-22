@@ -514,13 +514,19 @@ needed — ngrok sets the forwarded headers automatically.
 ### A feature works on localhost but fails through the ngrok URL (e.g. upload on mobile)
 
 **Cause**: ngrok's free tier serves a browser interstitial warning page for requests without
-the `ngrok-skip-browser-warning` header. Regular page navigations pass it after the one-time
+the `ngrok-skip-browser-warning` header. Page navigations pass it after a one-time
 click-through, but `fetch()` calls (upload, chat, delete) don't — so they receive HTML
-instead of JSON and fail. This only happens via ngrok, never on localhost.
+instead of JSON. Only happens via ngrok, never on localhost. Note: adding the header in
+`ngrok.yml` does NOT help — ngrok decides the interstitial at its edge before the agent runs,
+and Traffic Policy add-header is blocked on free accounts. The header must come from the browser.
 
-**Fix**: browser→API calls use `apiFetch` (`app/src/lib/api-fetch.ts`), which sets the header.
-`docker/ngrok.yml` also injects it per-tunnel (`request_header.add`) — restart ngrok to apply.
-When adding new client-side calls to our API, use `apiFetch` instead of raw `fetch`.
+**Fix**: `ngrok-sync.sh` sets `NEXT_PUBLIC_TUNNEL_MODE=ngrok`, which makes `app/src/lib/http.ts`
+(`http()`) and the browser Supabase client add the header — **only in tunnel mode**, so
+production traffic is unaffected. Rebuild the app after syncing. New client→API calls should
+use `http()` instead of raw `fetch`.
+
+> Cleaner long-term: a custom domain on ngrok (paid) or Cloudflare Tunnel (free) have no
+> interstitial and require no app-side workaround at all.
 
 ---
 

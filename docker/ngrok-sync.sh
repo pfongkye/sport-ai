@@ -44,6 +44,7 @@ if [[ "${1:-}" == "--local" ]]; then
   set_env "$APP_ENV" "NEXT_PUBLIC_APP_URL" "http://localhost:3000"
   set_env "$APP_ENV" "NEXT_PUBLIC_SUPABASE_URL" "http://localhost:8000"
   set_env "$APP_ENV" "NEXT_ALLOWED_DEV_ORIGINS" ""
+  set_env "$APP_ENV" "NEXT_PUBLIC_TUNNEL_MODE" ""
   set_env "$DOCKER_ENV" "SITE_URL" "http://localhost:3000"
   set_env "$DOCKER_ENV" "SUPABASE_PUBLIC_URL" "http://localhost:8000"
   set_env "$DOCKER_ENV" "API_EXTERNAL_URL" "http://localhost:8000/auth/v1"
@@ -106,6 +107,8 @@ set_env "$APP_ENV" "NEXT_PUBLIC_SUPABASE_URL" "$SUPABASE_URL"
 # Allow the (rotating) ngrok app host to request Next.js /_next dev resources.
 # Belt-and-suspenders alongside the wildcard patterns in next.config.ts.
 set_env "$APP_ENV" "NEXT_ALLOWED_DEV_ORIGINS" "${APP_HOST},${SUPABASE_HOST}"
+# Enable the tunnel-only ngrok-skip-browser-warning header on client fetches.
+set_env "$APP_ENV" "NEXT_PUBLIC_TUNNEL_MODE" "ngrok"
 
 # ── Update docker/.env (auth server config) ───────────────────────────────────
 set_env "$DOCKER_ENV" "SITE_URL" "$APP_URL"

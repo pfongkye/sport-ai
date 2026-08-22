@@ -25,21 +25,19 @@ agent:
 
 tunnels:
   # App tunnel — random URL each restart (fine, not referenced by Google).
-  # request_header.add injects the header that skips ngrok's free-tier browser
-  # interstitial, so fetch/POST calls get proxied instead of receiving the
-  # warning HTML page. (App fetches also set it via src/lib/api-fetch.ts.)
   app:
     proto: http
     addr: 3000
-    request_header:
-      add:
-        - "ngrok-skip-browser-warning: true"
 
   # Supabase tunnel — pinned to your stable free domain via env var.
   supabase:
     proto: http
     addr: 8000
     domain: ${NGROK_SUPABASE_DOMAIN}
-    request_header:
-      add:
-        - "ngrok-skip-browser-warning: true"
+
+# NOTE: ngrok's free-tier browser interstitial is decided at ngrok's EDGE before
+# the agent runs, so agent-side `request_header.add` does NOT suppress it (and
+# Traffic Policy add-header is explicitly blocked on free accounts). The header
+# must arrive FROM the browser. The app sends it only when tunneling — see
+# NEXT_PUBLIC_TUNNEL_MODE in the app and src/lib/http.ts. A custom domain (paid)
+# or Cloudflare Tunnel (free) avoids the interstitial entirely with no app code.
