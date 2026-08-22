@@ -215,6 +215,14 @@ configs change between versions.
   via `lib/mcp/client.ts`.
 - **Verification**: always `npm run build` in `app/` after code changes — it runs the
   TypeScript check. The build passing is the bar before claiming a task is done.
+- **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
+  the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
+  Never echo secret values into chat, logs, or commits.
+- **Testing**: no formal suite yet by design (surface area still churning). Automated tests
+  (Vitest + React Testing Library + Playwright) get introduced at MVP — see the Testing
+  section in `.kiro/specs/sportai-coaching-app/tasks.md`. From MVP onward: every bug fix gets
+  a regression test, every new API route gets auth+happy+error tests, every new table gets an
+  RLS isolation test.
 
 ---
 

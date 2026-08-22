@@ -418,11 +418,80 @@
 
 ---
 
+## Testing (introduce at MVP, then maintain going forward)
+
+> **Timing**: hold off on a big test suite while the surface area is still churning.
+> Introduce automated tests once the MVP is feature-complete (end of Phase 2 / start of
+> Phase 3 — auth + activity ingestion + AI chat working), then require tests for every new
+> feature and every bug fix from that point on. The goal is regression protection, not 100%
+> coverage.
+
+### Test stack
+- [ ] **Unit / integration**: Vitest (fast, TS-native, jsdom for React)
+- [ ] **Component**: React Testing Library (`@testing-library/react` + `user-event`)
+- [ ] **E2E**: Playwright (real browser, tests the auth + upload + coach flows)
+- [ ] **API/DB**: Vitest against a disposable Supabase test DB (Docker), NOT the dev DB
+- [ ] Add `test`, `test:watch`, `test:e2e`, `test:coverage` scripts to package.json
+
+### T1 — Pure logic unit tests (highest ROI, do first)
+- [ ] `lib/importers/helpers.ts`: training load (TRIMP + RPE fallback), dedup hash stability,
+      haversine distance, elevation gain, avg/max helpers
+- [ ] `lib/importers/gpx.ts`: parse a fixture .GPX → assert distance/duration/HR/pace/streams
+- [ ] `lib/importers/tcx.ts`: parse a fixture .TCX → assert summary + streams
+- [ ] `lib/importers/fit.ts`: parse a fixture .FIT (small real Coros export, scrubbed) → assert
+- [ ] `lib/utils.ts`: formatDuration, formatPace, formatDistance, timeAgo edge cases
+- [ ] `lib/ai/tools`: getTrainingLoad EWMA math (ATL/CTL/TSB) against known inputs
+- [ ] Store test fixtures in `app/src/__fixtures__/` (scrub any real GPS/PII)
+
+### T2 — API route tests
+- [ ] `POST /api/activities/upload`: valid file → 201 + activity row; unsupported → error;
+      oversize → error; duplicate → `duplicate` status; unauth → 401 JSON
+- [ ] `GET /api/activities`: pagination cursor, sport filter, date range
+- [ ] `GET/DELETE /api/activities/[id]`: ownership enforced, storage cleanup on delete
+- [ ] `POST /api/ai/chat`: auth required; streams; persists messages (mock the LLM provider)
+- [ ] Nutrition + plan routes as those phases land
+
+### T3 — RLS / tenant isolation tests (security-critical)
+- [ ] Seed two users; assert user A cannot SELECT/UPDATE/DELETE user B's activities,
+      streams, plans, messages, nutrition, settings
+- [ ] Assert storage policies: user A cannot read user B's `{user_id}/...` objects
+- [ ] Run these against the real Postgres with RLS on (not the service-role client)
+
+### T4 — Component tests
+- [ ] `ActivityUploader`: drag-drop adds files, shows per-file status, calls API
+- [ ] `ActivitiesView`: sport filter, empty state, renders feed
+- [ ] `LoginForm`: renders providers, triggers signInWithOAuth (mocked)
+- [ ] `OnboardingForm`: validation, two-step flow, submit
+- [ ] `ChatInterface`: renders streamed messages, markdown, tool-call display
+
+### T5 — E2E (Playwright, the critical happy paths)
+- [ ] Auth: login (mock OAuth or test email) → onboarding → dashboard
+- [ ] Upload: sign in → upload fixture .GPX → appears in feed → detail shows map + charts
+- [ ] Coach: send a message → receive a response (mock LLM) → history persists
+- [ ] Run E2E against the Docker stack in CI
+
+### T6 — CI wiring
+- [ ] GitHub Actions: on PR run lint → type-check → `vitest run` → RLS tests
+- [ ] Spin up Supabase + app in CI (docker compose) for API/RLS/E2E jobs
+- [ ] Playwright E2E as a separate job (can be `continue-on-error` initially, then required)
+- [ ] Coverage report artifact; set a soft threshold (e.g. 60%) that rises over time
+- [ ] Block merge on unit + type-check + RLS passing
+
+### Testing conventions (from MVP onward)
+- [ ] Every bug fix ships with a regression test that fails before the fix
+- [ ] Every new API route ships with auth + happy-path + one error-path test
+- [ ] Every new table ships with an RLS isolation test
+- [ ] Keep unit tests fast (<5s total) so they run on every save; heavier suites in CI
+
+---
+
 ## Cross-Cutting (all phases)
 
 - [ ] Error logging: Sentry SDK (`@sentry/nextjs`)
 - [ ] Structured logging for API routes (`pino` or similar)
-- [ ] RLS integration tests: verify no cross-user data leakage
+- [ ] RLS integration tests: verify no cross-user data leakage (see Testing → T3)
 - [ ] Document all env vars in `.env.local.example`
-- [ ] GitHub Actions CI: lint + type-check + RLS tests on PR
+- [ ] GitHub Actions CI: lint + type-check + tests on PR (see Testing → T6)
 - [ ] Ngrok setup guide in README (stable domain for OAuth callbacks)
+- [ ] Security: never read/commit secret files (enforced by `.kiro/steering/security.md`
+      and the `block-secret-reads` PreToolUse hook)
