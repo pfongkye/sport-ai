@@ -1,0 +1,32 @@
+{
+  "_comment": "Copy this config into your Kiro IDE MCP settings: .kiro/settings/mcp.json",
+  "mcpServers": {
+    "supabase": {
+      "command": "uvx",
+      "args": ["mcp-server-supabase@latest"],
+      "env": {
+        "SUPABASE_URL": "${SUPABASE_URL}",
+        "SUPABASE_SERVICE_ROLE_KEY": "${SUPABASE_SERVICE_ROLE_KEY}"
+      },
+      "disabled": false
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch@latest"],
+      "disabled": false
+    },
+    "memory": {
+      "command": "uvx",
+      "args": ["mem0-mcp@latest"],
+      "env": {
+        "MEM0_API_KEY": "${MEM0_API_KEY}"
+      },
+      "disabled": false
+    },
+    "filesystem": {
+      "command": "uvx",
+      "args": ["mcp-server-filesystem@latest", "--root", "./app"],
+      "disabled": false
+    }
+  }
+}
