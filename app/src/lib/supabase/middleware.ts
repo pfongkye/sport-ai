@@ -68,10 +68,14 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse
   }
 
+  // API routes handle their own auth and return JSON (401/403). Never redirect
+  // them to the HTML login page — a fetch() would then receive HTML, not JSON.
+  if (pathname.startsWith('/api/')) {
+    return supabaseResponse
+  }
+
   // Public routes that don't require auth.
-  // /api/auth/* must be public so the OAuth callback can exchange the code
-  // for a session BEFORE the user is authenticated.
-  const publicRoutes = ['/login', '/api/auth', '/auth/callback']
+  const publicRoutes = ['/login', '/auth/callback']
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
 
   // Redirect unauthenticated users to login

@@ -96,6 +96,13 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 15. Middleware must not redirect /api/* routes to the login page
+API routes do their own auth and return JSON (401/403). If middleware redirects
+unauthenticated `/api/*` requests to `/login` (307 → HTML), client `fetch()` calls receive
+an HTML page instead of JSON and break with confusing parse errors. Middleware short-circuits
+`pathname.startsWith('/api/')` and lets the route handle auth itself. (Note: `/api/auth/*` is
+also covered by this — it no longer needs a separate public-route entry.)
+
 ### 14. Post-login redirects bounce to localhost instead of the ngrok URL
 Symptom: OAuth/login succeeds but the app redirects to `http://localhost:3000/...` instead
 of staying on the ngrok URL.

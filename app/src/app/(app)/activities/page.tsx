@@ -1,15 +1,23 @@
+import { createClient } from '@/lib/supabase/server'
+import { ActivitiesView } from '@/components/activities/activities-view'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Activities' }
 
-export default function ActivitiesPage() {
-  return (
-    <div className="flex flex-col h-full p-4 md:p-6 items-center justify-center text-center">
-      <p className="text-4xl mb-3" aria-hidden>🏃</p>
-      <h1 className="text-xl font-bold text-[var(--foreground)]">Activities</h1>
-      <p className="text-sm text-[var(--muted-foreground)] mt-1 max-w-xs">
-        Activity list, .FIT/.GPX/.TCX upload, and detail view coming in Phase 1 tasks 1.4–1.6.
-      </p>
-    </div>
-  )
+export default async function ActivitiesPage() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  const { data: activities } = await supabase
+    .from('activities')
+    .select(
+      'id, sport_type, source, started_at, duration_s, distance_m, elevation_gain_m, avg_hr_bpm, avg_pace_s_per_km, avg_cadence_rpm, training_load, notes'
+    )
+    .eq('user_id', user!.id)
+    .order('started_at', { ascending: false })
+    .limit(20)
+
+  return <ActivitiesView initialActivities={activities ?? []} />
 }

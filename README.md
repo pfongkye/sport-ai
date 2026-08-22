@@ -658,7 +658,7 @@ npx supabase gen types typescript \
 
 | Phase | Focus | Status |
 |---|---|---|
-| 1 | Auth, activity upload (.FIT/.GPX/.TCX), dashboard | Scaffolded |
+| 1 | Auth, activity upload (.FIT/.GPX/.TCX), dashboard | Complete |
 | 2 | AI coaching chat, voice interface, RAG memory | Agents wired |
 | 3 | Training plan, readiness score, fatigue adaptation | Spec ready |
 | 4 | Nutrition photo logging, YouTube video search | Spec ready |
