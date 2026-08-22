@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Capture gotchas to AGENTS.md",
+      "trigger": "SessionStart",
+      "action": {
+        "type": "agent",
+        "prompt": "This repo has an AGENTS.md at the workspace root that is a living memory file of gotchas, setup steps, and conventions. Read it early in the session. IMPORTANT: whenever during this session you diagnose a non-obvious failure, discover an undocumented setup step, or learn anything a future agent would waste time re-learning, proactively append it to AGENTS.md (symptom → cause → fix, numbered sequentially) and, if user-facing, mirror it into the README Troubleshooting section. Do this automatically without being asked."
+      }
+    }
+  ]
+}

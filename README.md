@@ -355,6 +355,37 @@ Auth is running but Google OAuth isn't enabled. See [Enabling Google Sign-In](#e
 
 ---
 
+### `{"error_code":"validation_failed","msg":"Unsupported provider: provider is not enabled"}`
+
+**Cause**: The credentials are in `docker/.env` and the `GOTRUE_EXTERNAL_GOOGLE_*` lines are
+uncommented in `docker-compose.yml`, but the `auth` container was created **before** those
+changes. `docker compose restart` reuses the existing container and does NOT reload
+environment variables.
+
+**Fix**: recreate the container (not restart):
+```bash
+cd docker && docker compose --env-file .env up -d auth
+```
+Verify the vars are actually present:
+```bash
+docker exec sportai-auth env | grep -i GOOGLE   # should list all 4 GOTRUE_EXTERNAL_GOOGLE_*
+```
+A working authorize endpoint returns `HTTP 302` redirecting to `accounts.google.com`.
+
+> **General rule**: `restart` never reloads env or compose config — always use
+> `up -d <service>` after editing `.env` or `docker-compose.yml`.
+
+---
+
+### Google returns `redirect_uri_mismatch`
+
+The OAuth flow sends `redirect_uri=http://localhost:8000/auth/v1/callback` (the GoTrue
+callback, NOT the app callback). This exact URI must be registered as an authorized redirect
+URI in your Google OAuth client at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials).
+Note it's the `:8000/auth/v1/callback` gateway URL, not `:3000/api/auth/callback`.
+
+---
+
 ### Supavisor (`sportai-pooler`) restarting with "EVAL expects an expression as argument"
 
 **Cause**: The `pooler.exs` config file isn't mounted into the container.

@@ -3,6 +3,12 @@
 This file captures hard-won gotchas and conventions so future agents (and humans) don't
 re-learn them the hard way. Read this before touching Docker, Supabase, auth, or env config.
 
+> **Maintenance directive** (for agents): whenever you diagnose a non-obvious failure,
+> discover a setup step that wasn't documented, or hit anything a future agent would waste
+> time re-learning, add it here (and to the README Troubleshooting section if user-facing)
+> WITHOUT being asked. Keep entries concise: symptom → cause → fix. Number new gotchas
+> sequentially. This is a living memory file.
+
 ---
 
 ## Project layout
@@ -59,9 +65,22 @@ the `supabase_admin` role over TCP — the `postgres` user gets "permission deni
 parameter". See README step 4.
 
 ### 7. OAuth providers are disabled by default in the auth service
-The app UI has Google/Apple/Facebook/Strava buttons, but GoTrue rejects them (HTTP 400)
-until you set `GOOGLE_ENABLED=true` + credentials in `docker/.env` AND uncomment the
-`GOTRUE_EXTERNAL_GOOGLE_*` lines in the `auth` service, then `restart auth`.
+The app UI has Google/Apple/Facebook/Strava buttons, but GoTrue rejects them (HTTP 400,
+`"provider is not enabled"`) until you set `GOOGLE_ENABLED=true` + credentials in
+`docker/.env` AND uncomment the `GOTRUE_EXTERNAL_GOOGLE_*` lines (all four, including
+`REDIRECT_URI`) in the `auth` service, then recreate the container (see gotcha #8).
+The Google OAuth client must register `http://localhost:8000/auth/v1/callback` (the GoTrue
+gateway callback, NOT the app's `:3000/api/auth/callback`) or Google returns
+`redirect_uri_mismatch`.
+
+### 8. `docker compose restart` does NOT reload env vars or compose config
+This is the single most common trap when editing `.env` or `docker-compose.yml`.
+`restart` reuses the existing container as-is. To apply config changes you MUST recreate:
+```bash
+docker compose --env-file .env up -d <service>   # recreates if config changed
+```
+Verify a service picked up new env with `docker exec <container> env | grep <VAR>`.
+For `NEXT_PUBLIC_*` changes to the app, add `--build` (see gotcha #2).
 
 ---
 
