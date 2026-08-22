@@ -96,6 +96,20 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 20. MCPClient must be a singleton; "AI is not configured" is often a build-agent throw
+Two related traps in the AI coach:
+- **MCPClient singleton**: Mastra throws "MCPClient was initialized multiple times with the
+  same configuration" if you `new MCPClient(...)` per request. First request works, all others
+  throw → caught by buildCoachAgent → surfaced as "AI is not configured" (misleading — it's
+  NOT a missing key). Fix: `getMCPClient()` in `lib/mcp/client.ts` caches one instance (with
+  an explicit `id`). Any Mastra MCPClient must be process-singleton.
+- **uvx not in the container**: MCP servers run via `uvx`, which isn't installed in the app
+  image, so `getToolsets()` fails. It's caught (chat degrades to typed tools only). To enable
+  MCP servers, add `uv`/`uvx` to docker/Dockerfile. Typed tools (activities, training load,
+  plan, profile) work without MCP.
+- Generally: "AI is not configured" = buildCoachAgent threw. Check `[ai/chat] failed to build
+  agent` in logs for the real cause before assuming it's the API key.
+
 ### 19. Mobile "Failed to fetch" on upload — snapshot the File to memory at pick time
 Symptom: file upload works on desktop but fails on mobile with "Failed to fetch"; the request
 never reaches the server/tunnel; often only SOME files fail (not all).

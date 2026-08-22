@@ -7,7 +7,7 @@ import type { Database, AIProvider, Profile, UserSettings } from '@/types/databa
 import type { ReadinessResult } from '@/types/activity'
 import { buildCoachTools } from '../tools'
 import { buildCoachSystemPrompt } from '../prompts/coach'
-import { createMCPClient } from '@/lib/mcp/client'
+import { getMCPClient } from '@/lib/mcp/client'
 
 interface BuildCoachAgentParams {
   supabase: SupabaseClient<Database>
@@ -36,10 +36,9 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
 
   const tools = buildCoachTools(supabase, userId)
 
-  const mcpClient = createMCPClient()
   let mcpTools = {}
   try {
-    mcpTools = await mcpClient.getToolsets()
+    mcpTools = await getMCPClient().getToolsets()
   } catch {
     // MCP servers (uvx) may be unavailable in some environments — degrade
     // gracefully to typed tools only rather than failing the whole chat.
