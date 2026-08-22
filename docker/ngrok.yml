@@ -7,25 +7,38 @@
 #   - the Next.js app  (port 3000)
 #   - the Supabase API (port 8000) — for auth, DB, storage
 #
-# Free tier allows multiple tunnels but assigns RANDOM domains on each start.
-# After starting, note the two https URLs ngrok prints, then update:
-#   app/.env.local  → NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_APP_URL
-#   docker/.env     → SITE_URL, API_EXTERNAL_URL, SUPABASE_PUBLIC_URL, ADDITIONAL_REDIRECT_URLS
-# then restart the app (and `docker compose restart auth` if in Docker).
+# ── FREE-TIER STRATEGY (option 1) ────────────────────────────────────────────
+# The free plan gives ONE stable "dev domain". We pin it to the SUPABASE tunnel,
+# because that's the one whose callback URL Google must whitelist. With Supabase
+# on a stable domain you whitelist Google's redirect URI ONCE and never touch it
+# again. The APP tunnel can rotate freely (its URL isn't in Google's config).
 #
-# For stable domains (no re-editing each run), reserve domains on a paid/free
-# reserved plan and set `domain:` under each tunnel below.
+# SETUP:
+#   1. Claim your free static domain:
+#        https://dashboard.ngrok.com/domains  → shows something like
+#        "your-name-1234.ngrok-free.app" (or run: ngrok config check)
+#   2. Put that domain in the `supabase` tunnel's `domain:` field below.
+#   3. Leave the `app` tunnel without a domain (it gets a random URL each run).
+#   4. Run: ngrok start --all --config docker/ngrok.yml
+#   5. Run: ./docker/ngrok-sync.sh   (updates env files with both URLs)
+#
+# Google only needs the Supabase callback whitelisted, and since that domain is
+# now stable, you do it once:
+#   https://<your-free-domain>.ngrok-free.app/auth/v1/callback
 
 version: "3"
 agent:
   authtoken: ${NGROK_AUTHTOKEN}
 
 tunnels:
+  # App tunnel — random URL each restart (fine, not referenced by Google).
   app:
     proto: http
     addr: 3000
-    # domain: sportai-app.ngrok-free.app   # uncomment if you have a reserved domain
+
+  # Supabase tunnel — PIN your free static dev domain here so the Google
+  # callback URL never changes. Replace with YOUR domain from the dashboard.
   supabase:
     proto: http
     addr: 8000
-    # domain: sportai-api.ngrok-free.app   # uncomment if you have a reserved domain
+    domain: your-free-domain.ngrok-free.app   # ← replace with your reserved free domain

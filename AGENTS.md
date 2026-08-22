@@ -86,10 +86,20 @@ Causes & fixes:
   (`ngrok start --all --config docker/ngrok.yml`).
 - Free ngrok rotates domains each restart → run `./docker/ngrok-sync.sh` (reads live tunnel
   URLs from ngrok's local API at :4040 and rewrites both `.env` files), rebuild app
-  (NEXT_PUBLIC baked in), `up -d auth`. Then re-whitelist the Google redirect URI at
-  console.cloud.google.com/auth/clients EVERY restart (new URL = new callback), or Google
-  returns `redirect_uri_mismatch`. `ngrok-sync.sh --local` reverts to localhost.
-  Reserve domains (docker/ngrok.yml `domain:`) to avoid the whole churn.
+  (NEXT_PUBLIC baked in), `up -d auth`. `ngrok-sync.sh --local` reverts to localhost.
+- Free plan gives ONE stable dev domain. Pin it to the SUPABASE tunnel (port 8000) in
+  `docker/ngrok.yml` `domain:` — then Google's callback URL is stable and you whitelist it
+  ONCE. The app tunnel can rotate (not referenced by Google). A paid plan is only needed for
+  a SECOND stable domain or a custom name. If nothing is pinned, re-whitelist Google every
+  restart or you get `redirect_uri_mismatch`.
+
+### 12. Google OAuth needs the redirect URI, NOT a JavaScript origin
+This app uses the server-side authorization-code flow (browser → Supabase → Google →
+Supabase `/auth/v1/callback`). The browser never calls Google via JS, so **Authorized
+JavaScript origins** are NOT needed. Only **Authorized redirect URIs** matter, and it must be
+the Supabase gateway callback (`:8000/auth/v1/callback` or the ngrok Supabase URL), NOT the
+app's `:3000/api/auth/callback`. Use `localhost` consistently (Google treats `localhost` and
+`127.0.0.1` as distinct origins).
 
 ### 10. PKCE verifier not found — browser and server clients must share a storageKey
 Symptom: OAuth callback fails with `pkce_code_verifier_not_found` (HTTP 400); user bounces

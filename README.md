@@ -235,19 +235,32 @@ npm run build
 npm start          # serves on :3000, no HMR
 ```
 
+### One-time: pin the free static domain to Supabase
+
+Free ngrok gives you **one** stable "dev domain". Pin it to the **Supabase** tunnel (port
+8000) — that's the tunnel whose callback URL Google must whitelist. With Supabase on a stable
+domain, you whitelist Google **once** and never touch it again; the app tunnel can rotate
+freely because its URL isn't in Google's config.
+
+1. Claim your free domain at [dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains)
+   (looks like `your-name-1234.ngrok-free.app`)
+2. Put it in the `supabase` tunnel's `domain:` field in `docker/ngrok.yml`
+3. Whitelist this callback in Google **once**:
+   ```
+   https://your-name-1234.ngrok-free.app/auth/v1/callback
+   ```
+
 ### Start both tunnels
 
 > If ngrok is already running with a single tunnel, **stop it first** (Ctrl-C) — you need
 > both ports exposed.
-
-A ready-made ngrok config is at `docker/ngrok.yml` (tunnels 3000 + 8000):
 
 ```bash
 export NGROK_AUTHTOKEN=your-token   # from https://dashboard.ngrok.com
 ngrok start --all --config docker/ngrok.yml
 ```
 
-Ngrok prints two https URLs (one for :3000, one for :8000).
+Ngrok prints two https URLs: the app on a random URL, Supabase on your stable domain.
 
 ### Sync the env files automatically
 
@@ -275,28 +288,28 @@ cd app && npm run build && npm start
 cd ../docker && docker compose --env-file .env up -d auth
 ```
 
-### Whitelist the ngrok URL in Google — REQUIRED EACH TIME
+### Google whitelisting — once, if you pinned the Supabase domain
 
-Because free ngrok URLs change on every restart, you must add the new callback URL to your
-Google OAuth client **every time** you start a new tunnel:
+If you pinned the free static domain to the Supabase tunnel (recommended, above), you only
+whitelist the Google redirect URI **once** — it never changes:
+```
+https://your-name-1234.ngrok-free.app/auth/v1/callback
+```
 
-1. Go to [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
-2. Open your OAuth client
-3. Under **Authorized redirect URIs**, add the Supabase tunnel callback (printed by
-   `ngrok-sync.sh`):
-   ```
-   https://<supabase-tunnel>.ngrok-free.app/auth/v1/callback
-   ```
-4. Save. Changes can take a minute to propagate.
+If you did NOT pin a domain, the Supabase tunnel URL rotates on every restart, so you must
+re-add the new `https://<supabase-tunnel>.ngrok-free.app/auth/v1/callback` to your Google
+OAuth client **every time**, or Google returns `redirect_uri_mismatch`. The exact URL is
+printed by `ngrok-sync.sh`.
 
-If you skip this, Google returns `redirect_uri_mismatch`.
+> Note: only the **redirect URI** needs whitelisting, not a JavaScript origin — see
+> [Redirect URI vs JavaScript origin](#redirect-uri-vs-javascript-origin--which-do-you-need).
 
-### Free-tier caveat
+### Free-tier notes
 
-Free ngrok assigns **random domains on every restart**, so you re-run `ngrok-sync.sh`, rebuild,
-and re-whitelist the Google redirect URI each time. To avoid the churn, reserve stable domains
-(uncomment the `domain:` lines in `docker/ngrok.yml`) — then the URLs never change and you
-whitelist Google once.
+- Free ngrok gives **one** stable domain; a paid plan is only needed if you want BOTH tunnels
+  stable or a custom domain name. Pinning just Supabase (above) keeps everything free.
+- The app tunnel's URL still rotates each restart — that's fine, `ngrok-sync.sh` picks it up
+  and Google doesn't care about it.
 
 > The `wss://.../_next/hmr failed` console errors on the dev server are **harmless** — they
 > only affect live-reload over the tunnel, not the app. Use `npm start` (prod build) to
@@ -339,9 +352,12 @@ After updating secrets, run `docker compose --env-file .env down -v && docker co
 
 Social login is wired in the app but disabled in the auth service by default. To enable Google:
 
-1. Create OAuth credentials at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials)
-2. Add authorised redirect URI: `http://localhost:8000/auth/v1/callback`
-   (and your Ngrok equivalent if testing on mobile)
+1. Create OAuth credentials at [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
+2. Under **Authorized redirect URIs**, add:
+   ```
+   http://localhost:8000/auth/v1/callback
+   ```
+   (and your ngrok equivalent when testing on mobile)
 3. In `docker/.env`, set:
    ```bash
    GOOGLE_ENABLED=true
@@ -349,12 +365,33 @@ Social login is wired in the app but disabled in the auth service by default. To
    GOOGLE_SECRET=your-client-secret
    ```
 4. In `docker/docker-compose.yml`, uncomment the four `GOTRUE_EXTERNAL_GOOGLE_*` lines in the `auth` service
-5. Restart auth:
+5. Recreate auth (not `restart` — that doesn't reload env, see Troubleshooting):
    ```bash
-   cd docker && docker compose --env-file .env restart auth
+   cd docker && docker compose --env-file .env up -d auth
    ```
 
 The same pattern applies to Facebook (`FACEBOOK_*`) and other providers.
+
+### Redirect URI vs JavaScript origin — which do you need?
+
+This trips people up. For this app's flow:
+
+| Google OAuth client field | Value | Needed? |
+|---|---|---|
+| **Authorized redirect URIs** | `http://localhost:8000/auth/v1/callback` | ✅ **Required** |
+| **Authorized JavaScript origins** | `http://localhost:3000` | ❌ Not needed |
+
+**Why**: this app uses the **server-side authorization-code flow** — the browser redirects to
+Supabase → Supabase redirects to Google → Google redirects back to Supabase's `/auth/v1/callback`.
+The browser never calls Google's endpoints directly with JavaScript, so no JS origin is
+involved. JavaScript origins are only required for Google's client-side JS SDK (One Tap /
+Google button rendered by Google's own script), which this app doesn't use.
+
+Key points:
+- The redirect URI is the **Supabase gateway** callback (`:8000/auth/v1/callback`), NOT the
+  app's `:3000/api/auth/callback`.
+- Use `localhost` consistently everywhere — Google treats `localhost` and `127.0.0.1` as
+  different origins, so don't mix them.
 
 ---
 
