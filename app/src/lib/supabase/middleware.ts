@@ -36,8 +36,22 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Public routes that don't require auth
-  const publicRoutes = ['/login', '/auth/callback']
+  // Static / public assets — never gate these behind auth.
+  const isPublicAsset =
+    pathname === '/manifest.json' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
+    pathname.startsWith('/icons/') ||
+    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?|ttf)$/.test(pathname)
+
+  if (isPublicAsset) {
+    return supabaseResponse
+  }
+
+  // Public routes that don't require auth.
+  // /api/auth/* must be public so the OAuth callback can exchange the code
+  // for a session BEFORE the user is authenticated.
+  const publicRoutes = ['/login', '/api/auth', '/auth/callback']
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
 
   // Redirect unauthenticated users to login

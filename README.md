@@ -386,6 +386,24 @@ Note it's the `:8000/auth/v1/callback` gateway URL, not `:3000/api/auth/callback
 
 ---
 
+### OAuth completes at Google but you land back on `/login?redirectTo=%2Fapi%2Fauth%2Fcallback`
+
+**Cause**: The auth middleware treated the OAuth callback route as protected. The callback
+runs before the session exists (it's what creates the session), so middleware bounced it to
+login and the code exchange never ran.
+
+**Fix**: `/api/auth/*` must be in the middleware public-routes list. Static assets
+(`/manifest.json`, icons) should also be skipped or they get redirected too. This is handled
+in `app/src/lib/supabase/middleware.ts`. Restart the app after changing it:
+```bash
+cd docker && docker compose --env-file .env restart app
+```
+
+> Note: the middleware entry file is `app/src/proxy.ts` (Next.js 16 renamed `middleware.ts`
+> → `proxy.ts`). The core logic still lives in `lib/supabase/middleware.ts`.
+
+---
+
 ### Supavisor (`sportai-pooler`) restarting with "EVAL expects an expression as argument"
 
 **Cause**: The `pooler.exs` config file isn't mounted into the container.

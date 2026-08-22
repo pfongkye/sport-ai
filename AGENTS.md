@@ -73,6 +73,18 @@ The Google OAuth client must register `http://localhost:8000/auth/v1/callback` (
 gateway callback, NOT the app's `:3000/api/auth/callback`) or Google returns
 `redirect_uri_mismatch`.
 
+### 9. Auth middleware must whitelist `/api/auth/*` and static assets
+The OAuth callback route (`/api/auth/callback`) runs BEFORE the user has a session — it's
+the thing that creates the session by exchanging the code. If middleware treats it as
+protected, it redirects to `/login?redirectTo=%2Fapi%2Fauth%2Fcallback` and the code
+exchange never happens (symptom: OAuth completes at Google but you land back on login).
+Public routes list must include `/api/auth` (not just `/auth/callback`). Also skip static
+assets (`/manifest.json`, icons, images) or they get bounced to login too.
+See `app/src/lib/supabase/middleware.ts`.
+
+Note: the middleware entry file is `app/src/proxy.ts` (Next.js 16 renamed `middleware.ts`
+→ `proxy.ts`; the exported function is `proxy`, not `middleware`).
+
 ### 8. `docker compose restart` does NOT reload env vars or compose config
 This is the single most common trap when editing `.env` or `docker-compose.yml`.
 `restart` reuses the existing container as-is. To apply config changes you MUST recreate:
