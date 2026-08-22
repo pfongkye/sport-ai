@@ -1,30 +1,23 @@
-# Ngrok config for mobile testing — tunnels both the app and Supabase.
+# Ngrok config TEMPLATE for mobile testing — tunnels the app + Supabase.
 #
-# Usage:
-#   ngrok start --all --config docker/ngrok.yml
+# This file uses ${VARS} that are substituted at runtime from your environment.
+# Do NOT run this file directly with ngrok — use the wrapper which renders it:
 #
-# The browser (on your phone) needs to reach BOTH:
-#   - the Next.js app  (port 3000)
-#   - the Supabase API (port 8000) — for auth, DB, storage
+#   ./docker/ngrok-start.sh
 #
-# ── FREE-TIER STRATEGY (option 1) ────────────────────────────────────────────
-# The free plan gives ONE stable "dev domain". We pin it to the SUPABASE tunnel,
-# because that's the one whose callback URL Google must whitelist. With Supabase
-# on a stable domain you whitelist Google's redirect URI ONCE and never touch it
-# again. The APP tunnel can rotate freely (its URL isn't in Google's config).
+# The wrapper reads NGROK_AUTHTOKEN and NGROK_SUPABASE_DOMAIN from docker/.env
+# (or your shell), renders a temp config, and starts both tunnels.
 #
-# SETUP:
-#   1. Claim your free static domain:
-#        https://dashboard.ngrok.com/domains  → shows something like
-#        "your-name-1234.ngrok-free.app" (or run: ngrok config check)
-#   2. Put that domain in the `supabase` tunnel's `domain:` field below.
-#   3. Leave the `app` tunnel without a domain (it gets a random URL each run).
-#   4. Run: ngrok start --all --config docker/ngrok.yml
-#   5. Run: ./docker/ngrok-sync.sh   (updates env files with both URLs)
+# ── FREE-TIER STRATEGY ───────────────────────────────────────────────────────
+# The free plan gives ONE stable "dev domain". Pin it to the SUPABASE tunnel via
+# NGROK_SUPABASE_DOMAIN, because that's the tunnel whose callback URL Google must
+# whitelist. With Supabase on a stable domain you whitelist Google ONCE and never
+# touch it again. The APP tunnel gets a random URL each run (Google doesn't care).
 #
-# Google only needs the Supabase callback whitelisted, and since that domain is
-# now stable, you do it once:
-#   https://<your-free-domain>.ngrok-free.app/auth/v1/callback
+# Required env vars:
+#   NGROK_AUTHTOKEN        — from https://dashboard.ngrok.com
+#   NGROK_SUPABASE_DOMAIN  — your free static domain, e.g. your-name-1234.ngrok-free.app
+#                            (claim at https://dashboard.ngrok.com/domains)
 
 version: "3"
 agent:
@@ -36,9 +29,8 @@ tunnels:
     proto: http
     addr: 3000
 
-  # Supabase tunnel — PIN your free static dev domain here so the Google
-  # callback URL never changes. Replace with YOUR domain from the dashboard.
+  # Supabase tunnel — pinned to your stable free domain via env var.
   supabase:
     proto: http
     addr: 8000
-    domain: your-free-domain.ngrok-free.app   # ← replace with your reserved free domain
+    domain: ${NGROK_SUPABASE_DOMAIN}

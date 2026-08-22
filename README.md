@@ -235,32 +235,46 @@ npm run build
 npm start          # serves on :3000, no HMR
 ```
 
-### One-time: pin the free static domain to Supabase
+### One-time: set the ngrok env vars
 
-Free ngrok gives you **one** stable "dev domain". Pin it to the **Supabase** tunnel (port
-8000) — that's the tunnel whose callback URL Google must whitelist. With Supabase on a stable
-domain, you whitelist Google **once** and never touch it again; the app tunnel can rotate
-freely because its URL isn't in Google's config.
+Free ngrok gives you **one** stable "dev domain". We pin it to the **Supabase** tunnel (port
+8000) — the tunnel whose callback URL Google must whitelist. With Supabase on a stable domain
+you whitelist Google **once**; the app tunnel can rotate freely (Google doesn't reference it).
 
-1. Claim your free domain at [dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains)
-   (looks like `your-name-1234.ngrok-free.app`)
-2. Put it in the `supabase` tunnel's `domain:` field in `docker/ngrok.yml`
-3. Whitelist this callback in Google **once**:
-   ```
-   https://your-name-1234.ngrok-free.app/auth/v1/callback
-   ```
+Both values live in `docker/.env`:
+
+```bash
+# docker/.env
+NGROK_AUTHTOKEN=your-token                          # from https://dashboard.ngrok.com
+NGROK_SUPABASE_DOMAIN=your-name-1234.ngrok-free.app # claim at dashboard.ngrok.com/domains
+```
+
+Then whitelist this callback in Google **once** (it never changes):
+```
+https://your-name-1234.ngrok-free.app/auth/v1/callback
+```
 
 ### Start both tunnels
 
 > If ngrok is already running with a single tunnel, **stop it first** (Ctrl-C) — you need
 > both ports exposed.
 
+Use the wrapper — it reads the env vars from `docker/.env`, renders `docker/ngrok.yml`, and
+starts both tunnels:
+
 ```bash
-export NGROK_AUTHTOKEN=your-token   # from https://dashboard.ngrok.com
-ngrok start --all --config docker/ngrok.yml
+./docker/ngrok-start.sh
 ```
 
-Ngrok prints two https URLs: the app on a random URL, Supabase on your stable domain.
+Or, if you prefer to run ngrok directly with the vars set in your shell:
+
+```bash
+export NGROK_AUTHTOKEN=your-token
+export NGROK_SUPABASE_DOMAIN=your-name-1234.ngrok-free.app
+envsubst < docker/ngrok.yml > /tmp/ngrok.yml && ngrok start --all --config /tmp/ngrok.yml
+```
+
+Ngrok exposes the app on a random URL and Supabase on your stable domain.
 
 ### Sync the env files automatically
 

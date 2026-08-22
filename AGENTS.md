@@ -87,11 +87,14 @@ Causes & fixes:
 - Free ngrok rotates domains each restart → run `./docker/ngrok-sync.sh` (reads live tunnel
   URLs from ngrok's local API at :4040 and rewrites both `.env` files), rebuild app
   (NEXT_PUBLIC baked in), `up -d auth`. `ngrok-sync.sh --local` reverts to localhost.
-- Free plan gives ONE stable dev domain. Pin it to the SUPABASE tunnel (port 8000) in
-  `docker/ngrok.yml` `domain:` — then Google's callback URL is stable and you whitelist it
-  ONCE. The app tunnel can rotate (not referenced by Google). A paid plan is only needed for
-  a SECOND stable domain or a custom name. If nothing is pinned, re-whitelist Google every
-  restart or you get `redirect_uri_mismatch`.
+- Free plan gives ONE stable dev domain. Pin it to the SUPABASE tunnel via
+  `NGROK_SUPABASE_DOMAIN` (in `docker/.env`) — then Google's callback URL is stable and you
+  whitelist it ONCE. The app tunnel can rotate (not referenced by Google). A paid plan is
+  only needed for a SECOND stable domain or a custom name.
+- `docker/ngrok.yml` is a TEMPLATE using `${NGROK_AUTHTOKEN}` and `${NGROK_SUPABASE_DOMAIN}`.
+  Don't run it directly — use `./docker/ngrok-start.sh`, which reads those from `docker/.env`
+  (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
+  tunnels. The rendered file is gitignored (contains the authtoken).
 
 ### 12. Google OAuth needs the redirect URI, NOT a JavaScript origin
 This app uses the server-side authorization-code flow (browser → Supabase → Google →

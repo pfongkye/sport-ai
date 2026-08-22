@@ -8,6 +8,8 @@ app/.env*.local
 *.env.bak
 docker/.env.bak
 app/.env.local.bak
+# rendered ngrok config (contains authtoken)
+docker/.ngrok.rendered.yml
 
 # ── Dependencies ──────────────────────────────────────────────
 node_modules/
