@@ -1,0 +1,31 @@
+# Ngrok config for mobile testing — tunnels both the app and Supabase.
+#
+# Usage:
+#   ngrok start --all --config docker/ngrok.yml
+#
+# The browser (on your phone) needs to reach BOTH:
+#   - the Next.js app  (port 3000)
+#   - the Supabase API (port 8000) — for auth, DB, storage
+#
+# Free tier allows multiple tunnels but assigns RANDOM domains on each start.
+# After starting, note the two https URLs ngrok prints, then update:
+#   app/.env.local  → NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_APP_URL
+#   docker/.env     → SITE_URL, API_EXTERNAL_URL, SUPABASE_PUBLIC_URL, ADDITIONAL_REDIRECT_URLS
+# then restart the app (and `docker compose restart auth` if in Docker).
+#
+# For stable domains (no re-editing each run), reserve domains on a paid/free
+# reserved plan and set `domain:` under each tunnel below.
+
+version: "3"
+agent:
+  authtoken: ${NGROK_AUTHTOKEN}
+
+tunnels:
+  app:
+    proto: http
+    addr: 3000
+    # domain: sportai-app.ngrok-free.app   # uncomment if you have a reserved domain
+  supabase:
+    proto: http
+    addr: 8000
+    # domain: sportai-api.ngrok-free.app   # uncomment if you have a reserved domain

@@ -219,40 +219,70 @@ set your profile and goal, then land on `/dashboard`.
 
 ## 6. Mobile Testing with Ngrok
 
-To test on your phone or share with other athletes:
+> **Key point**: for a working phone test you must tunnel **two** ports — the app (3000)
+> AND Supabase (8000). On the phone, `localhost` means the phone itself, so a single app
+> tunnel renders the login page but auth/DB calls fail. Both need public URLs.
+
+### Recommended: use a production build (no HMR WebSocket noise)
+
+The dev server (`npm run dev`) opens a Hot Module Reload WebSocket that Ngrok's free tier
+can't proxy — you'll see harmless `wss://.../_next/hmr ... failed` errors in the console.
+A production build has no HMR socket, is faster, and behaves like the real deployed app:
 
 ```bash
-ngrok http 3000
-# → https://abc123.ngrok-free.app  (temporary URL, changes on restart)
+cd app
+npm run build
+npm start          # serves on :3000, no HMR
 ```
 
-For a **stable URL** (needed so OAuth redirect URIs don't break on restart), use a free Ngrok account with a static domain:
+### Start both tunnels
+
+A ready-made ngrok config is at `docker/ngrok.yml` (tunnels 3000 + 8000):
 
 ```bash
-ngrok http --domain=sportai.ngrok.io 3000
+export NGROK_AUTHTOKEN=your-token   # from https://dashboard.ngrok.com
+ngrok start --all --config docker/ngrok.yml
 ```
 
-Then update your env files:
+Ngrok prints two https URLs, e.g.:
+```
+app       → https://aaaa.ngrok-free.app  (port 3000)
+supabase  → https://bbbb.ngrok-free.app  (port 8000)
+```
 
-**`app/.env.local`:**
+### Point the app and auth at the tunnel URLs
+
+**`app/.env.local`** (browser-facing — must be the public tunnel URLs):
 ```bash
-NEXT_PUBLIC_APP_URL=https://sportai.ngrok.io
+NEXT_PUBLIC_APP_URL=https://aaaa.ngrok-free.app
+NEXT_PUBLIC_SUPABASE_URL=https://bbbb.ngrok-free.app
 ```
 
-**`docker/.env`:**
+**`docker/.env`** (auth server config):
 ```bash
-SITE_URL=https://sportai.ngrok.io
-ADDITIONAL_REDIRECT_URLS=https://sportai.ngrok.io/**
+SITE_URL=https://aaaa.ngrok-free.app
+SUPABASE_PUBLIC_URL=https://bbbb.ngrok-free.app
+API_EXTERNAL_URL=https://bbbb.ngrok-free.app/auth/v1
+ADDITIONAL_REDIRECT_URLS=https://aaaa.ngrok-free.app/**
 ```
 
-Restart the auth service to pick up the new URLs:
-
+Then rebuild the app (NEXT_PUBLIC vars are baked in) and recreate auth:
 ```bash
-cd docker
-docker compose --env-file .env restart auth
+cd app && npm run build && npm start
+cd ../docker && docker compose --env-file .env up -d auth
 ```
 
-Also update your OAuth provider redirect URIs to include `https://sportai.ngrok.io/auth/v1/callback`.
+Also add `https://bbbb.ngrok-free.app/auth/v1/callback` to your Google OAuth redirect URIs.
+
+### Free-tier caveat
+
+Free ngrok assigns **random domains on every restart**, so you must re-edit both `.env`
+files and the Google redirect URI each time. For repeatable testing, reserve stable domains
+(uncomment the `domain:` lines in `docker/ngrok.yml`) — worth it once you test regularly.
+
+> The `wss://.../_next/hmr failed` console errors on the dev server are **harmless** — they
+> only affect live-reload over the tunnel, not the app. Use `npm start` (prod build) to
+> eliminate them entirely.
 
 ---
 

@@ -73,6 +73,20 @@ The Google OAuth client must register `http://localhost:8000/auth/v1/callback` (
 gateway callback, NOT the app's `:3000/api/auth/callback`) or Google returns
 `redirect_uri_mismatch`.
 
+### 11. Ngrok mobile testing needs TWO tunnels; HMR WebSocket errors are harmless
+Symptom: `wss://<ngrok>/_next/hmr ... failed` console errors; login page renders on phone
+but sign-in fails.
+Causes & fixes:
+- **HMR WebSocket errors**: dev-server hot-reload socket that ngrok free tier can't proxy.
+  HARMLESS — no functional impact. Eliminate entirely by testing with a production build
+  (`npm run build && npm start`) instead of `npm run dev`.
+- **Auth/DB fails on phone**: `localhost:8000` on a phone means the phone itself. You must
+  tunnel BOTH the app (3000) and Supabase (8000), then set `NEXT_PUBLIC_SUPABASE_URL` +
+  the `docker/.env` URLs to the public tunnel URLs. Config: `docker/ngrok.yml`
+  (`ngrok start --all --config docker/ngrok.yml`).
+- Free ngrok rotates domains each restart → re-edit both `.env` files + Google redirect URI,
+  rebuild app (NEXT_PUBLIC baked in), `up -d auth`. Reserve domains to avoid the churn.
+
 ### 10. PKCE verifier not found — browser and server clients must share a storageKey
 Symptom: OAuth callback fails with `pkce_code_verifier_not_found` (HTTP 400); user bounces
 back to `/login?error=auth_callback_failed`.
