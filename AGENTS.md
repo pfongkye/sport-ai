@@ -96,6 +96,20 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 16. New npm deps must be installed INSIDE the Docker app container too
+Symptom: `Module not found: Can't resolve '<pkg>'` at build/runtime even though the package
+is in package.json and in the host `node_modules`.
+Cause: the compose `app` service mounts an ANONYMOUS volume at `/app/node_modules`
+(`- /app/node_modules` in docker-compose.yml) to keep container deps separate from the host.
+A host-side `npm install` does NOT populate that volume.
+Fix: after adding a dependency, install it in the container and restart:
+```bash
+docker exec sportai-app npm install
+docker compose --env-file .env restart app
+```
+(Or rebuild the image: `docker compose --env-file .env up -d --build app`.) When running the
+app on the HOST instead (`npm run dev`), a plain `npm install` is enough.
+
 ### 15. Middleware must not redirect /api/* routes to the login page
 API routes do their own auth and return JSON (401/403). If middleware redirects
 unauthenticated `/api/*` requests to `/login` (307 → HTML), client `fetch()` calls receive

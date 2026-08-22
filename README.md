@@ -511,6 +511,21 @@ needed — ngrok sets the forwarded headers automatically.
 
 ---
 
+### `Module not found: Can't resolve '<package>'` after adding a dependency
+
+**Cause**: When the app runs in Docker, the `app` service mounts an anonymous volume at
+`/app/node_modules` (separate from the host's `node_modules`). A host-side `npm install`
+doesn't reach it, so newly added packages are missing inside the container.
+
+**Fix**: install inside the container and restart:
+```bash
+docker exec sportai-app npm install
+cd docker && docker compose --env-file .env restart app
+```
+If you run the app on the host (`npm run dev`) instead, a normal `npm install` is enough.
+
+---
+
 ### `403 Forbidden` on `/_next/static/*` chunks through ngrok
 
 **Cause**: Next.js blocks cross-origin requests to its `/_next/*` dev resources by default.
