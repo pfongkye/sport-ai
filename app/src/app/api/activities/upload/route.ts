@@ -134,6 +134,7 @@ export async function POST(request: Request) {
 
       results.push({ filename: file.name, status: 'created', activityId: inserted.id })
     } catch (err) {
+      console.error('[activities/upload] failed for', file.name, err)
       results.push({
         filename: file.name,
         status: 'error',

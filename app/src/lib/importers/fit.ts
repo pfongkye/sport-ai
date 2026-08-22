@@ -53,17 +53,31 @@ export async function parseFit(buffer: Buffer): Promise<NormalizedActivity> {
   const data = await parser.parseAsync(arrayBuffer)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const records: FitRecord[] = ((data as any).records ?? []) as FitRecord[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sessions: FitSession[] = ((data as any).sessions ?? []) as FitSession[]
+  const d = data as any
+  const records: FitRecord[] = (d.records ?? []) as FitRecord[]
+  const sessions: FitSession[] = (d.sessions ?? []) as FitSession[]
   const session = sessions[0] ?? {}
 
-  if (!records.length && !session.start_time) {
-    throw new Error('FIT file contains no records or session')
+  // Reject non-activity FIT files (routes/courses/workouts have no recorded session
+  // and their "records" are distance-based waypoints, not timed samples).
+  const isCourse = !!d.courses?.length || !!d.course || !!d.course_points?.length
+  const isWorkout = !!d.workouts?.length || !!d.workout
+  if ((isCourse || isWorkout) && !sessions.length) {
+    throw new Error(
+      isCourse
+        ? 'This looks like a route/course file, not a recorded activity. Upload the workout .FIT instead.'
+        : 'This looks like a workout/plan file, not a recorded activity.'
+    )
+  }
+
+  // Records must carry timestamps to be a real activity.
+  const timedRecords = records.filter((r) => r.timestamp)
+  if (!timedRecords.length && !session.start_time) {
+    throw new Error('FIT file contains no recorded activity data (no timed records or session)')
   }
 
   const startTime = new Date(
-    (session.start_time as string | Date) ?? records[0]?.timestamp ?? Date.now()
+    (session.start_time as string | Date) ?? timedRecords[0]?.timestamp ?? Date.now()
   )
 
   const latlng: StreamPoint[] = []
@@ -73,9 +87,8 @@ export async function parseFit(buffer: Buffer): Promise<NormalizedActivity> {
   const pace: StreamPoint[] = []
   const power: StreamPoint[] = []
 
-  for (const r of records) {
-    if (!r.timestamp) continue
-    const t = Math.round((new Date(r.timestamp).getTime() - startTime.getTime()) / 1000)
+  for (const r of timedRecords) {
+    const t = Math.round((new Date(r.timestamp!).getTime() - startTime.getTime()) / 1000)
     if (t < 0) continue
 
     if (r.position_lat !== undefined && r.position_long !== undefined) {
@@ -105,7 +118,10 @@ export async function parseFit(buffer: Buffer): Promise<NormalizedActivity> {
   const durationS = Math.round(
     session.total_timer_time ??
       session.total_elapsed_time ??
-      (records.length ? new Date(records[records.length - 1].timestamp!).getTime() / 1000 - startTime.getTime() / 1000 : 0)
+      (timedRecords.length
+        ? new Date(timedRecords[timedRecords.length - 1].timestamp!).getTime() / 1000 -
+          startTime.getTime() / 1000
+        : 0)
   )
   const distanceM = session.total_distance ?? undefined
 
@@ -129,6 +145,6 @@ export async function parseFit(buffer: Buffer): Promise<NormalizedActivity> {
     caloriesKcal: session.total_calories ? Math.round(session.total_calories) : undefined,
     trainingLoad: computeTrainingLoad({ durationS, avgHrBpm, maxHrBpm }),
     streams,
-    rawData: { format: 'fit', recordCount: records.length, sessionCount: sessions.length },
+    rawData: { format: 'fit', recordCount: timedRecords.length, sessionCount: sessions.length },
   }
 }

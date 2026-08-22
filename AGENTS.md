@@ -96,6 +96,14 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 17. FIT files come in variants — only activities are importable
+`.FIT` is a container format: **activity** (recorded workout, has session + timed records),
+**course/route** (planned route, distance-based waypoints, no session), and **workout/plan**
+(structured targets). Only activity FITs are real recorded data. The parser
+(`lib/importers/fit.ts`) rejects course/workout files with a clear message and requires timed
+records. Coros/Garmin export both — users may accidentally pick the course file (often named
+`Course...`). The upload route logs parse failures via `console.error('[activities/upload]...')`.
+
 ### 16. New npm deps must be installed INSIDE the Docker app container too
 Symptom: `Module not found: Can't resolve '<pkg>'` at build/runtime even though the package
 is in package.json and in the host `node_modules`.
