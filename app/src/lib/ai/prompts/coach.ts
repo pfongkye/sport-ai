@@ -21,13 +21,18 @@ export function buildCoachSystemPrompt(params: {
     ? `
 ## Today's Readiness
 - Score: ${readiness.score}/100 (${readiness.label})
-- ATL (fatigue): ${readiness.atl.toFixed(1)}
-- CTL (fitness): ${readiness.ctl.toFixed(1)}
-- TSB (form): ${readiness.tsb.toFixed(1)}
-${readiness.tsb < -20 ? '⚠️ Athlete is significantly fatigued. Avoid prescribing hard sessions.' : ''}
-${readiness.tsb > 15 ? '✅ Athlete is well-rested and ready for quality work.' : ''}
+- Fitness (CTL): ${readiness.ctl.toFixed(1)} | Fatigue (ATL): ${readiness.atl.toFixed(1)} | Form (TSB): ${readiness.tsb.toFixed(1)}
+- Coach note: ${readiness.message}
+
+Interpret readiness sensibly: a LOW CTL (under ~10) means there simply isn't much
+training history yet — that is NOT fatigue, so do not tell the athlete they are
+exhausted based on a sparse dataset. Only warn about fatigue when there is a
+genuine chronic base AND form is clearly negative. When in doubt, ask how they feel.
 `
-    : ''
+    : `
+## Today's Readiness
+No training history yet — treat the athlete as fresh. Don't infer fatigue from missing data.
+`
 
   return `You are an expert athletic coach and training advisor for ${name}.
 

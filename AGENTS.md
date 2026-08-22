@@ -96,6 +96,19 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 21. Readiness/TSB math needs a sparse-data guard
+Symptom: coach reports "0/100 fatigued" for an athlete who just did one easy run and is
+actually fresh.
+Cause: ATL/CTL/TSB models need weeks of consistent data. With little history, a single recent
+run makes ATL spike above a near-zero CTL → large negative TSB → the old `score = 50 + tsb*2`
+scaling floored at 0. Pure garbage-in on sparse data.
+Fix: `lib/ai/readiness.ts` `computeReadiness()` is the single source of truth (used by chat
+route AND getTrainingLoad tool). It (a) returns a neutral/fresh score (80) with an explanatory
+message when data is insufficient (< 6 sessions OR CTL < 5 OR span < 10 days), and (b)
+normalises TSB by CTL (`65 + ratio*35`) so fatigue is relative to the athlete's own base. The
+coach system prompt also instructs: low CTL = little history, NOT fatigue. Verified across
+sparse/established/overloaded scenarios.
+
 ### 20. MCPClient must be a singleton; "AI is not configured" is often a build-agent throw
 Two related traps in the AI coach:
 - **MCPClient singleton**: Mastra throws "MCPClient was initialized multiple times with the

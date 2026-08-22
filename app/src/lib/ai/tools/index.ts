@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { computeReadiness } from '../readiness'
 
 /**
  * Factory — builds all typed Mastra tools with a scoped Supabase client.
@@ -44,56 +45,18 @@ export function buildCoachTools(supabase: SupabaseClient<Database>, userId: stri
   const getTrainingLoad = createTool({
     id: 'getTrainingLoad',
     description:
-      'Calculate the athlete\'s current training load metrics: ATL (acute/fatigue), CTL (chronic/fitness), TSB (form). Use this to assess readiness before prescribing sessions.',
+      "Calculate the athlete's readiness: ATL (acute/fatigue), CTL (chronic/fitness), TSB (form), and a 0-100 readiness score. Use this to assess readiness before prescribing sessions. If the athlete has little history the score defaults to fresh — say so rather than claiming fatigue.",
     inputSchema: z.object({}),
     execute: async () => {
-      // Fetch last 42 days of activities
-      const since = new Date()
-      since.setDate(since.getDate() - 42)
-
-      const { data, error } = await supabase
-        .from('activities')
-        .select('started_at, training_load, sport_type')
-        .eq('user_id', userId)
-        .gte('started_at', since.toISOString())
-        .order('started_at', { ascending: true })
-
-      if (error) throw new Error(`Failed to fetch training load: ${error.message}`)
-
-      const activities = data ?? []
-
-      // EWMA decay factors
-      const ATL_DAYS = 7
-      const CTL_DAYS = 42
-      const atlDecay = 1 - Math.exp(-1 / ATL_DAYS)
-      const ctlDecay = 1 - Math.exp(-1 / CTL_DAYS)
-
-      let atl = 0
-      let ctl = 0
-
-      // Build daily load map
-      const dailyLoad: Record<string, number> = {}
-      for (const a of activities) {
-        const day = a.started_at.slice(0, 10)
-        dailyLoad[day] = (dailyLoad[day] ?? 0) + (a.training_load ?? 0)
+      const readiness = await computeReadiness(supabase, userId)
+      if (!readiness) {
+        return {
+          hasData: false,
+          message:
+            'No activities logged yet, so training load cannot be computed. Assume the athlete is fresh.',
+        }
       }
-
-      // Walk day by day over last 42 days
-      for (let i = 41; i >= 0; i--) {
-        const d = new Date()
-        d.setDate(d.getDate() - i)
-        const day = d.toISOString().slice(0, 10)
-        const load = dailyLoad[day] ?? 0
-        atl = atl + atlDecay * (load - atl)
-        ctl = ctl + ctlDecay * (load - ctl)
-      }
-
-      const tsb = ctl - atl
-      const score = Math.max(0, Math.min(100, Math.round(50 + tsb * 2)))
-      const label =
-        tsb > 15 ? 'Fresh' : tsb > 0 ? 'Optimal' : tsb > -20 ? 'Tired' : 'Very Fatigued'
-
-      return { atl: +atl.toFixed(2), ctl: +ctl.toFixed(2), tsb: +tsb.toFixed(2), score, label }
+      return { hasData: true, ...readiness }
     },
   })
 

@@ -2,7 +2,7 @@ import type { CoreMessage } from 'ai'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { buildCoachAgent } from '@/lib/ai/agents/coach'
 import { resolveUserAISettings } from '@/lib/ai/provider'
-import type { ReadinessResult } from '@/types/activity'
+import { computeReadiness } from '@/lib/ai/readiness'
 
 export const runtime = 'nodejs' // Mastra + MCP need Node APIs
 export const maxDuration = 60
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
       .single()
       .then((r) => ({ data: r.data })),
     resolveUserAISettings(user.id),
-    computeReadiness(user.id),
+    computeReadiness(supabase, user.id),
   ])
 
   let agent
@@ -128,53 +128,4 @@ export async function POST(request: Request) {
       'X-Accel-Buffering': 'no',
     },
   })
-}
-
-/**
- * Compute a lightweight readiness snapshot (ATL/CTL/TSB) from recent activities.
- * Mirrors the getTrainingLoad tool so the system prompt can be readiness-aware.
- */
-async function computeReadiness(userId: string): Promise<ReadinessResult | null> {
-  const supabase = await createAdminClient()
-  const since = new Date()
-  since.setDate(since.getDate() - 42)
-
-  const { data } = await supabase
-    .from('activities')
-    .select('started_at, training_load')
-    .eq('user_id', userId)
-    .gte('started_at', since.toISOString())
-
-  const activities = data ?? []
-  if (!activities.length) return null
-
-  const dailyLoad: Record<string, number> = {}
-  for (const a of activities) {
-    const day = a.started_at.slice(0, 10)
-    dailyLoad[day] = (dailyLoad[day] ?? 0) + (a.training_load ?? 0)
-  }
-
-  const atlDecay = 1 - Math.exp(-1 / 7)
-  const ctlDecay = 1 - Math.exp(-1 / 42)
-  let atl = 0
-  let ctl = 0
-  for (let i = 41; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    const load = dailyLoad[d.toISOString().slice(0, 10)] ?? 0
-    atl += atlDecay * (load - atl)
-    ctl += ctlDecay * (load - ctl)
-  }
-  const tsb = ctl - atl
-  const score = Math.max(0, Math.min(100, Math.round(50 + tsb * 2)))
-  const label: ReadinessResult['label'] =
-    tsb > 15 ? 'Fresh' : tsb > 0 ? 'Optimal' : tsb > -20 ? 'Tired' : 'Very Fatigued'
-  const message =
-    tsb < -20
-      ? 'Significant fatigue — prioritise recovery.'
-      : tsb > 15
-        ? 'Well rested — good day for quality work.'
-        : 'Balanced training load.'
-
-  return { atl: +atl.toFixed(1), ctl: +ctl.toFixed(1), tsb: +tsb.toFixed(1), score, label, message }
 }
