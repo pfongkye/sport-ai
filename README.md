@@ -237,6 +237,9 @@ npm start          # serves on :3000, no HMR
 
 ### Start both tunnels
 
+> If ngrok is already running with a single tunnel, **stop it first** (Ctrl-C) — you need
+> both ports exposed.
+
 A ready-made ngrok config is at `docker/ngrok.yml` (tunnels 3000 + 8000):
 
 ```bash
@@ -244,41 +247,56 @@ export NGROK_AUTHTOKEN=your-token   # from https://dashboard.ngrok.com
 ngrok start --all --config docker/ngrok.yml
 ```
 
-Ngrok prints two https URLs, e.g.:
-```
-app       → https://aaaa.ngrok-free.app  (port 3000)
-supabase  → https://bbbb.ngrok-free.app  (port 8000)
-```
+Ngrok prints two https URLs (one for :3000, one for :8000).
 
-### Point the app and auth at the tunnel URLs
+### Sync the env files automatically
 
-**`app/.env.local`** (browser-facing — must be the public tunnel URLs):
+Instead of hand-editing both `.env` files, run the helper — it reads the live tunnel URLs
+from ngrok's local API and rewrites `app/.env.local` and `docker/.env` for you:
+
 ```bash
-NEXT_PUBLIC_APP_URL=https://aaaa.ngrok-free.app
-NEXT_PUBLIC_SUPABASE_URL=https://bbbb.ngrok-free.app
+./docker/ngrok-sync.sh
 ```
 
-**`docker/.env`** (auth server config):
+It backs up both files (`*.bak`), sets all the URLs, and prints the exact Google redirect
+URI to whitelist. To revert to localhost later:
+
 ```bash
-SITE_URL=https://aaaa.ngrok-free.app
-SUPABASE_PUBLIC_URL=https://bbbb.ngrok-free.app
-API_EXTERNAL_URL=https://bbbb.ngrok-free.app/auth/v1
-ADDITIONAL_REDIRECT_URLS=https://aaaa.ngrok-free.app/**
+./docker/ngrok-sync.sh --local
 ```
 
-Then rebuild the app (NEXT_PUBLIC vars are baked in) and recreate auth:
+### Apply the changes
+
 ```bash
+# Rebuild the app — NEXT_PUBLIC_* vars are baked into the bundle at build time
 cd app && npm run build && npm start
+
+# Recreate auth so GoTrue picks up the new SITE_URL / redirect URLs
 cd ../docker && docker compose --env-file .env up -d auth
 ```
 
-Also add `https://bbbb.ngrok-free.app/auth/v1/callback` to your Google OAuth redirect URIs.
+### Whitelist the ngrok URL in Google — REQUIRED EACH TIME
+
+Because free ngrok URLs change on every restart, you must add the new callback URL to your
+Google OAuth client **every time** you start a new tunnel:
+
+1. Go to [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
+2. Open your OAuth client
+3. Under **Authorized redirect URIs**, add the Supabase tunnel callback (printed by
+   `ngrok-sync.sh`):
+   ```
+   https://<supabase-tunnel>.ngrok-free.app/auth/v1/callback
+   ```
+4. Save. Changes can take a minute to propagate.
+
+If you skip this, Google returns `redirect_uri_mismatch`.
 
 ### Free-tier caveat
 
-Free ngrok assigns **random domains on every restart**, so you must re-edit both `.env`
-files and the Google redirect URI each time. For repeatable testing, reserve stable domains
-(uncomment the `domain:` lines in `docker/ngrok.yml`) — worth it once you test regularly.
+Free ngrok assigns **random domains on every restart**, so you re-run `ngrok-sync.sh`, rebuild,
+and re-whitelist the Google redirect URI each time. To avoid the churn, reserve stable domains
+(uncomment the `domain:` lines in `docker/ngrok.yml`) — then the URLs never change and you
+whitelist Google once.
 
 > The `wss://.../_next/hmr failed` console errors on the dev server are **harmless** — they
 > only affect live-reload over the tunnel, not the app. Use `npm start` (prod build) to

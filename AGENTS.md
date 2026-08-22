@@ -84,8 +84,12 @@ Causes & fixes:
   tunnel BOTH the app (3000) and Supabase (8000), then set `NEXT_PUBLIC_SUPABASE_URL` +
   the `docker/.env` URLs to the public tunnel URLs. Config: `docker/ngrok.yml`
   (`ngrok start --all --config docker/ngrok.yml`).
-- Free ngrok rotates domains each restart → re-edit both `.env` files + Google redirect URI,
-  rebuild app (NEXT_PUBLIC baked in), `up -d auth`. Reserve domains to avoid the churn.
+- Free ngrok rotates domains each restart → run `./docker/ngrok-sync.sh` (reads live tunnel
+  URLs from ngrok's local API at :4040 and rewrites both `.env` files), rebuild app
+  (NEXT_PUBLIC baked in), `up -d auth`. Then re-whitelist the Google redirect URI at
+  console.cloud.google.com/auth/clients EVERY restart (new URL = new callback), or Google
+  returns `redirect_uri_mismatch`. `ngrok-sync.sh --local` reverts to localhost.
+  Reserve domains (docker/ngrok.yml `domain:`) to avoid the whole churn.
 
 ### 10. PKCE verifier not found — browser and server clients must share a storageKey
 Symptom: OAuth callback fails with `pkce_code_verifier_not_found` (HTTP 400); user bounces

@@ -4,6 +4,10 @@ app/.env.local
 app/.env*.local
 .env
 .env.local
+# env backups created by ngrok-sync.sh
+*.env.bak
+docker/.env.bak
+app/.env.local.bak
 
 # ── Dependencies ──────────────────────────────────────────────
 node_modules/
