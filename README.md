@@ -498,6 +498,23 @@ delete all for `localhost`) and retry, or stale cookies under the old key interf
 
 ---
 
+### `403 Forbidden` on `/_next/static/*` chunks through ngrok
+
+**Cause**: Next.js blocks cross-origin requests to its `/_next/*` dev resources by default.
+The ngrok host is a different origin than `localhost`, so the JS chunks 403 and the app
+shell fails to load. The dev log shows "Blocked cross-origin request to Next.js dev resource".
+
+**Fix**: `app/next.config.ts` allows `*.ngrok-free.app` (and `.ngrok.app`/`.ngrok.io`) in
+`allowedDevOrigins`, and `ngrok-sync.sh` also writes the exact host to
+`NEXT_ALLOWED_DEV_ORIGINS` in `app/.env.local`. **Restart the dev server** after syncing:
+```bash
+cd docker && docker compose --env-file .env restart app   # or restart `npm run dev`
+```
+This only affects the dev server. A production build (`npm run build && npm start`) has no
+such guard — another reason to use `npm start` for mobile testing.
+
+---
+
 ### OAuth completes at Google but you land back on `/login?redirectTo=%2Fapi%2Fauth%2Fcallback`
 
 **Cause**: The auth middleware treated the OAuth callback route as protected. The callback

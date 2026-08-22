@@ -96,6 +96,18 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 13. 403 on /_next/static/* through ngrok → allowedDevOrigins
+Symptom: `GET https://<ngrok>/_next/static/chunks/....js 403 (Forbidden)`; app shell won't
+load through the tunnel. Dev-server log shows "Blocked cross-origin request to Next.js dev
+resource".
+Cause: Next.js blocks cross-origin requests to `/_next/*` dev resources by default. The ngrok
+host is a different origin than `localhost`, so chunks 403.
+Fix: `allowedDevOrigins` in `app/next.config.ts` includes `*.ngrok-free.app` /`*.ngrok.app`/
+`*.ngrok.io` wildcards, PLUS reads `NEXT_ALLOWED_DEV_ORIGINS` (comma-separated) which
+`ngrok-sync.sh` sets to the exact rotating app host (belt-and-suspenders, since wildcard
+support has been buggy in some Next versions). Restart the dev server after changes. This
+only affects `npm run dev` — a production build (`npm start`) has no dev-resource guard.
+
 ### 12. Google OAuth needs the redirect URI, NOT a JavaScript origin
 This app uses the server-side authorization-code flow (browser → Supabase → Google →
 Supabase `/auth/v1/callback`). The browser never calls Google via JS, so **Authorized
