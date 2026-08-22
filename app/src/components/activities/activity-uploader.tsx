@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { apiFetch } from '@/lib/api-fetch'
 import { Button } from '@/components/ui/button'
 
 type FileStatus = 'pending' | 'uploading' | 'created' | 'duplicate' | 'error'
@@ -55,7 +56,7 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
     pending.forEach((i) => form.append('files', i.file))
 
     try {
-      const res = await fetch('/api/activities/upload', { method: 'POST', body: form })
+      const res = await apiFetch('/api/activities/upload', { method: 'POST', body: form })
 
       // Read the response as text first so we can surface non-JSON errors
       // (500 HTML pages, 413 payload-too-large, ngrok error pages, etc.)

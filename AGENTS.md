@@ -96,6 +96,18 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 18. ngrok free tier breaks fetch/POST via the browser interstitial
+Symptom: a feature works on localhost but fails only through the ngrok URL (e.g. file upload
+"failed" on mobile, succeeds on desktop). The POST never reaches the app; the response is
+ngrok's HTML warning page, not JSON.
+Cause: ngrok free tier serves a browser interstitial on requests lacking the
+`ngrok-skip-browser-warning` header (https://ngrok.com/abuse). Normal page loads pass it
+after the user clicks through once, but `fetch()`/XHR calls don't send it, so they get HTML.
+Fix: all browser→API calls go through `src/lib/api-fetch.ts` (`apiFetch`) which sets
+`ngrok-skip-browser-warning: true`. Belt-and-suspenders: `docker/ngrok.yml` also adds the
+header per-tunnel via `request_header.add` (restart ngrok to apply). Header is harmless on
+localhost/prod. Any NEW client fetch to our API should use `apiFetch`, not raw `fetch`.
+
 ### 17. FIT files come in variants — only activities are importable
 `.FIT` is a container format: **activity** (recorded workout, has session + timed records),
 **course/route** (planned route, distance-based waypoints, no session), and **workout/plan**

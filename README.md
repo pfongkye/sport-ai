@@ -511,6 +511,19 @@ needed — ngrok sets the forwarded headers automatically.
 
 ---
 
+### A feature works on localhost but fails through the ngrok URL (e.g. upload on mobile)
+
+**Cause**: ngrok's free tier serves a browser interstitial warning page for requests without
+the `ngrok-skip-browser-warning` header. Regular page navigations pass it after the one-time
+click-through, but `fetch()` calls (upload, chat, delete) don't — so they receive HTML
+instead of JSON and fail. This only happens via ngrok, never on localhost.
+
+**Fix**: browser→API calls use `apiFetch` (`app/src/lib/api-fetch.ts`), which sets the header.
+`docker/ngrok.yml` also injects it per-tunnel (`request_header.add`) — restart ngrok to apply.
+When adding new client-side calls to our API, use `apiFetch` instead of raw `fetch`.
+
+---
+
 ### `Module not found: Can't resolve '<package>'` after adding a dependency
 
 **Cause**: When the app runs in Docker, the `app` service mounts an anonymous volume at
