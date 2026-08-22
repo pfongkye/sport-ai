@@ -498,6 +498,19 @@ delete all for `localhost`) and retry, or stale cookies under the old key interf
 
 ---
 
+### After login, the app redirects to `localhost:3000` instead of the ngrok URL
+
+**Cause**: Server-side redirects were built from `request.url`'s origin, which behind a proxy
+is the internal address (`localhost:3000`) the Next.js server received the request on — not
+the public ngrok host.
+
+**Fix**: auth redirects now resolve the public origin from the `x-forwarded-host` /
+`x-forwarded-proto` headers (falling back to `NEXT_PUBLIC_APP_URL`). Handled in
+`app/src/app/api/auth/callback/route.ts` and `app/src/lib/supabase/middleware.ts`. No config
+needed — ngrok sets the forwarded headers automatically.
+
+---
+
 ### `403 Forbidden` on `/_next/static/*` chunks through ngrok
 
 **Cause**: Next.js blocks cross-origin requests to its `/_next/*` dev resources by default.

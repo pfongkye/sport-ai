@@ -96,6 +96,17 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 14. Post-login redirects bounce to localhost instead of the ngrok URL
+Symptom: OAuth/login succeeds but the app redirects to `http://localhost:3000/...` instead
+of staying on the ngrok URL.
+Cause: `new URL(request.url).origin` and `request.nextUrl` reflect the INTERNAL address the
+Next.js server received the proxied request on (localhost:3000), not the public tunnel host.
+Fix: build all auth redirects from the forwarded host. `app/src/app/api/auth/callback/route.ts`
+has `resolvePublicOrigin()` (x-forwarded-host/proto → NEXT_PUBLIC_APP_URL → request origin),
+and `lib/supabase/middleware.ts` rewrites `url.host`/`protocol` from `x-forwarded-host` on all
+its redirects. Any NEW redirect in auth/server code behind the proxy must do the same, or it
+will leak localhost.
+
 ### 13. 403 on /_next/static/* through ngrok → allowedDevOrigins
 Symptom: `GET https://<ngrok>/_next/static/chunks/....js 403 (Forbidden)`; app shell won't
 load through the tunnel. Dev-server log shows "Blocked cross-origin request to Next.js dev
