@@ -43,6 +43,22 @@ the user's time and erodes trust.
   cap K (~5). Embed on write with `text-embedding-3-small` (1536-dim, matches schema).
 - Files: `supabase/migrations/005_coaching.sql`, chat route, Tasks 2.9/2.10.
 
+## Durable facts: the user can EXPLICITLY remove any remembered fact
+- `athlete_facts` (Task 2.10) holds long-term facts ("prefers morning runs", "left calf
+  tightness", "no gym Mondays"). The athlete MUST be able to remove/forget any fact directly
+  and unambiguously — not only via AI-inferred deactivation.
+- Two removal paths, both first-class:
+  1. UI: a "What your coach remembers" list in Settings, each fact with a Remove control.
+  2. Conversational: "forget that / that's not true anymore" → coach calls a `dismissFact`
+     tool. The AI is a convenience, NOT the only way — the UI path never depends on the AI.
+- Removal = soft-dismiss (`active=false`) with a reason/timestamp, not hard-delete: keeps an
+  audit trail AND lets the extractor treat a dismissed fact as a negative signal so it is not
+  silently re-inferred next session. (A true hard-delete is offered too for GDPR/erasure.)
+- Removed/dismissed facts are excluded from the system-prompt "Durable facts" layer.
+- Why: facts expire (injuries heal, preferences change); a memory that only accumulates
+  becomes wrong and erodes trust. User agency over their own remembered data is required.
+- Files: `athlete_facts` migration, Task 2.10, Settings memory editor, `dismissFact` tool.
+
 ---
 When adding a new settled decision here, keep it short: what was decided + the one-line why +
 the file(s) it touches.

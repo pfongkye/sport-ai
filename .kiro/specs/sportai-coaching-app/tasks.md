@@ -299,10 +299,18 @@ each layer with its own token budget so the total stays well under the model lim
       durable facts from the conversation ("I prefer morning runs", "recurring left calf
       tightness", "no gym on Mondays"). Upsert; deactivate stale/contradicted facts rather
       than deleting (audit trail).
-- [ ] Inject active facts into the system prompt (the "Durable facts" layer above), newest/
-      highest-confidence first, within budget.
-- [ ] Let the athlete view/edit/delete their facts in Settings (transparency + control; also
-      GDPR-friendly).
+- [ ] Inject only `active` facts into the system prompt (the "Durable facts" layer above),
+      newest/highest-confidence first, within budget. Dismissed facts are never injected AND
+      act as a negative signal so the extractor doesn't silently re-infer them.
+- [ ] **Explicit user removal (required, AI-independent — see decisions.md)**:
+  - UI: "What your coach remembers" list in Settings; each fact has a Remove control.
+    `PATCH /api/facts/[id]` (dismiss: active=false + reason/timestamp) and
+    `DELETE /api/facts/[id]` (hard-delete for GDPR erasure). This path must work with NO AI
+    in the loop.
+  - Conversational: coach recognises "forget that / not true anymore" and calls a `dismissFact`
+    typed tool. Convenience layer only — never the sole way to remove a fact.
+  - Removal is soft-dismiss by default (reversible, audited); hard-delete offered explicitly.
+- [ ] Also let the athlete edit a fact's text and add a fact manually in the Settings editor.
 
 **Memory retrieval — pgvector HYBRID search (NOT pure RAG) — DONE**
 
