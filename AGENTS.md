@@ -299,6 +299,10 @@ configs change between versions.
   TypeScript check. The build passing is the bar before claiming a task is done.
 - **AI**: `CoachAgent` (`lib/ai/agents/coach.ts`) uses typed tools only — NO MCP in the app
   runtime (see gotcha #20). Model via `@ai-sdk/*@1` factories, stream via `streamLegacy()`.
+- **Voice = transcript-only**: chat voice and per-session notes transcribe audio via Whisper
+  and DISCARD the audio — only the transcript is stored (RAG operates on text). Do not persist
+  recordings by default (storage cost + privacy/GDPR). The `audio` bucket + nullable
+  `audio_url` exist for a future opt-in "keep audio" preference; leave NULL otherwise.
 - **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
   the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
   Never echo secret values into chat, logs, or commits.
