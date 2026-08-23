@@ -254,10 +254,12 @@
       directly; SAVE persists (editable before submit); list of notes with timestamp + delete;
       empty-state prompt; supports adding many notes
 
-**RAG wiring**
+**RAG wiring** — DONE
 - [x] Session notes embedded into `coaching_messages` → retrievable by the coach (Task 2.10)
-- [ ] Post-session insight prompt: feed existing notes' transcripts so the AI accounts for
-      subjective feel (pending — wire into the insight route)
+- [x] Post-session insight prompt feeds this activity's notes' transcripts (chronological)
+      so the AI accounts for subjective feel, with an explicit "take the athlete's notes into
+      account" instruction when notes exist — `api/activities/[id]/insight/route.ts`. Verified
+      the query returns the notes and composes into the prompt.
 
 **Deferred (opt-in, only if replay/re-transcription proves valuable)**
 - [ ] Add a user preference "keep audio recordings"; when on, upload the blob to
