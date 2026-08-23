@@ -264,7 +264,12 @@
       `{user_id}/audio/notes/...`, set `audio_url`, add playback UI + delete-object cleanup.
       Everything needed (bucket, nullable column) already exists — this is purely additive.
 
-### Task 2.10 — Coach memory: context budgeting + durable facts + RAG retrieval
+### Task 2.10 — Coach memory: pgvector HYBRID retrieval + context budgeting + durable facts
+
+> **Memory model = pgvector hybrid search, not pure RAG.** Long-term recall combines
+> embedding similarity WITH structured signals (recency, kind, activity link) and the typed
+> tools (exact/current facts). See `.kiro/steering/decisions.md` → "Coach memory". Do not
+> replace the typed tools with semantic search, and do not add an external vector DB.
 
 > **Problem being solved**: The chat route forwards the client's message history to the LLM
 > each turn. That grows unbounded → rising token cost and eventual context-limit errors, and
@@ -299,12 +304,21 @@ each layer with its own token budget so the total stays well under the model lim
 - [ ] Let the athlete view/edit/delete their facts in Settings (transparency + control; also
       GDPR-friendly).
 
-**RAG retrieval (semantic recall over history) — DONE**
-- [x] Embeddings on write for `coaching_messages` (chat + insight; session notes inherit it
-      once Task 2.9 lands) via OpenAI `text-embedding-3-small` (1536-dim) — `lib/ai/embeddings.ts`
-- [x] Retrieval: embed the current user message, call `search_coaching_messages`, take top-K
-      (5) above threshold (0.3), inject as a "relevant past context" system message —
-      `lib/ai/memory.ts`, wired in the chat route
+**Memory retrieval — pgvector HYBRID search (NOT pure RAG) — DONE**
+
+> DECISION (see `.kiro/steering/decisions.md`): memory is pgvector hybrid search in our own
+> Postgres — embedding similarity COMBINED with structured signals (recency/date window,
+> `metadata.kind`, `activity_id`) and the typed tools that fetch exact current facts. It is
+> NOT semantic RAG alone (which hallucinates relevance, ignores recency, and misses exact
+> numbers) and NOT an external vector DB (no mem0/Pinecone). Typed tools remain the source of
+> truth for precise/current data; retrieval adds subjective/historical context on top.
+
+- [x] Embeddings on write for `coaching_messages` (chat + insight; session notes inherit it)
+      via OpenAI `text-embedding-3-small` (1536-dim) — `lib/ai/embeddings.ts`
+- [x] Hybrid retrieval: embed the current user message, call `search_coaching_messages`
+      (migration 005 — vector cosine + date filter), take top-K (5) above threshold (0.3),
+      inject as a "relevant past context" system message — `lib/ai/memory.ts`, wired in chat
+- [x] Layered alongside typed tools (exact facts) + recent window — never vector-only
 - [x] Backfill: `POST /api/ai/memory/backfill` (idempotent; embedded existing 33 rows)
 - [x] Verified: query "fatigue score" retrieves the right past msgs at 0.62-0.67 similarity
 

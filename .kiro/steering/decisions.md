@@ -26,6 +26,23 @@ the user's time and erodes trust.
 - Transcribe then DISCARD audio; store only the transcript. Do not persist recordings by
   default (cost + privacy). Audio storage is a future opt-in, everything for it already exists.
 
+## Coach memory: pgvector HYBRID search (NOT pure/naive RAG, NOT an external vector DB)
+- Long-term memory lives in our own Postgres via pgvector — the `coaching_messages` table
+  (chat, insights, session notes) with an `embedding vector(1536)` column. No mem0, no
+  Pinecone/Weaviate, no separate vector service.
+- Retrieval is HYBRID, never vector-similarity alone: combine embedding similarity WITH
+  structured filters/signals (recency/date window, `metadata.kind`, `activity_id`, and the
+  typed tools that fetch exact recent data). Pure semantic RAG over everything is explicitly
+  rejected — it hallucinates relevance, ignores recency, and misses exact numbers the typed
+  tools already provide accurately.
+- The typed tools (getRecentActivities, getTrainingLoad, getPlannedSessions, getUserProfile)
+  remain the source of truth for precise/current facts. RAG only adds SUBJECTIVE / historical
+  context (e.g. "last time on this route your calf was tight") on top — it does not replace
+  the tools.
+- SQL: use `search_coaching_messages` (migration 005) — vector cosine + date filter — and
+  cap K (~5). Embed on write with `text-embedding-3-small` (1536-dim, matches schema).
+- Files: `supabase/migrations/005_coaching.sql`, chat route, Tasks 2.9/2.10.
+
 ---
 When adding a new settled decision here, keep it short: what was decided + the one-line why +
 the file(s) it touches.
