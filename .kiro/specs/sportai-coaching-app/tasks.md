@@ -216,6 +216,63 @@
   - Return configured Mastra provider client
   - Fall back to `process.env.OPENAI_API_KEY` if no user key
 
+### Task 2.9 — Per-Session Voice Notes (transcribed + stored for RAG)
+
+> **What & why**: Right after (or any time viewing) a session, the athlete records a quick
+> voice note — "legs felt heavy the last 3k", "new shoes, no blisters", "cut it short, calf
+> tight". It's transcribed, attached to that activity, and embedded so the coach can recall it
+> later ("last time you ran this route your calf was tight"). This is subjective context the
+> device data can't capture. Reuses the same Whisper transcription + audio storage as chat.
+
+**Data model**
+- [ ] Migration: add `activity_notes` table (or reuse `coaching_messages` with
+      `metadata.kind='session_voice_note'` + `activity_id`). Decision: use a dedicated
+      `activity_notes` table for clean per-activity querying, and ALSO write an embedded copy
+      into `coaching_messages` (kind `session_voice_note`) so RAG retrieval has one place to
+      search. Columns: id, user_id, activity_id (FK, cascade), audio_url, transcript,
+      duration_s, embedding vector(1536), created_at. RLS: own rows only.
+
+**Capture + transcribe**
+- [ ] Reuse `VoiceRecorder` (from Task 2.6) in a compact "add voice note" control on the
+      activity detail page
+- [ ] `POST /api/activities/[id]/notes`:
+  - Auth + verify the activity belongs to the user
+  - Store audio blob in Supabase Storage `{user_id}/audio/notes/{activityId}-{ts}.webm`
+  - Transcribe via Whisper (shared transcription helper from Task 2.6)
+  - Generate embedding of the transcript (OpenAI embeddings)
+  - Insert into `activity_notes` (+ mirror embedded row into `coaching_messages`)
+  - Return the note (transcript + audio url)
+- [ ] `GET /api/activities/[id]/notes` — list notes for an activity (chronological)
+- [ ] `DELETE /api/activities/[id]/notes/[noteId]` — delete note + its audio object
+
+**UI**
+- [ ] `SessionVoiceNotes` component on `/activities/[id]`:
+  - Record button → transcription preview (editable before save)
+  - List of past notes for this activity: transcript text, play-audio button, timestamp,
+    delete
+  - Empty state prompt ("Add a voice note about how this felt")
+- [ ] Also allow a text note (typed) via the same control — voice is transcribed to text
+      anyway, so the storage is identical
+
+**RAG wiring**
+- [ ] Include session voice notes in the coach's retrieval context (they live in
+      `coaching_messages` with embeddings once RAG is implemented — see Task 2.10)
+- [ ] Post-session insight prompt: if a voice note exists for the activity, feed its
+      transcript in so the AI's analysis accounts for subjective feel, not just the numbers
+
+### Task 2.10 — RAG memory retrieval (deferred; enables long-term recall)
+
+> Currently the coach gets recent messages + typed-tool data. This task adds true semantic
+> recall over the athlete's history (past chats, session insights, and voice notes).
+
+- [ ] Generate embeddings on every stored `coaching_messages` row (chat, insight, voice note)
+      using OpenAI `text-embedding-3-small` (1536-dim, matches schema)
+- [ ] Implement retrieval in the chat route: embed the user's message, call
+      `search_coaching_messages` (hybrid vector + date filter, already in migration 005),
+      inject top-K relevant snippets into the system prompt as "relevant past context"
+- [ ] Backfill embeddings for existing rows (one-off script)
+- [ ] Guard cost: only embed on write, cache, and cap retrieval K (e.g. 5)
+
 ---
 
 ## Phase 3: Planning & Adaptation

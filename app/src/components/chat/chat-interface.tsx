@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { http } from '@/lib/http'
 import { cn } from '@/lib/utils'
+import { VoiceRecorder } from './voice-recorder'
 
 interface Msg {
   id: string
@@ -24,6 +25,7 @@ export function ChatInterface() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(true)
+  const [speakEnabled, setSpeakEnabled] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -36,6 +38,30 @@ export function ChatInterface() {
       .finally(() => setLoadingHistory(false))
   }, [])
 
+  // Restore read-aloud preference
+  useEffect(() => {
+    setSpeakEnabled(localStorage.getItem('coach:speak') === '1')
+  }, [])
+  useEffect(() => {
+    localStorage.setItem('coach:speak', speakEnabled ? '1' : '0')
+    if (!speakEnabled && typeof window !== 'undefined') window.speechSynthesis?.cancel()
+  }, [speakEnabled])
+
+  // Speak text via the browser's SpeechSynthesis (no API cost).
+  const speak = useCallback(
+    (text: string) => {
+      if (!speakEnabled || typeof window === 'undefined' || !window.speechSynthesis) return
+      // Strip markdown-ish characters so it reads cleanly.
+      const clean = text.replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim()
+      if (!clean) return
+      window.speechSynthesis.cancel()
+      const u = new SpeechSynthesisUtterance(clean)
+      u.rate = 1.05
+      window.speechSynthesis.speak(u)
+    },
+    [speakEnabled]
+  )
+
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
@@ -47,6 +73,9 @@ export function ChatInterface() {
   async function send(text: string) {
     const trimmed = text.trim()
     if (!trimmed || streaming) return
+
+    // Stop any in-progress read-aloud when the user sends a new message.
+    if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
 
     const userMsg: Msg = { id: `u-${Date.now()}`, role: 'user', content: trimmed }
     const assistantId = `a-${Date.now()}`
@@ -94,6 +123,8 @@ export function ChatInterface() {
             m.id === assistantId ? { ...m, content: '⚠️ No response. Try again.' } : m
           )
         )
+      } else {
+        speak(acc)
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Network error'
@@ -181,6 +212,14 @@ export function ChatInterface() {
             send(input)
           }}
         >
+          <VoiceRecorder
+            disabled={streaming}
+            onTranscript={(text) => {
+              if (!text) return
+              // Append to the input so the athlete can review/edit before sending.
+              setInput((prev) => (prev ? `${prev} ${text}` : text))
+            }}
+          />
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -190,10 +229,36 @@ export function ChatInterface() {
                 send(input)
               }
             }}
-            placeholder="Ask your coach…"
+            placeholder="Ask your coach, or tap the mic…"
             rows={1}
             className="flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-32"
           />
+          <button
+            type="button"
+            onClick={() => setSpeakEnabled((s) => !s)}
+            aria-pressed={speakEnabled}
+            aria-label={speakEnabled ? 'Disable read-aloud' : 'Enable read-aloud'}
+            title={speakEnabled ? 'Read-aloud on' : 'Read-aloud off'}
+            className={cn(
+              'shrink-0 flex items-center justify-center size-10 rounded-xl transition-colors',
+              speakEnabled
+                ? 'bg-[var(--primary)]/15 text-[var(--primary)]'
+                : 'bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--border)]'
+            )}
+          >
+            {speakEnabled ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <line x1="23" y1="9" x2="17" y2="15" />
+                <line x1="17" y1="9" x2="23" y2="15" />
+              </svg>
+            )}
+          </button>
           <button
             type="submit"
             disabled={streaming || !input.trim()}
