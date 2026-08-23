@@ -63,6 +63,7 @@ export const SESSION_TYPE_LABELS: Record<string, string> = {
 }
 
 /** Format a date to a readable string */
+// TODO(i18n): use the active locale (user_settings.language) instead of hardcoded en-GB.
 export function formatDate(date: string | Date, format: 'short' | 'long' = 'short'): string {
   const d = typeof date === 'string' ? new Date(date) : date
   if (format === 'long') {

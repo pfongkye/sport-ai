@@ -303,6 +303,12 @@ configs change between versions.
   and DISCARD the audio — only the transcript is stored (RAG operates on text). Do not persist
   recordings by default (storage cost + privacy/GDPR). The `audio` bucket + nullable
   `audio_url` exist for a future opt-in "keep audio" preference; leave NULL otherwise.
+- **English-only for now (i18n deferred to Phase 7)**: don't add per-language logic yet. Voice
+  transcription is intentionally pinned to English (`TRANSCRIBE_LANGUAGE='en'`), dates use
+  `en-GB`. Seams to change later are marked with `TODO(i18n)` in the code
+  (`api/ai/voice/transcribe`, `lib/utils.ts`); `user_settings.language`/`units` columns already
+  exist. When you DO add copy, don't hardcode new user-facing strings in a way that's hard to
+  extract — but full i18n is a dedicated phase, not incidental work.
 - **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
   the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
   Never echo secret values into chat, logs, or commits.

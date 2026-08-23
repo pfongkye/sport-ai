@@ -487,6 +487,68 @@
 
 ---
 
+## Phase 7: Internationalisation (i18n) — deferred; English-only until then
+
+> **Why deferred**: the app is intentionally English-only for now. Every language-facing
+> surface currently pins English (e.g. voice transcription forces `language='en'` via
+> `TRANSCRIBE_LANGUAGE` in `api/ai/voice/transcribe`). This phase makes the app
+> multilingual end-to-end: UI text, formatting, voice, and AI output.
+>
+> **Groundwork already in place** (don't re-invent): `user_settings.language` and
+> `user_settings.units` columns exist; onboarding can already set a locale later. The voice
+> route has a `TODO(i18n)` marker at the single point that needs to change. Search the
+> codebase for `TODO(i18n)` before starting — each marks a spot to revisit.
+>
+> **Pieces can be pulled forward individually** — none of this blocks other phases. If a
+> second language is needed sooner (e.g. French for you), do 7.1 + 7.2 + the voice bit of 7.4
+> and ship.
+
+### Task 7.1 — Locale foundation
+- [ ] Pick the library: `next-intl` (recommended for App Router — server + client, typed
+      messages) or `next-i18next`. Default to `next-intl`.
+- [ ] Add locale routing/detection: default `en`; detect from `user_settings.language`, then
+      `Accept-Language`, then fallback. Persist the chosen locale in `user_settings.language`.
+- [ ] Set `<html lang>` dynamically; add a language switcher in `/settings`.
+- [ ] Decide URL strategy: prefer a cookie/`user_settings`-driven locale (no `/[locale]/`
+      path segment) to avoid restructuring all routes — simpler for an authed app.
+
+### Task 7.2 — Extract & translate UI strings
+- [ ] Externalise all hardcoded UI copy into message catalogs (`messages/en.json`, then
+      `messages/fr.json`, etc.). Cover: nav, dashboard, activities, coach, plan, nutrition,
+      settings, onboarding, login, uploader statuses, error/toast messages, empty states.
+- [ ] Replace inline strings with `t('key')` lookups.
+- [ ] Add a lint/check (or script) that flags untranslated/hardcoded strings.
+- [ ] Provide `fr` translations first (primary second language); structure so adding more
+      locales is drop-in.
+
+### Task 7.3 — Locale-aware formatting
+- [ ] Dates/times via `Intl.DateTimeFormat` with the active locale (replace the hardcoded
+      `en-GB` in `lib/utils.ts` `formatDate`/`timeAgo`).
+- [ ] Numbers via `Intl.NumberFormat`.
+- [ ] Units: honour `user_settings.units` (metric/imperial) in `formatDistance`/`formatPace`
+      (pace already partly there) — km/mi, m/ft; keep storage in SI, format at the edge.
+
+### Task 7.4 — Voice & AI output in the user's language
+- [ ] **Voice input**: replace `TRANSCRIBE_LANGUAGE='en'` with the user's
+      `user_settings.language`, using `/audio/transcriptions` + `language` hint so the
+      transcript stays in the spoken language (today it's pinned to English on purpose).
+- [ ] **Decide the storage-language policy for RAG**: either (a) store transcripts/messages in
+      the user's language and embed multilingually (`text-embedding-3-*` are multilingual), or
+      (b) keep an English canonical copy for retrieval + a display copy. Recommend (a) —
+      simpler, embeddings are multilingual, and the LLM handles cross-lingual context.
+- [ ] **AI responses**: instruct the CoachAgent (system prompt) to reply in the user's
+      `language`. Inject the locale into `buildCoachSystemPrompt`.
+- [ ] **Read-aloud (TTS)**: pass a matching `lang`/voice to `SpeechSynthesisUtterance` so the
+      browser picks a voice for the active locale.
+
+### Task 7.5 — QA & content
+- [ ] Pseudo-localisation pass (catch clipped/hardcoded strings, layout overflow).
+- [ ] RTL check if any RTL locale is added later (defer unless needed).
+- [ ] Translate transactional/system copy (auth emails, error pages) if applicable.
+- [ ] Add i18n smoke tests: switch locale → key screens render translated; formatting matches.
+
+---
+
 ## Testing (introduce at MVP, then maintain going forward)
 
 > **Timing**: hold off on a big test suite while the surface area is still churning.
