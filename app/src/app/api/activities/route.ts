@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { activityDraftSchema } from '@/lib/activities/draft-schema'
+import { insertManualActivity, findLikelyDuplicate } from '@/lib/activities/insert-manual'
+
+export const runtime = 'nodejs'
 
 /**
  * GET /api/activities
@@ -43,4 +47,69 @@ export async function GET(request: Request) {
   const nextCursor = hasMore ? activities[activities.length - 1].started_at : null
 
   return NextResponse.json({ activities, nextCursor })
+}
+
+/**
+ * POST /api/activities
+ * Body: a confirmed ActivityDraft (see draft-schema) plus optional `force`.
+ * Creates a manual activity (source:'manual', no file, no streams).
+ *
+ * Dedup (spec Req 4.5): manual entries have no external_id, so before inserting
+ * we look for an existing activity of the same sport within ±90 min. If found
+ * and `force` is not set, respond 409 with the candidate so the UI can offer
+ * "save anyway".
+ */
+export async function POST(request: Request) {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const force = Boolean((body as { force?: unknown } | null)?.force)
+
+  const parsed = activityDraftSchema.safeParse(body)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]
+    const field = first?.path?.[0]
+    return NextResponse.json(
+      {
+        error: 'Invalid activity',
+        field: typeof field === 'string' ? field : undefined,
+        message: first?.message,
+      },
+      { status: 400 }
+    )
+  }
+  const draft = parsed.data
+
+  if (!force) {
+    const dup = await findLikelyDuplicate(supabase, user.id, {
+      sportType: draft.sportType,
+      startedAt: draft.startedAt,
+    })
+    if (dup) {
+      return NextResponse.json(
+        { error: 'possible_duplicate', duplicate: dup },
+        { status: 409 }
+      )
+    }
+  }
+
+  try {
+    const { id } = await insertManualActivity(supabase, user.id, draft)
+    return NextResponse.json({ id }, { status: 201 })
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Failed to save activity' },
+      { status: 500 }
+    )
+  }
 }
