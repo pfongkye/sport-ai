@@ -102,9 +102,12 @@ for future RAG recall). Without a discriminator, insights leaked into the chat f
 orphaned assistant messages. Convention: every message carries `metadata.kind` —
 `'chat'` for the coach chat, `'post_session_insight'` for activity insights (also has
 `activity_id`). The chat history query excludes non-chat kinds
-(`metadata->>kind.is.null,metadata->>kind.neq.post_session_insight`; null kept for legacy
-rows). Any NEW message kind (nutrition insight, weekly summary, etc.) must set `metadata.kind`
-and be filtered from surfaces where it doesn't belong.
+(`metadata->>kind.is.null,metadata->>kind.neq.post_session_insight`; null kept defensively).
+Migration `009_coaching_message_kind.sql` backfills legacy null-kind rows to 'chat'
+(idempotent) and indexes `(user_id, metadata->>kind)`, so ALL rows now carry an explicit kind
+— code can rely on `kind='chat'` without the null special-case. Any NEW message kind
+(nutrition insight, weekly summary, etc.) must set `metadata.kind` and be filtered from
+surfaces where it doesn't belong.
 
 ### 21. Readiness/TSB math needs a sparse-data guard
 Symptom: coach reports "0/100 fatigued" for an athlete who just did one easy run and is
