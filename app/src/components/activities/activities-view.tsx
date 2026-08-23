@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ActivityUploader } from './activity-uploader'
+import { AddActivityByVoice } from './add-activity-by-voice'
 import {
   SPORT_EMOJI,
   SPORT_LABELS,
@@ -34,6 +35,7 @@ const SPORTS = ['all', 'run', 'football', 'gym', 'cycle', 'other']
 
 export function ActivitiesView({ initialActivities }: { initialActivities: ActivityRow[] }) {
   const [showUpload, setShowUpload] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
   const [filter, setFilter] = useState('all')
 
   const activities =
@@ -45,10 +47,34 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
     <div className="p-4 md:p-6 space-y-5 max-w-4xl">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-[var(--foreground)]">Activities</h1>
-        <Button onClick={() => setShowUpload((s) => !s)}>
-          {showUpload ? 'Close' : 'Upload'}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowAdd((s) => !s)
+              setShowUpload(false)
+            }}
+          >
+            {showAdd ? 'Close' : 'Add by voice/text'}
+          </Button>
+          <Button
+            onClick={() => {
+              setShowUpload((s) => !s)
+              setShowAdd(false)
+            }}
+          >
+            {showUpload ? 'Close' : 'Upload'}
+          </Button>
+        </div>
       </div>
+
+      {showAdd && (
+        <Card>
+          <CardContent className="pt-6">
+            <AddActivityByVoice onDone={() => setShowAdd(false)} />
+          </CardContent>
+        </Card>
+      )}
 
       {showUpload && (
         <Card>
