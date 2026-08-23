@@ -47,7 +47,14 @@ export function ChatInterface() {
   useEffect(() => {
     http('/api/ai/chat/history?limit=50')
       .then((r) => (r.ok ? r.json() : { messages: [] }))
-      .then((d) => setMessages(d.messages ?? []))
+      .then((d) => {
+        setMessages(d.messages ?? [])
+        // Jump to the latest message instantly on first load.
+        requestAnimationFrame(() => {
+          const el = scrollRef.current
+          if (el) el.scrollTop = el.scrollHeight
+        })
+      })
       .catch(() => setMessages([]))
       .finally(() => setLoadingHistory(false))
   }, [])
@@ -77,13 +84,32 @@ export function ChatInterface() {
     [speakEnabled]
   )
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  // Keep the view pinned to the bottom, but only if the user is already near it.
+  // If they've scrolled up to read history, don't yank them back down.
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120
   }, [])
 
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'smooth') => {
+      // Scroll the container directly (not scrollIntoView) so streaming token
+      // updates don't fire overlapping smooth animations that jitter.
+      const el = scrollRef.current
+      if (el) el.scrollTop = el.scrollHeight
+      if (behavior === 'smooth') bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    },
+    []
+  )
+
+  // During streaming, keep the bottom pinned instantly (no animation) and only
+  // when the user hasn't scrolled away. Smooth-scroll only happens on send.
   useEffect(() => {
-    scrollToBottom()
-  }, [messages, scrollToBottom])
+    if (streaming) {
+      if (isNearBottom()) scrollToBottom('auto')
+    }
+  }, [messages, streaming, isNearBottom, scrollToBottom])
 
   async function send(text: string) {
     const trimmed = text.trim()
@@ -99,6 +125,8 @@ export function ChatInterface() {
     setMessages([...nextMessages, { id: assistantId, role: 'assistant', content: '' }])
     setInput('')
     setStreaming(true)
+    // One smooth scroll to bring the new user message + incoming reply into view.
+    requestAnimationFrame(() => scrollToBottom('smooth'))
 
     try {
       const res = await http('/api/ai/chat', {
