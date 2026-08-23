@@ -96,6 +96,16 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 22. coaching_messages is shared across surfaces — tag with metadata.kind
+Chat and per-activity post-session insights both live in `coaching_messages` (intentionally,
+for future RAG recall). Without a discriminator, insights leaked into the chat feed as
+orphaned assistant messages. Convention: every message carries `metadata.kind` —
+`'chat'` for the coach chat, `'post_session_insight'` for activity insights (also has
+`activity_id`). The chat history query excludes non-chat kinds
+(`metadata->>kind.is.null,metadata->>kind.neq.post_session_insight`; null kept for legacy
+rows). Any NEW message kind (nutrition insight, weekly summary, etc.) must set `metadata.kind`
+and be filtered from surfaces where it doesn't belong.
+
 ### 21. Readiness/TSB math needs a sparse-data guard
 Symptom: coach reports "0/100 fatigued" for an athlete who just did one easy run and is
 actually fresh.

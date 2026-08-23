@@ -70,11 +70,13 @@ export async function POST(request: Request) {
     )
   }
 
-  // Persist the user's message immediately
+  // Persist the user's message immediately (tagged as chat so it's
+  // distinguishable from per-activity insights).
   await supabase.from('coaching_messages').insert({
     user_id: user.id,
     role: 'user',
     content: lastUser.content,
+    metadata: { kind: 'chat' },
   })
 
   // Stream the agent reply (AI SDK v4 model → streamLegacy).
@@ -115,6 +117,7 @@ export async function POST(request: Request) {
             user_id: user.id,
             role: 'assistant',
             content: full,
+            metadata: { kind: 'chat' },
           })
         }
       }
