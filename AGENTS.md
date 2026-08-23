@@ -315,6 +315,12 @@ configs change between versions.
   TypeScript check. The build passing is the bar before claiming a task is done.
 - **AI**: `CoachAgent` (`lib/ai/agents/coach.ts`) uses typed tools only — NO MCP in the app
   runtime (see gotcha #20). Model via `@ai-sdk/*@1` factories, stream via `streamLegacy()`.
+- **RAG memory**: coaching_messages are embedded on write (`text-embedding-3-small`, 1536-dim,
+  `lib/ai/embeddings.ts`). The chat route retrieves relevant past context via the
+  `search_coaching_messages` RPC (`lib/ai/memory.ts`) and injects it as a system message.
+  pgvector needs the embedding as a string literal `"[0.1,0.2,...]"` (`toPgVector`). Embedding
+  is best-effort — if no OpenAI key, it stores null and RAG degrades to recent-window only.
+  `POST /api/ai/memory/backfill` embeds pre-RAG rows (idempotent, embedding IS NULL only).
 - **Voice = transcript-only**: chat voice and per-session notes transcribe audio via Whisper
   and DISCARD the audio — only the transcript is stored (RAG operates on text). Do not persist
   recordings by default (storage cost + privacy/GDPR). The `audio` bucket + nullable

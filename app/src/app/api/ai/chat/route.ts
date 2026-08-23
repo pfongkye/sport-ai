@@ -3,6 +3,7 @@ import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { buildCoachAgent } from '@/lib/ai/agents/coach'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { computeReadiness } from '@/lib/ai/readiness'
+import { retrieveRelevantContext, embedForStorage } from '@/lib/ai/memory'
 
 export const runtime = 'nodejs' // Mastra + MCP need Node APIs
 export const maxDuration = 60
@@ -92,22 +93,41 @@ export async function POST(request: Request) {
     )
   }
 
-  // Persist the user's message immediately (tagged as chat so it's
-  // distinguishable from per-activity insights).
+  const admin = await createAdminClient()
+
+  // RAG: retrieve relevant past context for this query and embed the user
+  // message for storage — both best-effort, run in parallel.
+  const [retrievedContext, userEmbedding] = await Promise.all([
+    retrieveRelevantContext(admin, user.id, lastUser.content, aiSettings.userApiKey),
+    embedForStorage(lastUser.content, aiSettings.userApiKey),
+  ])
+
+  // Persist the user's message immediately (tagged as chat, with embedding).
   await supabase.from('coaching_messages').insert({
     user_id: user.id,
     role: 'user',
     content: lastUser.content,
     metadata: { kind: 'chat' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    embedding: userEmbedding as any,
   })
 
+  // Prepend retrieved memory as a system message so the agent can recall
+  // things from outside the recent window.
+  const llmMessages: CoreMessage[] = retrievedContext
+    ? [
+        {
+          role: 'system',
+          content: `Relevant context from this athlete's past conversations and session notes (use if helpful, don't force it):\n${retrievedContext}`,
+        },
+        ...messages.map((m) => ({ role: m.role, content: m.content }) as CoreMessage),
+      ]
+    : (messages.map((m) => ({ role: m.role, content: m.content })) as CoreMessage[])
+
   // Stream the agent reply (AI SDK v4 model → streamLegacy).
-  // messages are {role,content} — a valid AI SDK v4 CoreMessage[].
   let result
   try {
-    result = await agent.streamLegacy(
-      messages.map((m) => ({ role: m.role, content: m.content })) as CoreMessage[]
-    )
+    result = await agent.streamLegacy(llmMessages)
   } catch (err) {
     console.error('[ai/chat] stream failed', err)
     return new Response(
@@ -119,7 +139,6 @@ export async function POST(request: Request) {
   // Tee the text stream: forward to client, accumulate for persistence.
   const encoder = new TextEncoder()
   let full = ''
-  const admin = await createAdminClient()
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -135,11 +154,14 @@ export async function POST(request: Request) {
         // Persist assistant reply (best-effort) using admin client so it isn't
         // tied to the request lifecycle/RLS cookie after the stream ends.
         if (full.trim()) {
+          const assistantEmbedding = await embedForStorage(full, aiSettings.userApiKey)
           await admin.from('coaching_messages').insert({
             user_id: user.id,
             role: 'assistant',
             content: full,
             metadata: { kind: 'chat' },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            embedding: assistantEmbedding as any,
           })
         }
       }

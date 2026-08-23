@@ -307,17 +307,24 @@ each layer with its own token budget so the total stays well under the model lim
 - [ ] Let the athlete view/edit/delete their facts in Settings (transparency + control; also
       GDPR-friendly).
 
-**RAG retrieval (semantic recall over history)**
-- [ ] Generate embeddings on every stored `coaching_messages` row (chat, insight, session
-      note) using OpenAI `text-embedding-3-small` (1536-dim, matches the schema).
-- [ ] Retrieval: embed the current user message, call `search_coaching_messages` (hybrid
-      vector + date filter, already in migration 005), take top-K above a similarity
-      threshold, inject as "relevant past context".
-- [ ] Backfill embeddings for existing rows (one-off script).
+**RAG retrieval (semantic recall over history) — DONE**
+- [x] Embeddings on write for `coaching_messages` (chat + insight; session notes inherit it
+      once Task 2.9 lands) via OpenAI `text-embedding-3-small` (1536-dim) — `lib/ai/embeddings.ts`
+- [x] Retrieval: embed the current user message, call `search_coaching_messages`, take top-K
+      (5) above threshold (0.3), inject as a "relevant past context" system message —
+      `lib/ai/memory.ts`, wired in the chat route
+- [x] Backfill: `POST /api/ai/memory/backfill` (idempotent; embedded existing 33 rows)
+- [x] Verified: query "fatigue score" retrieves the right past msgs at 0.62-0.67 similarity
 
 **Cost & safety guards**
-- [ ] Embed only on write (never re-embed unchanged rows); cap retrieval K.
-- [ ] Keep the recency cap + per-message char clamp as the outer guardrail.
+- [x] Embed only on write (never re-embed unchanged); retrieval K capped at 5
+- [x] Keep the recency cap + per-message char clamp as the outer guardrail
+- [ ] Best-effort: if no OpenAI key, embedding is skipped and RAG degrades to recent-window
+
+**Deferred to a later iteration** (enhancements beyond core recall):
+- [ ] `assembleCoachContext` helper with explicit per-layer token budgets
+- [ ] Durable facts: `athlete_facts` table + LLM extraction + inject + Settings editor
+- [ ] Task 2.8 AI provider settings UI (backend resolver already supports per-user keys)
 - [ ] Rate-limit the fact-extraction pass (don't run on every trivial turn).
 - [ ] Unit-test `assembleCoachContext` budgeting (never exceeds ceiling; priority order holds)
       — fits the MVP testing plan (T1).
