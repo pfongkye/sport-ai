@@ -28,6 +28,20 @@ export function ChatInterface() {
   const [speakEnabled, setSpeakEnabled] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow the composer textarea to fit its content (capped by CSS max-height).
+  const autosize = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+
+  // Resize whenever the value changes (typing, transcript insert, or clear on send).
+  useEffect(() => {
+    autosize()
+  }, [input, autosize])
 
   // Load prior conversation
   useEffect(() => {
@@ -57,6 +71,7 @@ export function ChatInterface() {
       window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(clean)
       u.rate = 1.05
+      u.lang = 'en-US' // app is English-only for now; TODO(i18n): user language
       window.speechSynthesis.speak(u)
     },
     [speakEnabled]
@@ -221,6 +236,7 @@ export function ChatInterface() {
             }}
           />
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -231,7 +247,7 @@ export function ChatInterface() {
             }}
             placeholder="Ask your coach, or tap the mic…"
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-32"
+            className="flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-40 overflow-y-auto"
           />
           <button
             type="button"
