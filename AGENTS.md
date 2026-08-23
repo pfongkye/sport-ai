@@ -123,18 +123,18 @@ Fix: never hide interactive controls behind hover-only on touch. Destructive con
 (hover-to-full on desktop, visible on mobile) + a `confirm()` dialog. Audit other
 `opacity-0 group-hover` interactive elements for the same trap.
 
-### 22. coaching_messages is shared across surfaces — tag with metadata.kind
-Chat and per-activity post-session insights both live in `coaching_messages` (intentionally,
-for future RAG recall). Without a discriminator, insights leaked into the chat feed as
-orphaned assistant messages. Convention: every message carries `metadata.kind` —
-`'chat'` for the coach chat, `'post_session_insight'` for activity insights (also has
-`activity_id`). The chat history query excludes non-chat kinds
-(`metadata->>kind.is.null,metadata->>kind.neq.post_session_insight`; null kept defensively).
-Migration `009_coaching_message_kind.sql` backfills legacy null-kind rows to 'chat'
-(idempotent) and indexes `(user_id, metadata->>kind)`, so ALL rows now carry an explicit kind
-— code can rely on `kind='chat'` without the null special-case. Any NEW message kind
-(nutrition insight, weekly summary, etc.) must set `metadata.kind` and be filtered from
-surfaces where it doesn't belong.
+### 22. coaching_messages is shared across surfaces — chat history is an ALLOWLIST
+Many surfaces write to `coaching_messages` (intentionally, for RAG recall): the coach chat
+(`kind='chat'`), post-session insights (`kind='post_session_insight'` + `activity_id`), and
+session voice notes (`kind='session_voice_note'`). Every row MUST set `metadata.kind`.
+The chat-history query is an ALLOWLIST — `metadata->>kind = 'chat'` — NOT a denylist. This is
+deliberate: a denylist (`neq post_session_insight`) leaked each NEW kind into the chat feed
+until someone remembered to exclude it (this bit us twice: insights, then session notes). With
+the allowlist, any new mirrored kind is excluded automatically. Migration
+`009_coaching_message_kind.sql` backfilled all legacy rows to `kind='chat'` and indexed
+`(user_id, metadata->>kind)`, so the allowlist misses nothing genuine.
+Rule: any NEW writer to `coaching_messages` sets its own `metadata.kind`; only `'chat'` shows
+in the chat feed; each non-chat kind renders on its own surface.
 
 ### 21. Readiness/TSB math needs a sparse-data guard
 Symptom: coach reports "0/100 fatigued" for an athlete who just did one easy run and is
