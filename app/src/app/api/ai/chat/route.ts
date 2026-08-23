@@ -13,6 +13,19 @@ interface ChatMessage {
 }
 
 /**
+ * Safety-net cap on how many prior messages we forward to the LLM per turn.
+ * The client sends the full thread, which grows unbounded → rising token cost
+ * and eventual context-limit errors. We keep only the most recent slice.
+ *
+ * This is a blunt recency window, NOT real memory — durable facts and semantic
+ * recall are handled by RAG (see Task 2.10 in the spec). Once RAG lands, older
+ * context is recovered by retrieval rather than by sending the whole thread.
+ */
+const MAX_CONTEXT_MESSAGES = 20
+/** Hard cap per message to avoid a single huge paste blowing the window. */
+const MAX_MESSAGE_CHARS = 8000
+
+/**
  * POST /api/ai/chat
  * Body: { messages: {role, content}[] } — full turn history from the client.
  * Streams the assistant reply as plain text chunks (text/plain stream).
@@ -32,13 +45,22 @@ export async function POST(request: Request) {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 })
   }
 
-  const messages = (body.messages ?? []).filter(
-    (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string'
-  )
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const allMessages = (body.messages ?? [])
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_MESSAGE_CHARS) }))
+
+  const lastUser = [...allMessages].reverse().find((m) => m.role === 'user')
   if (!lastUser) {
     return new Response(JSON.stringify({ error: 'No user message' }), { status: 400 })
   }
+
+  // Safety net: only send the most recent window to the LLM. Always keep the
+  // final message (the current user turn). Real long-term memory comes from RAG
+  // (Task 2.10) — this just bounds token cost / prevents context overflow now.
+  const messages =
+    allMessages.length > MAX_CONTEXT_MESSAGES
+      ? allMessages.slice(-MAX_CONTEXT_MESSAGES)
+      : allMessages
 
   // Load user context in parallel
   const [{ data: profile }, aiSettings, readiness] = await Promise.all([

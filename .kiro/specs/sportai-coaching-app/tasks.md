@@ -272,18 +272,55 @@
       `{user_id}/audio/notes/...`, set `audio_url`, add playback UI + delete-object cleanup.
       Everything needed (bucket, nullable column) already exists — this is purely additive.
 
-### Task 2.10 — RAG memory retrieval (deferred; enables long-term recall)
+### Task 2.10 — Coach memory: context budgeting + durable facts + RAG retrieval
 
-> Currently the coach gets recent messages + typed-tool data. This task adds true semantic
-> recall over the athlete's history (past chats, session insights, and voice notes).
+> **Problem being solved**: The chat route forwards the client's message history to the LLM
+> each turn. That grows unbounded → rising token cost and eventual context-limit errors, and
+> it's also NOT real memory (truncating the window silently drops earlier facts).
+>
+> **Interim safety net (already shipped in the chat route)**: a blunt recency cap —
+> `MAX_CONTEXT_MESSAGES = 20` most-recent messages, each clamped to `MAX_MESSAGE_CHARS = 8000`.
+> This bounds cost/overflow today but loses older context. This task replaces that with a
+> proper layered memory. Keep the cap as the outer guardrail even after RAG.
 
-- [ ] Generate embeddings on every stored `coaching_messages` row (chat, insight, voice note)
-      using OpenAI `text-embedding-3-small` (1536-dim, matches schema)
-- [ ] Implement retrieval in the chat route: embed the user's message, call
-      `search_coaching_messages` (hybrid vector + date filter, already in migration 005),
-      inject top-K relevant snippets into the system prompt as "relevant past context"
-- [ ] Backfill embeddings for existing rows (one-off script)
-- [ ] Guard cost: only embed on write, cache, and cap retrieval K (e.g. 5)
+**Context assembly (the "budget" the coach sees each turn)** — build in priority order,
+each layer with its own token budget so the total stays well under the model limit:
+- [ ] **System prompt** — persona + today's context (profile, goal, readiness). ~fixed.
+- [ ] **Durable facts** (see below) — compact, always included. Small budget (~300 tokens).
+- [ ] **RAG snippets** — top-K semantically relevant past messages/notes for THIS query.
+      Budget ~800 tokens; K capped (e.g. 5); drop anything below a similarity threshold.
+- [ ] **Recent window** — last N turns verbatim (the recency cap above). Budget ~1500 tokens.
+- [ ] Implement a `assembleCoachContext(userId, currentMessage)` helper that returns the
+      final message array, enforcing per-layer budgets (approx tokens via chars/4) and never
+      exceeding a global ceiling. Log the assembled size for tuning.
+
+**Durable facts (structured long-term memory, not chat replay)**
+- [ ] Migration: `athlete_facts` table — id, user_id, fact (text), category
+      ('injury'|'preference'|'constraint'|'goal'|'equipment'|'other'), source
+      ('inferred'|'stated'), confidence, active (bool), created_at, updated_at. RLS own-rows.
+- [ ] Extraction: after a chat turn (or on a schedule), run a cheap LLM pass to extract/refresh
+      durable facts from the conversation ("I prefer morning runs", "recurring left calf
+      tightness", "no gym on Mondays"). Upsert; deactivate stale/contradicted facts rather
+      than deleting (audit trail).
+- [ ] Inject active facts into the system prompt (the "Durable facts" layer above), newest/
+      highest-confidence first, within budget.
+- [ ] Let the athlete view/edit/delete their facts in Settings (transparency + control; also
+      GDPR-friendly).
+
+**RAG retrieval (semantic recall over history)**
+- [ ] Generate embeddings on every stored `coaching_messages` row (chat, insight, session
+      note) using OpenAI `text-embedding-3-small` (1536-dim, matches the schema).
+- [ ] Retrieval: embed the current user message, call `search_coaching_messages` (hybrid
+      vector + date filter, already in migration 005), take top-K above a similarity
+      threshold, inject as "relevant past context".
+- [ ] Backfill embeddings for existing rows (one-off script).
+
+**Cost & safety guards**
+- [ ] Embed only on write (never re-embed unchanged rows); cap retrieval K.
+- [ ] Keep the recency cap + per-message char clamp as the outer guardrail.
+- [ ] Rate-limit the fact-extraction pass (don't run on every trivial turn).
+- [ ] Unit-test `assembleCoachContext` budgeting (never exceeds ceiling; priority order holds)
+      — fits the MVP testing plan (T1).
 
 ---
 
