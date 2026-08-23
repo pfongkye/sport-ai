@@ -325,6 +325,12 @@ configs change between versions.
   and DISCARD the audio — only the transcript is stored (RAG operates on text). Do not persist
   recordings by default (storage cost + privacy/GDPR). The `audio` bucket + nullable
   `audio_url` exist for a future opt-in "keep audio" preference; leave NULL otherwise.
+- **Whisper = transcription, NOT translation (locked decision)**: the voice endpoint
+  (`app/src/app/api/ai/voice/transcribe/route.ts`) MUST use OpenAI `/audio/transcriptions`
+  with a `language` hint (`TRANSCRIBE_LANGUAGE`, currently `en`), so text stays in the language
+  spoken. Do NOT switch to `/audio/translations` (force-English output) — the user explicitly
+  decided to keep transcription. When i18n lands, drive the hint from
+  `user_settings.language`. If tempted to change this for a language issue, ask the user first.
 - **English-only for now (i18n deferred to Phase 7)**: don't add per-language logic yet. Voice
   transcription is intentionally pinned to English (`TRANSCRIBE_LANGUAGE='en'`), dates use
   `en-GB`. Seams to change later are marked with `TODO(i18n)` in the code

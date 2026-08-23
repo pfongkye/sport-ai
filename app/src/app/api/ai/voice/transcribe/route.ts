@@ -12,10 +12,12 @@ const MAX_AUDIO_BYTES = 25 * 1024 * 1024 // Whisper API limit
  * Multipart form with field "audio" (a recorded blob).
  * Returns { text } — transcribed in the SPOKEN language (no translation).
  *
- * Uses OpenAI's `/audio/transcriptions` with an explicit `language` hint.
- * Whisper's auto-detection can misfire on short/accented clips (e.g. English
- * mis-detected as French), so we pin the expected language instead of letting
- * it guess. The app is English-only for now → `language=en`.
+ * DECISION (do not change without asking the user): use `/audio/transcriptions`
+ * with an explicit `language` hint. We deliberately do NOT use
+ * `/audio/translations` (which force-outputs English) — the user chose
+ * transcription so the text stays in the language spoken. Whisper's
+ * auto-detection can misfire on short/accented clips (e.g. English mis-detected
+ * as French), so we pin the expected language. English-only for now → `language=en`.
  *
  * When i18n lands: source the hint from the user's language preference
  * (user_settings.language) instead of the hardcoded default below.
@@ -67,11 +69,14 @@ export async function POST(request: Request) {
   oaForm.append('file', new Blob([buffer], { type: audio.type || 'audio/webm' }), 'audio.webm')
   oaForm.append('model', 'whisper-1')
   oaForm.append('response_format', 'json')
-  // Pin the language so Whisper doesn't mis-detect (e.g. English → French).
+  // Pin the language so Whisper doesn't mis-detect (e.g. English → French) on
+  // short/accented clips. This is a spoken-language HINT — text stays in the
+  // language spoken. Do NOT switch to /audio/translations (see file header).
   oaForm.append('language', TRANSCRIBE_LANGUAGE)
 
   let text = ''
   try {
+    // Transcription (NOT translation) — preserves the spoken language.
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${openaiKey}` },
