@@ -112,6 +112,17 @@ General rule: when the coach needs a metric, there must be a TOOL that computes 
 data. Don't rely on the LLM to derive peak/segment/aggregate values from summaries — add a
 typed tool (this is also why we favour typed tools over the athlete asking open-ended MCP SQL).
 
+### 23. No hover-only controls on touch — especially destructive ones
+Symptom: session note saved (POST 201) then vanished; logs showed a DELETE right after. The
+note "disappeared on refresh".
+Cause: the delete button used `opacity-0 group-hover:opacity-100`. On mobile there's no hover,
+so it was an INVISIBLE but still-tappable delete target at the note's edge — an accidental tap
+deleted the note with no feedback.
+Fix: never hide interactive controls behind hover-only on touch. Destructive controls must be
+(a) visible on mobile, (b) confirmed. session-notes.tsx: delete icon is `md:opacity-40`
+(hover-to-full on desktop, visible on mobile) + a `confirm()` dialog. Audit other
+`opacity-0 group-hover` interactive elements for the same trap.
+
 ### 22. coaching_messages is shared across surfaces — tag with metadata.kind
 Chat and per-activity post-session insights both live in `coaching_messages` (intentionally,
 for future RAG recall). Without a discriminator, insights leaked into the chat feed as

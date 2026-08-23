@@ -56,6 +56,8 @@ export function SessionNotes({ activityId }: { activityId: string }) {
   }
 
   async function remove(noteId: string) {
+    // Explicit confirm — destructive, and prevents accidental taps on mobile.
+    if (!confirm('Delete this note?')) return
     const res = await http(`/api/activities/${activityId}/notes/${noteId}`, { method: 'DELETE' })
     if (res.ok) setNotes((prev) => prev.filter((n) => n.id !== noteId))
   }
@@ -95,7 +97,7 @@ export function SessionNotes({ activityId }: { activityId: string }) {
                 <button
                   onClick={() => remove(n.id)}
                   aria-label="Delete note"
-                  className="shrink-0 text-[var(--muted-foreground)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="shrink-0 p-1 -m-1 text-[var(--muted-foreground)] hover:text-red-500 md:opacity-40 md:group-hover:opacity-100 transition-opacity"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4" aria-hidden>
                     <polyline points="3 6 5 6 21 6" />
