@@ -177,22 +177,17 @@
   - Auto-scroll with scroll-to-bottom button
 - [ ] Create `/coach` page with full-screen chat + voice panel sidebar
 
-### Task 2.6 — Voice Interface
-- [ ] Create `VoiceRecorder` component:
-  - Hold-to-record button with animated waveform (Web Audio API)
-  - Release to send
-  - Transcription preview before submitting (editable)
-  - Mic permission denied error state
-- [ ] Implement `POST /api/ai/voice/transcribe`:
-  - Receive audio blob (webm/wav)
-  - Store audio in Supabase Storage `{user_id}/audio/{timestamp}.webm`
-  - Send to Whisper API (or user's provider if Whisper-compatible)
-  - Return transcript text
-- [ ] Wire transcription → chat send flow
-- [ ] TTS for AI responses: Web Speech API `SpeechSynthesis`
-  - Auto-read toggle (on/off preference in localStorage)
-  - Stop speaking on new user message
-- [ ] Voice/text mode toggle persisted in localStorage
+### Task 2.6 — Voice Interface — DONE
+- [x] Create `VoiceRecorder` component (tap-to-record/stop, transcribing spinner, mic
+      permission errors) + `useRecorder` hook (MediaRecorder, mime detection)
+- [x] Implement `POST /api/ai/voice/transcribe`:
+  - Receive audio blob; TRANSCRIPT-ONLY (audio discarded, not stored)
+  - Uses OpenAI `/audio/translations` → English output regardless of spoken language
+    (English-only pre-i18n; TODO(i18n) marker to switch to `/transcriptions` + user language)
+- [x] Wire transcription → chat input (editable before send)
+- [x] TTS for AI responses: Web Speech API `SpeechSynthesis`, read-aloud toggle persisted in
+      localStorage, cancels on new message
+- [ ] (deferred) animated waveform; voice/text explicit mode toggle
 
 ### Task 2.7 — Post-Session AI Insight
 - [ ] After `ActivityProcessingWorkflow` completes, enqueue CoachAgent call
@@ -240,40 +235,29 @@
 > The `audio` Storage bucket + an `audio_url` column remain available so replay/re-transcribe
 > can be enabled later behind an opt-in preference — a one-flag change, nothing to rip out.
 
-**Data model**
-- [ ] Migration: add `activity_notes` table for clean per-activity querying, AND mirror an
-      embedded copy into `coaching_messages` (kind `session_voice_note`) so RAG has one place
-      to search. Columns: id, user_id, activity_id (FK cascade), transcript,
-      source ('voice'|'text'), duration_s (nullable), embedding vector(1536), created_at.
-      RLS: own rows only.
-      - `audio_url` column: include as NULLABLE for the future opt-in, but leave NULL for now.
+**Data model** — DONE
+- [x] Migration `010_activity_notes.sql`: `activity_notes` table (id, user_id, activity_id FK
+      cascade, transcript, source 'voice'|'text', duration_s nullable, audio_url NULLABLE,
+      embedding vector(1536), created_at; RLS own-rows). Notes also mirrored into
+      `coaching_messages` (kind `session_voice_note`) for RAG.
 
-**Capture + transcribe (transcript-only)**
-- [ ] Reuse `VoiceRecorder` (Task 2.6) in a compact "add note" control on the activity detail
-      page
-- [ ] `POST /api/activities/[id]/notes`:
-  - Auth + verify the activity belongs to the user
-  - Accept either an audio blob (transcribe via Whisper) OR typed text
-  - **Discard the audio after transcription — do NOT upload it to Storage** (default)
-  - Generate embedding of the transcript (OpenAI embeddings)
-  - Insert into `activity_notes` (audio_url = NULL) + mirror embedded row into
-    `coaching_messages`
-  - Return the note (transcript)
-- [ ] `GET /api/activities/[id]/notes` — list notes for an activity (chronological)
-- [ ] `DELETE /api/activities/[id]/notes/[noteId]` — delete note (+ its `coaching_messages`
-      mirror; no audio object to clean up under the default)
+**Capture + transcribe (transcript-only)** — DONE
+- [x] `SessionNotes` uses `VoiceRecorder` on the activity detail page
+- [x] `POST /api/activities/[id]/notes`: auth + ownership; audio OR typed text; audio
+      discarded (transcript-only); embeds transcript; inserts `activity_notes` +
+      `coaching_messages` mirror; MULTIPLE notes per session (one-to-many)
+- [x] `GET /api/activities/[id]/notes` — chronological list
+- [x] `DELETE /api/activities/[id]/notes/[noteId]` — deletes note + its mirror
 
-**UI**
-- [ ] `SessionNotes` component on `/activities/[id]`:
-  - Record button → transcription preview (editable before save) OR type directly
-  - List of past notes: transcript text, timestamp, delete (no audio playback under default)
-  - Empty state prompt ("Add a note about how this felt")
+**UI** — DONE
+- [x] `SessionNotes` on `/activities/[id]`: record → editable transcript preview OR type
+      directly; SAVE persists (editable before submit); list of notes with timestamp + delete;
+      empty-state prompt; supports adding many notes
 
 **RAG wiring**
-- [ ] Include session notes in the coach's retrieval context (embedded rows in
-      `coaching_messages` — see Task 2.10)
-- [ ] Post-session insight prompt: if a note exists for the activity, feed its transcript in
-      so the AI's analysis accounts for subjective feel, not just the numbers
+- [x] Session notes embedded into `coaching_messages` → retrievable by the coach (Task 2.10)
+- [ ] Post-session insight prompt: feed existing notes' transcripts so the AI accounts for
+      subjective feel (pending — wire into the insight route)
 
 **Deferred (opt-in, only if replay/re-transcription proves valuable)**
 - [ ] Add a user preference "keep audio recordings"; when on, upload the blob to
