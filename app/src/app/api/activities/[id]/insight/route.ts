@@ -84,11 +84,24 @@ export async function POST(
   }
 
   const summary = summarizeActivity(activity)
+
+  // Include the athlete's own notes so the analysis reflects subjective feel,
+  // not just the device numbers.
+  const { data: notes } = await supabase
+    .from('activity_notes')
+    .select('transcript')
+    .eq('user_id', user.id)
+    .eq('activity_id', id)
+    .order('created_at', { ascending: true })
+  const notesBlock = notes?.length
+    ? `\n\nThe athlete's own notes on this session:\n${notes.map((n) => `- ${n.transcript}`).join('\n')}`
+    : ''
+
   const prompt = `Give a short post-session analysis of this ${SPORT_LABELS[activity.sport_type] ?? activity.sport_type}:
 
-${summary}
+${summary}${notesBlock}
 
-In 3-4 sentences: assess the effort (pacing/HR), note one thing that went well, and one concrete thing to focus on next time. Be specific and encouraging. No preamble.`
+In 3-4 sentences: assess the effort (pacing/HR), note one thing that went well, and one concrete thing to focus on next time.${notesBlock ? ' Take the athlete\'s notes into account.' : ''} Be specific and encouraging. No preamble.`
 
   let result
   try {

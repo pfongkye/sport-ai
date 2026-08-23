@@ -461,3 +461,18 @@ export interface UserSettings {
   timezone: string
   updated_at: string
 }
+
+export type NoteSource = 'voice' | 'text'
+
+export interface ActivityNote {
+  id: string
+  user_id: string
+  activity_id: string
+  transcript: string
+  source: NoteSource
+  duration_s: number | null
+  audio_url: string | null
+  embedding: string | null
+  message_id: string | null
+  created_at: string
+}

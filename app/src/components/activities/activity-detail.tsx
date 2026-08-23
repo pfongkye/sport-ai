@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MetricsChart } from './metrics-chart'
 import { ActivityInsight } from './activity-insight'
+import { SessionNotes } from './session-notes'
 import {
   SPORT_EMOJI,
   SPORT_LABELS,
@@ -110,6 +111,9 @@ export function ActivityDetail({
 
       {/* AI coach insight */}
       <ActivityInsight activityId={activity.id} />
+
+      {/* Session notes (subjective, voice or text) */}
+      <SessionNotes activityId={activity.id} />
 
       {/* Map */}
       {path.length > 1 && (

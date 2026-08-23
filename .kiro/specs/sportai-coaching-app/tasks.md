@@ -224,6 +224,14 @@
 > later ("last time you ran this route your calf was tight"). This is subjective context the
 > device data can't capture. Reuses the Whisper transcription from Task 2.6.
 >
+> **MULTIPLE notes per session**: an activity can have any number of notes (one-to-many).
+> The athlete can add notes at different times (e.g. right after the run, then again that
+> evening). Each note is a separate `activity_notes` row + its own embedded RAG copy.
+>
+> **Editable before submit**: whether voice-transcribed or typed, the note text is shown in
+> an editable field and only persisted when the athlete confirms (Save). Voice fills the
+> field; the athlete can correct the transcription before saving.
+>
 > **Storage decision: transcript-only. Do NOT persist the audio by default.**
 > Rationale: the transcript is the only artifact the app uses (RAG, coaching context, search,
 > insight). Raw audio accumulates in object storage forever for near-zero value, adds cost,
