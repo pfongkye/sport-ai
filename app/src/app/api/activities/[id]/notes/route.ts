@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { embedText, toPgVector } from '@/lib/ai/embeddings'
+import { resolveUserAISettings } from '@/lib/ai/provider'
 
 export const runtime = 'nodejs'
 
@@ -72,7 +74,14 @@ export async function POST(
   }
   const source = body.source === 'text' ? 'text' : 'voice'
 
-  // Mirror into coaching_messages for RAG retrieval (embedding populated in Task 2.10).
+  // Embed the transcript so the note is retrievable by the coach's RAG.
+  // Best-effort: if no key / failure, embedding stays null and the note still
+  // saves (RAG just won't semantically recall it). Uses the user's OpenAI key
+  // if set, else the system key.
+  const { userApiKey } = await resolveUserAISettings(user.id)
+  const embedding = await embedText(transcript, userApiKey)
+
+  // Mirror into coaching_messages for RAG retrieval, WITH the embedding.
   const { data: message } = await supabase
     .from('coaching_messages')
     .insert({
@@ -80,6 +89,7 @@ export async function POST(
       role: 'user',
       content: transcript,
       metadata: { kind: 'session_voice_note', activity_id: id },
+      embedding: embedding ? toPgVector(embedding) : null,
     })
     .select('id')
     .single()
