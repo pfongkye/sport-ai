@@ -1,12 +1,10 @@
 import { Agent } from '@mastra/core/agent'
-import { createOpenAI } from '@ai-sdk/openai'
-import { createAnthropic } from '@ai-sdk/anthropic'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, AIProvider, Profile, UserSettings } from '@/types/database'
 import type { ReadinessResult } from '@/types/activity'
 import { buildCoachTools } from '../tools'
 import { buildCoachSystemPrompt } from '../prompts/coach'
+import { resolveModel } from '../provider'
 
 interface BuildCoachAgentParams {
   supabase: SupabaseClient<Database>
@@ -54,33 +52,4 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
     model: model as any,
     tools,
   })
-}
-
-/**
- * Resolves an AI SDK v4 LanguageModelV1 for the provider.
- * If the user supplied their own key, use it; else fall back to the
- * system env key for that provider.
- */
-function resolveModel(provider: AIProvider, modelId: string, userApiKey: string | null) {
-  switch (provider) {
-    case 'anthropic': {
-      const client = createAnthropic({
-        apiKey: userApiKey ?? process.env.ANTHROPIC_API_KEY,
-      })
-      return client(modelId)
-    }
-    case 'google': {
-      const client = createGoogleGenerativeAI({
-        apiKey: userApiKey ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-      })
-      return client(modelId)
-    }
-    case 'openai':
-    default: {
-      const client = createOpenAI({
-        apiKey: userApiKey ?? process.env.OPENAI_API_KEY,
-      })
-      return client(modelId)
-    }
-  }
 }

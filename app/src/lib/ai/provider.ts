@@ -1,3 +1,6 @@
+import { createOpenAI } from '@ai-sdk/openai'
+import { createAnthropic } from '@ai-sdk/anthropic'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { AIProvider, UserSettings } from '@/types/database'
 
@@ -38,6 +41,33 @@ export async function resolveUserAISettings(userId: string): Promise<{
   }
 
   return { settings, userApiKey }
+}
+
+/**
+ * Resolves an AI SDK v4 LanguageModelV1 for the provider. If the user supplied
+ * their own key, use it; else fall back to the system env key for that provider.
+ *
+ * Shared by the coach agent (`buildCoachAgent`) and the activity parser
+ * (`parseActivity`) so both honour the user's provider/key selection.
+ */
+export function resolveModel(provider: AIProvider, modelId: string, userApiKey: string | null) {
+  switch (provider) {
+    case 'anthropic': {
+      const client = createAnthropic({ apiKey: userApiKey ?? process.env.ANTHROPIC_API_KEY })
+      return client(modelId)
+    }
+    case 'google': {
+      const client = createGoogleGenerativeAI({
+        apiKey: userApiKey ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      })
+      return client(modelId)
+    }
+    case 'openai':
+    default: {
+      const client = createOpenAI({ apiKey: userApiKey ?? process.env.OPENAI_API_KEY })
+      return client(modelId)
+    }
+  }
 }
 
 /** Provider → default model mapping */
