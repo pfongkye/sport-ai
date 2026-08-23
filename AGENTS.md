@@ -96,6 +96,22 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 23. LLM hallucinates numbers the tools don't provide — compute, don't estimate
+Symptom: coach reported a "fastest 1km" ~1 min/km faster than reality. Cause: getRecentActivities
+only returns AVERAGE pace; there was no tool for peak/segment data, so the LLM invented a
+plausible "fastest" figure. Averages are always slower than a best split, so any "fastest X"
+derived from an average is a hallucination.
+Fix (two layers):
+1. Compute it server-side: `lib/ai/splits.ts` `computeBestSplits()` finds the fastest rolling
+   window (400m/1km/1mile/5km/10km) from the GPS `latlng` stream (falls back to integrating the
+   pace stream for treadmill). Exposed via the `getBestSplits` tool. Verified against real data:
+   avg 5:41/km run → fastest 1km 5:29 (realistic, not the fabricated ~4:40).
+2. Prompt guardrail: "only state a number if it came from a tool result this conversation;
+   never derive 'fastest' from an average; if a tool returns null, say you don't have it."
+General rule: when the coach needs a metric, there must be a TOOL that computes it from real
+data. Don't rely on the LLM to derive peak/segment/aggregate values from summaries — add a
+typed tool (this is also why we favour typed tools over the athlete asking open-ended MCP SQL).
+
 ### 22. coaching_messages is shared across surfaces — tag with metadata.kind
 Chat and per-activity post-session insights both live in `coaching_messages` (intentionally,
 for future RAG recall). Without a discriminator, insights leaked into the chat feed as

@@ -3,6 +3,8 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { computeReadiness } from '../readiness'
+import { computeBestSplits } from '../splits'
+import { formatPace } from '@/lib/utils'
 
 /**
  * Factory — builds all typed Mastra tools with a scoped Supabase client.
@@ -57,6 +59,45 @@ export function buildCoachTools(supabase: SupabaseClient<Database>, userId: stri
         }
       }
       return { hasData: true, ...readiness }
+    },
+  })
+
+  // ─── getBestSplits ─────────────────────────────────────────────────────────
+  const getBestSplits = createTool({
+    id: 'getBestSplits',
+    description:
+      'Compute the athlete\'s FASTEST rolling splits (400m, 1km, 1mile, 5km, 10km) from the actual GPS/pace stream of recent runs. USE THIS for any "fastest / best pace over X distance" question. Never estimate splits from average pace — always call this tool. Returns split times per run; null means the run was shorter than that distance.',
+    inputSchema: z.object({
+      limit: z.number().min(1).max(20).default(5).describe('How many recent runs to analyse'),
+      activityId: z.string().uuid().optional().describe('Restrict to one activity'),
+    }),
+    execute: async ({ context }) => {
+      const splits = await computeBestSplits(supabase, userId, {
+        limit: context.limit,
+        activityId: context.activityId,
+      })
+      if (!splits.length) {
+        return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
+      }
+      // Format for the model: include both raw seconds and human pace so it can't misread.
+      const runs = splits.map((s) => ({
+        activityId: s.activityId,
+        date: s.startedAt.slice(0, 10),
+        distanceKm: s.distanceM ? +(s.distanceM / 1000).toFixed(2) : null,
+        fastest: Object.fromEntries(
+          Object.entries(s.best).map(([dist, secs]) => [
+            dist,
+            secs == null
+              ? null
+              : {
+                  seconds: secs,
+                  // pace over that split, as s/km, formatted
+                  pace: formatPace(paceForSplit(dist, secs)),
+                },
+          ])
+        ),
+      }))
+      return { hasData: true, runs }
     },
   })
 
@@ -136,8 +177,22 @@ export function buildCoachTools(supabase: SupabaseClient<Database>, userId: stri
   return {
     getRecentActivities,
     getTrainingLoad,
+    getBestSplits,
     getPlannedSessions,
     getUserProfile,
     updateSessionStatus,
   }
+}
+
+/** Convert a split (distance label + elapsed seconds) to pace in s/km. */
+function paceForSplit(distLabel: string, seconds: number): number {
+  const meters: Record<string, number> = {
+    '400m': 400,
+    '1km': 1000,
+    '1mile': 1609.34,
+    '5km': 5000,
+    '10km': 10000,
+  }
+  const m = meters[distLabel] ?? 1000
+  return Math.round((seconds / m) * 1000)
 }
