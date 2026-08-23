@@ -7,7 +7,6 @@ import type { Database, AIProvider, Profile, UserSettings } from '@/types/databa
 import type { ReadinessResult } from '@/types/activity'
 import { buildCoachTools } from '../tools'
 import { buildCoachSystemPrompt } from '../prompts/coach'
-import { getMCPClient } from '@/lib/mcp/client'
 
 interface BuildCoachAgentParams {
   supabase: SupabaseClient<Database>
@@ -21,11 +20,16 @@ interface BuildCoachAgentParams {
 
 /**
  * Builds a CoachAgent scoped to the current user and request.
- * Injects typed tools, MCP servers, and a context-aware system prompt.
+ * Injects typed tools and a context-aware system prompt.
  *
  * Uses AI SDK v4 provider factories (@ai-sdk/*@1), which produce
  * LanguageModelV1 — the type Mastra 0.24 (ai@4) consumes. Stream via
  * `agent.streamLegacy()`.
+ *
+ * NOTE: MCP servers were intentionally NOT wired here. Typed tools (safe,
+ * RLS-enforced, testable, deploy-anywhere) cover our needs, and stdio-based MCP
+ * (uvx) can't run on Vercel. If open-ended stats/web/memory are needed later,
+ * prefer adding typed tools or a remote (HTTP) MCP service. See AGENTS.md.
  */
 export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Agent> {
   const { supabase, userId, profile, settings, readiness, userApiKey } = params
@@ -35,15 +39,6 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
   const model = resolveModel(provider, modelId, userApiKey)
 
   const tools = buildCoachTools(supabase, userId)
-
-  let mcpTools = {}
-  try {
-    mcpTools = await getMCPClient().getToolsets()
-  } catch {
-    // MCP servers (uvx) may be unavailable in some environments — degrade
-    // gracefully to typed tools only rather than failing the whole chat.
-    mcpTools = {}
-  }
 
   const instructions = buildCoachSystemPrompt({
     profile,
@@ -57,7 +52,7 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
     instructions,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     model: model as any,
-    tools: { ...tools, ...mcpTools },
+    tools,
   })
 }
 

@@ -122,19 +122,22 @@ normalises TSB by CTL (`65 + ratio*35`) so fatigue is relative to the athlete's 
 coach system prompt also instructs: low CTL = little history, NOT fatigue. Verified across
 sparse/established/overloaded scenarios.
 
-### 20. MCPClient must be a singleton; "AI is not configured" is often a build-agent throw
-Two related traps in the AI coach:
-- **MCPClient singleton**: Mastra throws "MCPClient was initialized multiple times with the
-  same configuration" if you `new MCPClient(...)` per request. First request works, all others
-  throw → caught by buildCoachAgent → surfaced as "AI is not configured" (misleading — it's
-  NOT a missing key). Fix: `getMCPClient()` in `lib/mcp/client.ts` caches one instance (with
-  an explicit `id`). Any Mastra MCPClient must be process-singleton.
-- **uvx not in the container**: MCP servers run via `uvx`, which isn't installed in the app
-  image, so `getToolsets()` fails. It's caught (chat degrades to typed tools only). To enable
-  MCP servers, add `uv`/`uvx` to docker/Dockerfile. Typed tools (activities, training load,
-  plan, profile) work without MCP.
-- Generally: "AI is not configured" = buildCoachAgent threw. Check `[ai/chat] failed to build
-  agent` in logs for the real cause before assuming it's the API key.
+### 20. MCP was intentionally REMOVED from the app runtime (typed tools only)
+Decision: the CoachAgent uses typed Mastra tools only (getRecentActivities, getTrainingLoad,
+getPlannedSessions, getUserProfile, updateSessionStatus). MCP is NOT wired into the app.
+Rationale:
+- Typed tools are safe (RLS-enforced), fast, testable, and deploy anywhere.
+- stdio MCP (spawning `uvx mcp-server-*`) CANNOT run on Vercel (no subprocess) — it was a
+  local-dev-only convenience that wouldn't survive production.
+- Supabase MCP = LLM-generated SQL with a service-role key → RLS bypass / multi-tenant
+  footgun. Prefer adding typed aggregation tools (e.g. getStats, getPersonalBests) instead.
+- Long-term memory: use the existing pgvector `coaching_messages.embedding` +
+  `search_coaching_messages` (planned RAG), not mem0.
+If MCP is genuinely needed later, use a REMOTE (HTTP) MCP service, not stdio, and re-add
+`@mastra/mcp`. `app/src/lib/mcp/config-example.json` still documents Kiro IDE MCP (dev tooling).
+Still true: "AI is not configured" = buildCoachAgent threw — check `[ai/chat] failed to build
+agent` logs for the real cause before assuming a missing key. (MCPClient, if ever re-added,
+must be a process singleton — Mastra throws on duplicate identical configs.)
 
 ### 19. Mobile "Failed to fetch" on upload — snapshot the File to memory at pick time
 Symptom: file upload works on desktop but fails on mobile with "Failed to fetch"; the request
@@ -294,6 +297,8 @@ configs change between versions.
   via `lib/mcp/client.ts`.
 - **Verification**: always `npm run build` in `app/` after code changes — it runs the
   TypeScript check. The build passing is the bar before claiming a task is done.
+- **AI**: `CoachAgent` (`lib/ai/agents/coach.ts`) uses typed tools only — NO MCP in the app
+  runtime (see gotcha #20). Model via `@ai-sdk/*@1` factories, stream via `streamLegacy()`.
 - **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
   the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
   Never echo secret values into chat, logs, or commits.

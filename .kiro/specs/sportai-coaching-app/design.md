@@ -225,97 +225,32 @@ CREATE POLICY "Users access own settings"
 
 ---
 
-## MCP Server Integration
+## MCP — Decision: NOT used in the app runtime (revisit only if truly needed)
 
-MCP servers are registered with the Mastra MCPClient and injected into agents at runtime.
-They handle open-ended, flexible operations; typed Mastra tools handle schema-bound, performance-critical operations.
+**Original plan** was to use MCP servers (Supabase, fetch, mem0) alongside typed tools.
+During Phase 2 we removed MCP from the app runtime. Rationale:
 
-### MCP Servers Used
+- **Typed Mastra tools cover the coaching needs** and are safe (RLS-enforced), fast,
+  testable, and deploy anywhere. Verified: the coach correctly answers "my last 3 runs",
+  readiness, scheduled sessions, etc. using typed tools only.
+- **stdio MCP can't run on Vercel** (our prod host). Spawning `uvx mcp-server-*` needs a
+  subprocess, which Vercel serverless functions don't provide. It was a local-dev-only
+  convenience that wouldn't survive production.
+- **Supabase MCP = LLM-generated SQL with a service-role key**, which bypasses RLS — a real
+  multi-tenant security footgun. Prefer typed aggregation tools (`getStats`,
+  `getPersonalBests`) for open-ended stats instead.
+- **Long-term memory** is covered by the existing pgvector `coaching_messages.embedding` +
+  `search_coaching_messages` (planned RAG), not mem0.
 
-| Server | Package | Purpose |
-|---|---|---|
-| `supabase-mcp` | `mcp-server-supabase` | Ad-hoc DB queries — open-ended stats, aggregations the user asks in natural language |
-| `fetch-mcp` | `mcp-server-fetch` | YouTube search, USDA food lookup, web research for coaching advice |
-| `memory-mcp` | `mem0-mcp` | Long-term user preferences, injury history, coaching style preferences |
-| `filesystem-mcp` | `mcp-server-filesystem` | Raw uploaded .FIT/.GPX file inspection (dev/debug only, scoped to uploads dir) |
+**If MCP is genuinely needed later** (e.g. connecting to external systems we don't control),
+use a **remote (HTTP/SSE) MCP service** running as its own always-on container — NOT stdio —
+and re-add `@mastra/mcp`. The Kiro IDE MCP config (`app/src/lib/mcp/config-example.json`)
+remains valid for dev tooling and is independent of the app runtime.
 
-### MCP vs Typed Tool Decision Rule
-
-```
-Is the query schema-bound and performance-critical?  → Typed Mastra tool
-Is the query open-ended or hitting an external URL?  → MCP server
-```
-
-Examples:
-- "Calculate training load" → Typed tool (deterministic formula, fast)
-- "How many km did I run in March?" → Supabase MCP (ad-hoc SQL)
-- "Find a YouTube video on hill repeats" → Fetch MCP (external URL)
-- "Remember I prefer morning runs" → Memory MCP (long-term storage)
-- "What's the protein in 100g oatmeal?" → Fetch MCP → USDA API
-
-### Kiro IDE MCP Config (`.kiro/settings/mcp.json`)
-
-```json
-{
-  "mcpServers": {
-    "supabase": {
-      "command": "uvx",
-      "args": ["mcp-server-supabase@latest"],
-      "env": {
-        "SUPABASE_URL": "${SUPABASE_URL}",
-        "SUPABASE_SERVICE_ROLE_KEY": "${SUPABASE_SERVICE_ROLE_KEY}"
-      },
-      "disabled": false
-    },
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch@latest"],
-      "disabled": false
-    },
-    "memory": {
-      "command": "uvx",
-      "args": ["mem0-mcp@latest"],
-      "env": {
-        "MEM0_API_KEY": "${MEM0_API_KEY}"
-      },
-      "disabled": false
-    },
-    "filesystem": {
-      "command": "uvx",
-      "args": ["mcp-server-filesystem@latest", "--root", "./uploads"],
-      "disabled": false
-    }
-  }
-}
-```
-
-### Runtime MCP Config (in-app, `src/lib/mcp/client.ts`)
-
-```typescript
-import { MCPClient } from '@mastra/mcp'
-
-export const mcpClient = new MCPClient({
-  servers: {
-    supabase: {
-      command: 'uvx',
-      args: ['mcp-server-supabase@latest'],
-      env: {
-        SUPABASE_URL: process.env.SUPABASE_URL!,
-        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      },
-    },
-    fetch: {
-      command: 'uvx',
-      args: ['mcp-server-fetch@latest'],
-    },
-    memory: {
-      command: 'uvx',
-      args: ['mem0-mcp@latest'],
-      env: { MEM0_API_KEY: process.env.MEM0_API_KEY! },
-    },
-  },
-})
-```
+**What replaces MCP capabilities:**
+- Open-ended stats → additional typed tools (e.g. `getStats(period, sport)`)
+- YouTube / USDA → typed tools calling those APIs with our keys (Phase 4)
+- Long-term memory → pgvector RAG over `coaching_messages`
 
 ---
 
