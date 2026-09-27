@@ -1,15 +1,28 @@
 # ── Secrets — NEVER commit ────────────────────────────────────
+# Ignore all real docker env files (.env, .env.prod, .env.staging, …)
+# but keep *.example templates committable (un-ignored below).
 docker/.env
+docker/.env.*
 app/.env.local
 app/.env*.local
 .env
 .env.local
+.env.*
+# Re-allow example templates (negations after the ignores above)
+!*.env.example
+!**/.env.example
+!**/.env.prod.example
+!**/*.env.local.example
 # env backups created by ngrok-sync.sh
 *.env.bak
 docker/.env.bak
 app/.env.local.bak
 # rendered ngrok config (contains authtoken)
 docker/.ngrok.rendered.yml
+# Kiro MCP settings can hold API tokens in their env block — never commit.
+# The rest of .kiro/ (steering, specs, hooks) IS committed intentionally.
+.kiro/settings/mcp.json
+**/.kiro/settings/mcp.json
 
 # ── Dependencies ──────────────────────────────────────────────
 node_modules/

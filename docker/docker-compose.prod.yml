@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production override for the hybrid GCP deployment.
+#
+#   docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this override does vs the base (dev) docker-compose.yml:
+#   • Removes the `app` service — the Next.js app runs on Cloud Run, NOT the VM.
+#   • Puts `studio` + `meta` behind the `admin` profile so they DO NOT start in
+#     normal prod `up`. Bring them up on-demand (local / SSH tunnel) with:
+#         docker compose ... --profile admin up -d studio meta
+#     NEVER expose Studio (:8080) on a public port. See DEPLOY.md.
+#   • Strips host port publishing from db (5432), api-gw (8000) and supavisor
+#     (6543) so nothing but Caddy is reachable from outside the Docker network.
+#   • Adds `caddy` as the single public entrypoint: 80/443 with automatic TLS
+#     for the nip.io host, reverse-proxying to the Envoy gateway (api-gw:8000).
+#
+# Combined with a GCP firewall that only allows 80/443 (+22 from your IP), this
+# gives two independent layers keeping Postgres/Studio off the public internet.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # App runs on Cloud Run in prod — disable the VM copy.
+  # `profiles` with a name never selected keeps it defined but never started.
+  app:
+    profiles: ["donotstart"]
+
+  # Studio + meta: admin-only, off by default in prod.
+  studio:
+    profiles: ["admin"]
+    ports: !reset []          # no public 8080 even if someone runs --profile admin
+  meta:
+    profiles: ["admin"]
+
+  # Internal-only services — remove host port publishing.
+  db:
+    ports: !reset []
+  api-gw:
+    ports: !reset []
+  supavisor:
+    ports: !reset []
+
+  # ── Caddy — public HTTPS entrypoint (auto-TLS via Let's Encrypt on nip.io) ──
+  caddy:
+    container_name: sportai-caddy
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api-gw:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # e.g. 34-120-55-10.nip.io  (your VM's static IP, dashes not dots)
+      SUPABASE_DOMAIN: ${SUPABASE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data     # persisted certs — survives restarts, avoids LE rate limits
+      - caddy-config:/config
+    networks:
+      - sportai-network
+
+networks:
+  sportai-network:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:

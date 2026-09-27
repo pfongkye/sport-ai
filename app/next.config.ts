@@ -17,6 +17,10 @@ const extraOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? '')
   .filter(Boolean)
 
 const nextConfig: NextConfig = {
+  // Emit a self-contained production server (.next/standalone/server.js).
+  // Required by the Dockerfile `runner` stage and the Cloud Run image — without
+  // this the standalone output does not exist and the prod image fails to boot.
+  output: 'standalone',
   allowedDevOrigins: [
     'localhost',
     '127.0.0.1',

@@ -1,0 +1,25 @@
+# Caddy config for the SportAI Supabase gateway on the VM.
+#
+# SUPABASE_DOMAIN is the VM's nip.io host, e.g. 34-120-55-10.nip.io
+# (the static external IP with dashes instead of dots). Because it's a real
+# resolvable hostname, Caddy obtains a valid Let's Encrypt certificate for it
+# automatically — giving the self-hosted Supabase stack real HTTPS with no
+# custom domain and no manual cert management.
+#
+# All public Supabase traffic (auth callbacks, PostgREST, storage, realtime)
+# enters here and is proxied to the Envoy gateway on the internal Docker network.
+
+{$SUPABASE_DOMAIN} {
+	# Envoy (api-gw) is the Supabase gateway; only reachable inside the Docker
+	# network — Caddy is the sole public door.
+	reverse_proxy api-gw:8000
+
+	# Realtime websockets upgrade cleanly through reverse_proxy by default.
+
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

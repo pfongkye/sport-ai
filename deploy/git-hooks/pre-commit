@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# SportAI pre-commit secret guard.
+#
+# Blocks a commit if it would introduce secret files or obvious secret content.
+# This is a safety net on top of .gitignore — it catches cases where a file was
+# force-added (git add -f) or the ignore rules were bypassed.
+#
+# Install with:  ./deploy/git-hooks/install.sh
+# Bypass (discouraged, only if you are SURE):  git commit --no-verify
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+RED=$'\033[31m'; YEL=$'\033[33m'; NC=$'\033[0m'
+blocked=0
+
+# Files staged for this commit (added/copied/modified/renamed), NUL-safe.
+staged=$(git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n')
+[ -z "$staged" ] && exit 0
+
+# 1) Block secret FILENAMES (real env files, keys, credential dumps).
+#    Allow *.example templates through.
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *.example) continue ;;                       # templates are safe
+  esac
+  if printf '%s\n' "$f" | grep -qiE \
+      '(^|/)\.env($|\.)|(^|/)secrets/|(^|/)\.ngrok\.rendered\.yml$|secret|credential|\.pem$|\.key$|\.p12$|\.keystore$|service-account.*\.json$|client_secret.*\.json$'; then
+    echo "${RED}✗ blocked (secret-like filename):${NC} $f"
+    blocked=1
+  fi
+done <<< "$staged"
+
+# 2) Scan ADDED lines of staged text for high-signal secret patterns.
+#    Kept deliberately narrow to avoid noise; env *values* are the main risk.
+#    Exclude *.example templates — they intentionally contain CHANGE_ME placeholders
+#    next to keys like POSTGRES_PASSWORD= and must not trip the value scan.
+scan_files=()
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *.example) continue ;;                       # templates: placeholders, not secrets
+    deploy/git-hooks/*) continue ;;              # the guard itself contains detection
+                                                 # patterns (POSTGRES_PASSWORD= etc.) —
+                                                 # don't let it flag its own source.
+  esac
+  scan_files+=("$f")
+done <<< "$staged"
+
+added=""
+if [ "${#scan_files[@]}" -gt 0 ]; then
+  added=$(git diff --cached -U0 --diff-filter=ACMR -- "${scan_files[@]}" | grep -E '^\+' | grep -vE '^\+\+\+' || true)
+fi
+if [ -n "$added" ]; then
+  # Patterns: private keys, Google/OpenAI-style keys, generic long secrets in env assignments.
+  # NOTE: pass the pattern via -e (and the alternation avoids a leading '-' being
+  # parsed as a grep option — "BEGIN ... PRIVATE KEY" is matched without leading dashes).
+  if printf '%s\n' "$added" | grep -qiE -e \
+      'BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}|SERVICE_ROLE_KEY=.+|JWT_SECRET=.{16,}|POSTGRES_PASSWORD=.+'; then
+    echo "${RED}✗ blocked (secret-like content in staged diff).${NC}"
+    echo "  A private key or a real-looking key/password assignment was detected."
+    blocked=1
+  fi
+fi
+
+if [ "$blocked" -ne 0 ]; then
+  echo
+  echo "${YEL}Commit aborted by pre-commit secret guard.${NC}"
+  echo "If this is a placeholder/template, rename it to *.example."
+  echo "If you are certain it is safe, bypass with:  git commit --no-verify"
+  exit 1
+fi
+
+exit 0

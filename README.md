@@ -78,7 +78,8 @@ Then open `app/.env.local` and fill in:
 # Required — your OpenAI key (used as system default for AI coaching)
 OPENAI_API_KEY=sk-...
 
-# Required for YouTube video search in the coach
+# Optional / not yet required — YouTube video search is a planned Phase 4 feature
+# and is NOT yet implemented (no code references it). Leave unset until it lands.
 YOUTUBE_API_KEY=...         # console.cloud.google.com → YouTube Data API v3
 
 # Optional — USDA food database for nutrition macro lookup (free)
