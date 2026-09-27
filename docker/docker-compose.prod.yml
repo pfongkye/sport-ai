@@ -37,6 +37,12 @@ services:
     ports: !reset []
   api-gw:
     ports: !reset []
+    # Base compose has `depends_on: studio`, but studio is now admin-profile-only
+    # (not in the default project), which makes Compose reject "undefined service
+    # studio". Reset and depend on db instead — what the gateway actually needs up.
+    depends_on: !reset
+      db:
+        condition: service_healthy
   supavisor:
     ports: !reset []
 
