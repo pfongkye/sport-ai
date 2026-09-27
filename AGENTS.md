@@ -96,6 +96,66 @@ Causes & fixes:
   (shell env wins), renders `docker/.ngrok.rendered.yml` via envsubst, and starts both
   tunnels. The rendered file is gitignored (contains the authtoken).
 
+### 27. GCP prod deploy: hybrid Cloud Run (app) + Compute Engine VM (Supabase)
+Prod runs the Next.js app on Cloud Run (free `*.run.app` HTTPS, scales to zero) and the
+self-hosted Supabase stack lift-and-shifted onto ONE Compute Engine VM (`e2-medium`,
+`europe-west1`), fronted by Caddy for auto-TLS on a `nip.io` host (`<dashed-static-ip>.nip.io`).
+Scripts + full runbook: `deploy/gcp/` and `deploy/gcp/MANUAL_DEPLOY.md`. Hardening lives in
+`docker/docker-compose.prod.yml` (Studio/meta behind an `admin` profile — off by default; no
+public host ports on db/api-gw/supavisor; firewall allows only 80/443 + SSH). Deploy-specific
+traps we hit:
+- **Apple Silicon → Cloud Run**: a local `docker build` on an M-series Mac produces an arm64/
+  multi-arch OCI image; Cloud Run rejects it (`must support amd64/linux`). Build on Cloud
+  Build, or `docker buildx build --platform linux/amd64 ... --push`. (Script 04 uses Cloud
+  Build via `deploy/gcp/cloudbuild.yaml`; needs `cloudbuild.googleapis.com` enabled.)
+- **`gcloud compute ssh` "insufficient authentication scopes"**: re-auth the user with
+  `gcloud auth login` (the stored credential lacked cloud-platform scope).
+- **GoTrue Google `redirect_uri` was missing `/auth/v1`**: base compose had
+  `GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${API_EXTERNAL_URL}/callback`. Envoy routes the public
+  `/auth/v1/callback` → GoTrue `/callback`, so the advertised URI MUST be
+  `${API_EXTERNAL_URL}/auth/v1/callback` (else Google returns `redirect_uri_mismatch`). Fixed
+  in `docker-compose.yml`. Whitelist that exact URI in the Google console (gotcha #12).
+- **`SITE_URL`/`ADDITIONAL_REDIRECT_URLS` must be the Cloud Run URL** or post-login lands on
+  the placeholder/wrong host. Edit on the VM `.env`, then `up -d auth` (NOT `restart`, #8).
+- **`SUPABASE_INTERNAL_URL` must be UNSET on Cloud Run** — the app is off the Docker network,
+  so server calls fall back to the public nip.io URL; browser+server then share a URL so the
+  pinned storageKey keeps PKCE consistent (#10).
+
+### 26. Migrating data between two Supabase stacks: app-data + UUID remap, NOT a full auth dump
+Symptom (first attempt, `pg_dump --data-only` of `auth`+`storage`+`public`): a wall of
+`must be owner of table <auth/storage table>` and `permission denied: RI_ConstraintTrigger... is
+a system trigger`, then a cascade of `insert or update ... violates foreign key ... user_id not
+present in table "users"`. Net: NOTHING imported.
+Cause (two independent issues):
+1. `auth.*`/`storage.*` tables are owned by `supabase_auth_admin`/`supabase_storage_admin`, not
+   `postgres`. Restoring `--data-only` as `postgres` can't disable their triggers → COPY
+   rejected → `auth.users` never loads → every user-scoped FK fails downstream.
+2. The two stacks minted DIFFERENT `auth.users.id` for the SAME person (each Supabase creates
+   its own UUID at first Google login). Forcing local auth in collides (`duplicate key (email)`)
+   and fights the identity prod already created.
+Fix (the pattern — see `deploy/gcp/05b_migrate_appdata_remap.sh`): migrate ONLY the `public`
+app tables + `storage.objects`, and REMAP the local user UUID → the prod user UUID everywhere
+(user_id, profiles.id, storage.objects.owner, and the storage path). Restore as `postgres`
+(owns public). Use `pg_dump --data-only --no-owner --column-inserts` (plain INSERTs also dodge
+the PG17 `\restrict` directive that older psql rejects — `backslash commands are restricted`).
+Get both UUIDs first: `select id,email from auth.users;` on each stack.
+
+### 25. Supabase Storage file backend: files live under the user UUID in the on-disk PATH
+Storage (`STORAGE_BACKEND=file`) stores objects on the `storage-data` volume at
+`.../<bucket>/<user-uuid>/...`, and storage RLS checks that the path's user-folder matches
+`auth.uid()`. So when remapping a user (gotcha #26), you must rename the on-disk UID folder
+local→prod IN ADDITION to updating `storage.objects` rows — otherwise the files exist but RLS
+hides them from the new user. Verify with `find /data -type f -path "*<prod-uid>*"`.
+
+### 24. Docker Desktop on macOS doesn't reliably share `/var/folders` mktemp dirs
+Symptom: a file (e.g. a `tar`) written INSIDE a container to a `-v "$WORK":/backup` mount is
+visible in-container (`ls` shows it, non-zero size) but the HOST-side `[ -s "$WORK/file" ]`
+check sees nothing — so a "copy the archive" step silently skips. Cause: `mktemp -d` returns a
+path under `/var/folders/...` which Docker Desktop's file sharing doesn't sync back to the host
+reliably. Fix: use a temp dir under `$HOME` (shared by default) for any host↔container file
+handoff on macOS. Bit us in the storage-file migration; `05c_migrate_storage_files.sh` uses
+`mktemp -d "$HOME/.sportai-migrate.XXXXXX"`.
+
 ### 23. LLM hallucinates numbers the tools don't provide — compute, don't estimate
 Symptom: coach reported a "fastest 1km" ~1 min/km faster than reality. Cause: getRecentActivities
 only returns AVERAGE pace; there was no tool for peak/segment data, so the LLM invented a
