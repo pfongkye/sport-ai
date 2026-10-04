@@ -113,7 +113,10 @@ export function StravaImportPanel({ onImported }: { onImported?: (created: numbe
       if (!res.ok) throw new Error(body.error ?? 'Import failed')
       setResult(
         `Imported ${body.imported}, skipped ${body.skipped} duplicate(s)` +
-          (body.failed ? `, ${body.failed} failed.` : '.')
+          (body.failed ? `, ${body.failed} failed` : '') +
+          (body.rateLimited
+            ? '. Strava rate limit reached — some were skipped, try again in a few minutes.'
+            : '.')
       )
       onImported?.(body.imported ?? 0)
       await load() // refresh flags (imported ones now disabled)

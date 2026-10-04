@@ -16,6 +16,9 @@ import {
   getActivity,
   getActivityStreams,
   listActivities,
+  STRAVA_ATHLETE_LIMIT,
+  STRAVA_RATE_LIMITED,
+  STRAVA_UNAUTHORIZED,
   type StravaActivity,
 } from './client'
 import { getValidAccessToken, markSynced } from './tokens'
@@ -69,6 +72,8 @@ export interface ImportResult {
   imported: number
   skipped: number
   failed: number
+  /** True when the import stopped early because Strava's rate limit was hit. */
+  rateLimited: boolean
   details: Array<{
     stravaId: number
     name: string
@@ -79,12 +84,30 @@ export interface ImportResult {
 }
 
 /**
+ * Hard cap on how many activities a single import call will process, to protect
+ * the app-wide Strava quota (200 req/15 min, 2,000/day — shared by ALL users).
+ * Each imported activity costs 1–2 requests (detail + optional streams); a cap
+ * of 50 keeps one import well under a single 15-min window.
+ */
+const MAX_IMPORT_BATCH = 50
+
+/** Small delay between per-activity requests to avoid bursting the window. */
+const INTER_REQUEST_DELAY_MS = 120
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
  * Import Strava activities into our table.
- * - If `activityIds` is given, import exactly those.
+ * - If `activityIds` is given, import exactly those (capped at MAX_IMPORT_BATCH).
  * - Otherwise import the most recent `limit` activities (duplicates skipped).
  *
  * `withStreams` controls whether we fetch per-activity stream data (one extra
  * API call each — richer data, more rate-limit cost). Defaults to true.
+ *
+ * Rate-limit safety: requests run sequentially with a small delay, capped per
+ * call. If Strava returns 429 mid-import we STOP immediately (don't keep
+ * hammering an exhausted quota), mark the not-yet-processed items as skipped,
+ * and set `result.rateLimited` so the caller can tell the user to retry later.
+ * An athlete-limit / revoked-token error aborts the whole import (rethrown).
  */
 export async function importStravaActivities(
   admin: SupabaseClient<Database>,
@@ -94,16 +117,23 @@ export async function importStravaActivities(
   const withStreams = opts.withStreams ?? true
   const accessToken = await getValidAccessToken(admin, userId)
 
-  // Resolve the set of activities to import.
+  // Resolve the set of activities to import. Detail fetches for explicit ids are
+  // sequential + throttled; a 429 while resolving aborts early (handled below).
   let targets: StravaActivity[]
   if (opts.activityIds?.length) {
-    // Fetch each requested activity in detail (also gives calories).
+    const ids = opts.activityIds.slice(0, MAX_IMPORT_BATCH)
     targets = []
-    for (const id of opts.activityIds) {
+    for (const id of ids) {
       try {
         targets.push(await getActivity(accessToken, id))
+        await sleep(INTER_REQUEST_DELAY_MS)
       } catch (err) {
-        // Record as a failure below by inserting a stub; simpler: skip + note.
+        const emsg = err instanceof Error ? err.message : 'fetch failed'
+        // Quota/auth errors are app-wide — stop resolving more and let the loop
+        // below surface them rather than fetching the rest.
+        if (emsg === STRAVA_RATE_LIMITED || emsg === STRAVA_UNAUTHORIZED || emsg === STRAVA_ATHLETE_LIMIT) {
+          throw err
+        }
         targets.push({
           id,
           name: `Strava activity ${id}`,
@@ -112,22 +142,21 @@ export async function importStravaActivities(
           elapsed_time: 0,
           moving_time: 0,
           distance: 0,
-          // mark unusable so the mapper produces a minimal row; the import will
-          // still dedup/insert. We rethrow-safe by catching per item below.
-          __fetchError: err instanceof Error ? err.message : 'fetch failed',
+          __fetchError: emsg,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any)
       }
     }
   } else {
-    const limit = Math.min(opts.limit ?? 10, 50)
+    const limit = Math.min(opts.limit ?? 10, MAX_IMPORT_BATCH)
     targets = await listActivities(accessToken, { perPage: limit, page: 1 })
     targets = targets.slice(0, limit)
   }
 
-  const result: ImportResult = { imported: 0, skipped: 0, failed: 0, details: [] }
+  const result: ImportResult = { imported: 0, skipped: 0, failed: 0, rateLimited: false, details: [] }
 
-  for (const activity of targets) {
+  for (let i = 0; i < targets.length; i++) {
+    const activity = targets[i]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchError = (activity as any).__fetchError as string | undefined
     if (fetchError) {
@@ -159,13 +188,40 @@ export async function importStravaActivities(
         activityId: insertRes.activityId,
         message: insertRes.message,
       })
+
+      if (withStreams) await sleep(INTER_REQUEST_DELAY_MS)
     } catch (err) {
+      const emsg = err instanceof Error ? err.message : 'Import failed'
+
+      // Rate limited mid-import: stop now. Mark THIS item and all remaining ones
+      // as skipped (not failed — they just weren't attempted) and flag it.
+      if (emsg === STRAVA_RATE_LIMITED) {
+        result.rateLimited = true
+        for (let j = i; j < targets.length; j++) {
+          result.skipped++
+          result.details.push({
+            stravaId: targets[j].id,
+            name: targets[j].name,
+            status: 'error',
+            message: 'Skipped — Strava rate limit reached, try again later',
+          })
+        }
+        break
+      }
+
+      // Revoked token / athlete-limit are app-wide — abort the whole import so
+      // the route surfaces the right message instead of per-item noise.
+      if (emsg === STRAVA_UNAUTHORIZED || emsg === STRAVA_ATHLETE_LIMIT) {
+        await markSynced(admin, userId).catch(() => {})
+        throw err
+      }
+
       result.failed++
       result.details.push({
         stravaId: activity.id,
         name: activity.name,
         status: 'error',
-        message: err instanceof Error ? err.message : 'Import failed',
+        message: emsg,
       })
     }
   }

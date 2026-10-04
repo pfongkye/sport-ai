@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { exchangeCodeForToken, STRAVA_SCOPE } from '@/lib/integrations/strava/client'
+import {
+  exchangeCodeForToken,
+  STRAVA_SCOPE,
+  STRAVA_ATHLETE_LIMIT,
+} from '@/lib/integrations/strava/client'
 import { saveConnection } from '@/lib/integrations/strava/tokens'
 import { resolvePublicOrigin } from '@/lib/integrations/strava/oauth-url'
 
@@ -51,15 +55,17 @@ export async function GET(request: Request) {
   try {
     const token = await exchangeCodeForToken(code)
     const admin = await createAdminClient()
-    // Strava doesn't echo scope — stamp what we requested.
-    await saveConnection(admin, user.id, {
-      ...token,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      scope: STRAVA_SCOPE,
-    } as any)
+    // Strava doesn't echo scope — stamp what we requested on first connect.
+    await saveConnection(admin, user.id, token, STRAVA_SCOPE)
     return clearState(NextResponse.redirect(settingsUrl('connected')))
   } catch (err) {
     console.error('[strava/callback] token exchange failed', err)
-    return clearState(NextResponse.redirect(settingsUrl('error')))
+    // A new user authorizing an app already at its athlete cap gets a 403 here.
+    // Surface a distinct status so the UI can explain it's an app-wide limit,
+    // not a transient glitch.
+    const status = err instanceof Error && err.message === STRAVA_ATHLETE_LIMIT
+      ? 'athlete_limit'
+      : 'error'
+    return clearState(NextResponse.redirect(settingsUrl(status)))
   }
 }

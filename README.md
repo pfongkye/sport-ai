@@ -495,6 +495,25 @@ Tokens are stored **encrypted** (same pgcrypto key as AI API keys — so the one
 - **Disconnect**: Settings → "Disconnect" removes the stored tokens. Already-imported
   activities are kept.
 
+### Letting more than one athlete connect
+
+Each app user connects their own Strava account independently (tokens are stored per user), so
+the app supports many users. But your **Strava API application** has an athlete cap, set in
+[strava.com/settings/api](https://www.strava.com/settings/api) — **not** in this codebase:
+
+- New Strava apps start capped at **1 athlete** (just you). A second person connecting sees a
+  clear message that the app has hit its Strava athlete limit.
+- Raise it to **10 athletes** instantly from the Strava API Settings dashboard (self-serve, no
+  review) — enough for a beta group of friends/family.
+- Beyond 10 (up to 9,999) you must submit the app for Strava's review. Note Strava won't
+  approve apps that feed athlete data to third-party AI tools, so the coach only ever reads
+  your already-imported activities, never raw Strava data.
+- A Strava subscription is required for API access.
+
+The whole app shares one Strava rate limit (200 requests / 15 min, 2,000 / day). Imports are
+batched and back off automatically if the limit is hit — if you see "rate limit reached", wait
+a few minutes and import the rest.
+
 ---
 
 ## Troubleshooting

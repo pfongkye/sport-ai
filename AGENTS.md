@@ -121,6 +121,31 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 31. Strava app has an ATHLETE-CAP (not a code bug) + shared rate limit
+Multi-user is already handled correctly (one encrypted token row per `user_id` in
+`strava_connections`). The "only one user can connect" symptom is a **Strava API application
+quota**, set in the Strava dashboard (strava.com/settings/api), NOT in our code:
+- New apps start at **1 athlete**; a 2nd user authorizing gets `403 Limit of connected
+  athletes exceeded`. Self-upgrade to **10** athletes instantly in the API Settings dashboard
+  (no review); beyond 10 (up to 9,999) requires submitting the app for review. A Strava
+  subscription is a prerequisite for API access at all tiers.
+- Strava uses **403 for BOTH** "insufficient scope" and "athlete-limit exceeded", so
+  `classifyStravaError` (client.ts) disambiguates on the body text
+  (`/limit of connected athletes/i`) → `STRAVA_ATHLETE_LIMIT` sentinel. This 403 fires during
+  the **token exchange** (a new user authorizing), so it's handled in the callback → redirect
+  `/settings?strava=athlete_limit` with a clear "owner must raise the cap" banner, and in
+  `errors.ts` / the coach tool.
+- Compliance note for when you apply for >10: Strava rejects apps that expose athlete data to
+  third-party AI tools. The coach must operate on our STORED normalized activities, never
+  forward raw Strava API responses to the LLM.
+- **Shared rate limit** (200 req/15 min, 2,000/day for the WHOLE app, all users). Import is
+  capped at `MAX_IMPORT_BATCH=50`/call, runs sequentially with a small delay, and on a 429
+  mid-import STOPS (marks the rest skipped, sets `result.rateLimited`) instead of hammering.
+  `getActivityStreams` is best-effort EXCEPT it rethrows 429/401 so the loop can bail.
+- Sentinels live in `client.ts` (`STRAVA_UNAUTHORIZED/RATE_LIMITED/ATHLETE_LIMIT`); map them
+  via `stravaErrorResponse`. `saveConnection(admin, userId, token, scope?)` — pass `scope` only
+  on first connect; refresh omits it so the column isn't clobbered.
+
 ### 30. `encrypt_api_key`/`decrypt_api_key` fail with "pgp_sym_encrypt does not exist" — search_path
 Symptom: connecting Strava fails with the callback's generic "Something went wrong" and the
 dev log shows `ERROR: function pgp_sym_encrypt(text, text) does not exist`. Also affects AI

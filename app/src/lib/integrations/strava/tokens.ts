@@ -45,12 +45,14 @@ async function decrypt(admin: SupabaseClient<Database>, enc: string): Promise<st
 
 /**
  * Persist (insert or update) a connection from a fresh token response.
- * Called from the OAuth callback (first connect) and after a refresh.
+ * Called from the OAuth callback (first connect — pass `scope`) and after a
+ * refresh (no scope; Strava doesn't echo it, and we must not clobber it).
  */
 export async function saveConnection(
   admin: SupabaseClient<Database>,
   userId: string,
-  token: StravaTokenResponse
+  token: StravaTokenResponse,
+  scope?: string
 ): Promise<void> {
   const [accessEnc, refreshEnc] = await Promise.all([
     encrypt(admin, token.access_token),
@@ -67,7 +69,6 @@ export async function saveConnection(
     expires_at: token.expires_at,
     updated_at: new Date().toISOString(),
   }
-  const scope = (token as unknown as { scope?: string }).scope
   if (scope) row.scope = scope
   if (token.athlete) {
     row.athlete_id = String(token.athlete.id)

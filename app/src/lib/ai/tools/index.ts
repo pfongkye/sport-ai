@@ -375,12 +375,27 @@ export function buildCoachTools(
           created: result.imported,
           skippedDuplicates: result.skipped,
           failed: result.failed,
-          message: `Imported ${result.imported}, skipped ${result.skipped} duplicate(s)${result.failed ? `, ${result.failed} failed` : ''}.`,
+          rateLimited: result.rateLimited,
+          message:
+            `Imported ${result.imported}, skipped ${result.skipped} duplicate(s)${result.failed ? `, ${result.failed} failed` : ''}.` +
+            (result.rateLimited
+              ? ' Strava rate limit was reached, so some were skipped — tell the athlete to try again in a few minutes.'
+              : ''),
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Strava import failed'
         if (msg === 'STRAVA_NOT_CONNECTED') {
           return { imported: false, message: 'Strava is not connected. Ask the athlete to connect it in Settings.' }
+        }
+        if (msg === 'STRAVA_ATHLETE_LIMIT') {
+          return {
+            imported: false,
+            message:
+              "This app has hit its Strava connected-athlete limit — the owner needs to raise it in Strava's API settings. Tell the athlete this isn't something they can fix.",
+          }
+        }
+        if (msg === 'STRAVA_RATE_LIMITED') {
+          return { imported: false, message: 'Strava rate limit reached. Ask the athlete to try again in a few minutes.' }
         }
         return { imported: false, message: msg }
       }

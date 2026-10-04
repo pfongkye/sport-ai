@@ -29,6 +29,8 @@ function statusBanner(status?: string): string | null {
     connected: 'Strava connected. Pick activities to import below.',
     denied: 'Strava connection was cancelled.',
     invalid_state: 'Strava connection failed a security check. Please try again.',
+    athlete_limit:
+      "This app has reached its Strava connected-athlete limit. The owner needs to raise the athlete cap in the Strava API settings dashboard before more accounts can connect.",
     error: 'Something went wrong connecting Strava. Please try again.',
   }
   return messages[status] ?? null

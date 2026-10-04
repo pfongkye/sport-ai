@@ -14,6 +14,37 @@ const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
 /** Scopes we request — read activities (incl. private) so import is complete. */
 export const STRAVA_SCOPE = 'read,activity:read_all'
 
+/**
+ * Sentinel errors thrown by this client so callers can map them to friendly,
+ * actionable messages (see lib/integrations/strava/errors.ts). The raw status
+ * text is attached as `.cause` for logging.
+ */
+export const STRAVA_UNAUTHORIZED = 'STRAVA_UNAUTHORIZED'
+export const STRAVA_RATE_LIMITED = 'STRAVA_RATE_LIMITED'
+/** The whole API app has hit its approved athlete capacity (403 from Strava). */
+export const STRAVA_ATHLETE_LIMIT = 'STRAVA_ATHLETE_LIMIT'
+
+/**
+ * Classify a non-OK Strava response into a sentinel Error, or null if it's not
+ * one of the special cases (caller then throws a generic error).
+ *
+ * Strava uses 403 for BOTH "insufficient scope" AND "athlete limit exceeded",
+ * so we disambiguate on the body text. The connected-athlete cap is an
+ * app-level quota (raise it in the Strava API settings dashboard), not something
+ * the user can fix — hence its own sentinel + message.
+ */
+function classifyStravaError(status: number, body: string): Error | null {
+  if (status === 401) return new Error(STRAVA_UNAUTHORIZED, { cause: body })
+  if (status === 429) return new Error(STRAVA_RATE_LIMITED, { cause: body })
+  if (status === 403) {
+    // Match Strava's wording defensively (case-insensitive, substring).
+    if (/limit of connected athletes|athlete.*exceeded|exceeded.*athlete/i.test(body)) {
+      return new Error(STRAVA_ATHLETE_LIMIT, { cause: body })
+    }
+  }
+  return null
+}
+
 export interface StravaTokenResponse {
   token_type: string
   access_token: string
@@ -102,7 +133,12 @@ export async function exchangeCodeForToken(code: string): Promise<StravaTokenRes
     }),
   })
   if (!res.ok) {
-    throw new Error(`Strava token exchange failed (${res.status}): ${await res.text()}`)
+    const body = await res.text()
+    // A second user authorizing an app still at its athlete cap gets 403 HERE,
+    // during the code exchange — surface it as the athlete-limit sentinel.
+    const classified = classifyStravaError(res.status, body)
+    if (classified) throw classified
+    throw new Error(`Strava token exchange failed (${res.status}): ${body}`)
   }
   return (await res.json()) as StravaTokenResponse
 }
@@ -145,10 +181,11 @@ export async function listActivities(
   const res = await fetch(`${STRAVA_API_BASE}/athlete/activities?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
-  if (res.status === 401) throw new Error('STRAVA_UNAUTHORIZED')
-  if (res.status === 429) throw new Error('STRAVA_RATE_LIMITED')
   if (!res.ok) {
-    throw new Error(`Strava listActivities failed (${res.status}): ${await res.text()}`)
+    const body = await res.text()
+    const classified = classifyStravaError(res.status, body)
+    if (classified) throw classified
+    throw new Error(`Strava listActivities failed (${res.status}): ${body}`)
   }
   return (await res.json()) as StravaActivity[]
 }
@@ -161,18 +198,23 @@ export async function getActivity(
   const res = await fetch(`${STRAVA_API_BASE}/activities/${activityId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
-  if (res.status === 401) throw new Error('STRAVA_UNAUTHORIZED')
-  if (res.status === 429) throw new Error('STRAVA_RATE_LIMITED')
   if (!res.ok) {
-    throw new Error(`Strava getActivity failed (${res.status}): ${await res.text()}`)
+    const body = await res.text()
+    const classified = classifyStravaError(res.status, body)
+    if (classified) throw classified
+    throw new Error(`Strava getActivity failed (${res.status}): ${body}`)
   }
   return (await res.json()) as StravaActivity
 }
 
 /**
  * Fetch stream data for an activity. Returns a keyed object (not the raw array
- * form) via `key_by_type=true`. Best-effort: returns {} on any failure so an
- * import still succeeds with summary metrics only.
+ * form) via `key_by_type=true`. Mostly best-effort — returns {} when streams are
+ * simply unavailable so an import still succeeds with summary metrics only.
+ *
+ * EXCEPTION: a 429 (rate limited) is RE-THROWN so the caller can stop the import
+ * instead of continuing to hammer a quota that's already exhausted. Likewise a
+ * 401 (revoked token) propagates. Other failures are swallowed as before.
  */
 export async function getActivityStreams(
   accessToken: string,
@@ -180,13 +222,17 @@ export async function getActivityStreams(
 ): Promise<StravaStreamSet> {
   const keys = 'time,latlng,heartrate,cadence,altitude,watts,velocity_smooth'
   const url = `${STRAVA_API_BASE}/activities/${activityId}/streams?keys=${keys}&key_by_type=true`
+  let res: Response
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-    if (!res.ok) return {}
-    return (await res.json()) as StravaStreamSet
+    res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
   } catch {
-    return {}
+    return {} // network blip — degrade to summary-only
   }
+  if (res.ok) return (await res.json()) as StravaStreamSet
+  // Rethrow the quota/auth sentinels so the import loop can bail cleanly.
+  if (res.status === 429 || res.status === 401) {
+    const classified = classifyStravaError(res.status, await res.text().catch(() => ''))
+    if (classified) throw classified
+  }
+  return {} // any other non-OK → just skip streams for this activity
 }
