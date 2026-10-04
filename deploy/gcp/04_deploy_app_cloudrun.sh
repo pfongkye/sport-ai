@@ -47,12 +47,22 @@ gcloud artifacts repositories create "$AR_REPO" \
   --description="SportAI images"
 
 echo "[04] Ensuring Secret Manager secrets exist (create empty if missing)…"
+# Cloud Run's default runtime service account — must be able to READ each mounted
+# secret, or the revision fails with "Permission denied on secret ...".
+PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT" --format='value(projectNumber)')"
+RUN_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
 ensure_secret () {
   local name="$1"
   gcloud secrets describe "$name" >/dev/null 2>&1 || {
     echo "   creating secret $name (add a version with a value before deploy)"
     gcloud secrets create "$name" --replication-policy=automatic
   }
+  # Idempotently grant the Cloud Run SA read access (new secrets have no grant,
+  # which is what breaks the revision — e.g. a freshly created STRAVA_CLIENT_SECRET).
+  gcloud secrets add-iam-policy-binding "$name" \
+    --member="serviceAccount:${RUN_SA}" \
+    --role="roles/secretmanager.secretAccessor" >/dev/null 2>&1 || true
 }
 ensure_secret OPENAI_API_KEY
 ensure_secret SUPABASE_SERVICE_ROLE_KEY
