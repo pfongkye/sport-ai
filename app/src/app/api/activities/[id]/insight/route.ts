@@ -1,5 +1,5 @@
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { buildCoachAgent } from '@/lib/ai/agents/coach'
+import { buildCoachAgent, streamAgentText } from '@/lib/ai/agents/coach'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { formatDistance, formatDuration, formatPace, SPORT_LABELS } from '@/lib/utils'
 
@@ -105,7 +105,7 @@ In 3-4 sentences: assess the effort (pacing/HR), note one thing that went well, 
 
   let result
   try {
-    result = await agent.streamLegacy([{ role: 'user', content: prompt }])
+    result = await streamAgentText(agent, [{ role: 'user', content: prompt }])
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : 'AI request failed' }),

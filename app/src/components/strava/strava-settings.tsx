@@ -123,12 +123,40 @@ export function StravaSettings({
                 {disconnecting ? 'Disconnecting…' : 'Disconnect'}
               </Button>
             </div>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Wrong Strava account? Disconnect, then{' '}
+              <a
+                href="https://www.strava.com/logout"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-[var(--foreground)]"
+              >
+                log out of Strava
+              </a>{' '}
+              and reconnect — the connection uses whichever account is signed in at strava.com.
+            </p>
             <StravaImportPanel />
           </>
         ) : (
-          <Button asChild>
-            <a href="/api/integrations/strava/connect">Connect Strava</a>
-          </Button>
+          <div className="space-y-2">
+            <Button asChild>
+              <a href="/api/integrations/strava/connect">Connect Strava</a>
+            </Button>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Strava connects whichever account you&rsquo;re signed into at strava.com (that may
+              be a Google/Apple/Facebook login on Strava&rsquo;s side). To use a different Strava
+              account,{' '}
+              <a
+                href="https://www.strava.com/logout"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-[var(--foreground)]"
+              >
+                log out of Strava
+              </a>{' '}
+              first, then click Connect.
+            </p>
+          </div>
         )}
       </CardContent>
     </Card>

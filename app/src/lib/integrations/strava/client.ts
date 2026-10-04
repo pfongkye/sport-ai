@@ -112,7 +112,11 @@ export function buildAuthorizeUrl(redirectUri: string, state: string): string {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    approval_prompt: 'auto',
+    // 'force' always shows Strava's authorization screen (instead of silently
+    // reusing a prior approval), so reconnecting / switching accounts is
+    // explicit. NOTE: this still authorizes whichever account is logged in at
+    // strava.com — to use a DIFFERENT Strava account, log out there first.
+    approval_prompt: 'force',
     scope: STRAVA_SCOPE,
     state,
   })

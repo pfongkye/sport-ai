@@ -22,9 +22,12 @@ interface BuildCoachAgentParams {
  * Builds a CoachAgent scoped to the current user and request.
  * Injects typed tools and a context-aware system prompt.
  *
- * Uses AI SDK v4 provider factories (@ai-sdk/*@1), which produce
- * LanguageModelV1 — the type Mastra 0.24 (ai@4) consumes. Stream via
- * `agent.streamLegacy()`.
+ * Model version note: depending on which @ai-sdk/* versions are installed in a
+ * given environment, the provider factory may produce a v1 (AI SDK v4) or v2
+ * (AI SDK v5) model. Mastra's streaming APIs are version-specific
+ * (`streamLegacy()` = v1, `stream()` = v2) and throw on a mismatch. Use the
+ * `streamAgentText()` helper below, which detects the model version and calls
+ * the correct one, so routes don't have to care.
  *
  * NOTE: MCP servers were intentionally NOT wired here. Typed tools (safe,
  * RLS-enforced, testable, deploy-anywhere) cover our needs, and stdio-based MCP
@@ -54,4 +57,45 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
     model: model as any,
     tools,
   })
+}
+
+/**
+ * Stream an agent reply as a text stream, picking the right Mastra API for the
+ * model's AI SDK version:
+ *   - v1 models (LanguageModelV1, AI SDK v4) → `streamLegacy()`
+ *   - v2 models (LanguageModelV2, AI SDK v5) → `stream()`
+ * Mastra throws if you call the wrong one for the model's `specificationVersion`
+ * (e.g. "V2 models are not supported for streamLegacy"), and which version the
+ * installed `@ai-sdk/*` factories produce can differ between environments
+ * (host vs the Docker container's own node_modules — see AGENTS.md). Detecting
+ * at runtime makes the chat/insight routes work regardless.
+ *
+ * Both APIs expose `.textStream`, so callers consume the result identically.
+ */
+export async function streamAgentText(
+  agent: Agent,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messages: any
+): Promise<{ textStream: AsyncIterable<string> }> {
+  // The model's reported `specificationVersion` (e.g. 'v3' for openai.responses)
+  // does NOT map cleanly onto Mastra's v1/v2 stream gate, and which value you
+  // get differs by environment (host vs the Docker container's node_modules).
+  // So instead of predicting, we TRY one method and, only if Mastra rejects it
+  // with its specific "wrong method for this model version" error, fall back to
+  // the other. Any other error propagates unchanged.
+  const isWrongMethodError = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err)
+    return /not supported for streamLegacy|not compatible with stream\(\)|use AI SDK v5 models|use stream instead|use the .*streamLegacy/i.test(
+      msg
+    )
+  }
+
+  try {
+    return await agent.stream(messages)
+  } catch (err) {
+    if (isWrongMethodError(err)) {
+      return agent.streamLegacy(messages)
+    }
+    throw err
+  }
 }

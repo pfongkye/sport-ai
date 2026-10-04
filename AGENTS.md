@@ -121,6 +121,52 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 33. Mastra streaming version errors = DRIFTED container deps (not a code bug)
+Symptoms (seen in sequence, confusingly contradictory):
+- `V2 models are not supported for streamLegacy. Please use stream instead. { modelId:'gpt-4o' }`
+- then after switching to stream(): `Agent is using AI SDK v4 model (openai.responses:gpt-4o)
+  which is not compatible with stream(). Please use ... streamLegacy()`
+BOTH methods rejecting the SAME model is the tell. Root cause: the DOCKER CONTAINER's
+`node_modules` (its own anonymous volume, gotcha #16) had drifted to **`@ai-sdk/openai@3.0.99`
++ `@ai-sdk/provider@3`** (model reports `specificationVersion:'v3'`, provider `openai.responses`),
+while `package.json`/`package-lock.json` and the HOST pin **`@ai-sdk/openai@1.3.24`**
+(`specificationVersion:'v1'`, `openai.chat`). `@mastra/core@0.24.9` only understands AI SDK v4
+(v1 models, `streamLegacy`) and v5 (v2 models, `stream`) — the v3 provider packages map to
+NEITHER gate, so every stream method throws. A `^1.3.24` range can't resolve to 3.x, so this
+came from a manual `npm install @ai-sdk/...@latest` run INSIDE the container at some point.
+Fix (the actual one): resync the container to the lockfile —
+`docker exec sportai-app sh -lc 'cd /app && npm ci'` then `docker compose --env-file .env
+restart app`. Verify: `docker exec sportai-app node -e "console.log(require('@ai-sdk/openai/package.json').version)"`
+→ must be `1.3.24`, and the model's `specificationVersion` → `v1`.
+Defensive code kept: `streamAgentText(agent, messages)` in `lib/ai/agents/coach.ts` tries
+`stream()` and, ONLY on Mastra's specific wrong-method error, falls back to `streamLegacy()`
+(both expose `.textStream`). This handles a legit v1-or-v2 model, but it CANNOT save a v3/drifted
+install where both methods reject — that must be fixed at the dependency level.
+Diagnostic one-liner: compare `docker exec sportai-app node -e "..."` vs host for
+`@ai-sdk/openai` version; if they differ, the container drifted — `npm ci` in the container.
+NOTE: the `@ai-sdk/*-v5` + `ai-v5` packages in node_modules/lockfile are NOT ours and NOT a
+stray experiment — they are declared DEPENDENCIES of `@mastra/core@0.24.9` (it bundles the AI
+SDK v5 stack via npm aliases for its `stream()` path). Do NOT remove them. Our app code uses
+the v4 stack (`@ai-sdk/openai@1.3.24` → v1 models) exclusively; grep confirms no `-v5` imports
+in src/. The Dockerfile already uses `npm ci` (lockfile), so clean image builds are correct —
+the only drift vector is a manual `npm install` run inside the live container.
+
+### 32. Which Strava account connects = Strava's browser session, not our Google login
+Our connect flow is independent of app login — `/api/integrations/strava/connect` just
+redirects to Strava's authorize page, and STRAVA picks the account from whatever session is
+logged in at strava.com (which may itself be a Google/Apple/FB login on Strava's side). It can
+LOOK like we linked the user's Google identity to Strava; we didn't. To connect a DIFFERENT
+Strava account the user must log out at strava.com (https://www.strava.com/logout) first, then
+reconnect — there's nothing to change server-side per account.
+- We send `approval_prompt=force` (client.ts `buildAuthorizeUrl`) so the authorization screen
+  always shows on reconnect; note `force` does NOT provide an account switcher — it still uses
+  the logged-in Strava session. Logging out is the only reliable way to switch accounts.
+- Settings UI (strava-settings.tsx) explains this near the Connect/Disconnect buttons with a
+  "log out of Strava first" link, in both connected and not-connected states.
+- One app user = ONE Strava connection (`strava_connections.user_id` PK). Connecting a second
+  Strava account for the SAME app user REPLACES the first (upsert on user_id). Supporting two
+  Strava accounts for one user simultaneously would need a schema change (drop the PK-on-user).
+
 ### 31. Strava app has an ATHLETE-CAP (not a code bug) + shared rate limit
 Multi-user is already handled correctly (one encrypted token row per `user_id` in
 `strava_connections`). The "only one user can connect" symptom is a **Strava API application

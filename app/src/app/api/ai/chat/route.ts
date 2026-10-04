@@ -1,6 +1,6 @@
 import type { CoreMessage } from 'ai'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { buildCoachAgent } from '@/lib/ai/agents/coach'
+import { buildCoachAgent, streamAgentText } from '@/lib/ai/agents/coach'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { computeReadiness } from '@/lib/ai/readiness'
 import { retrieveRelevantContext, embedForStorage } from '@/lib/ai/memory'
@@ -127,10 +127,10 @@ export async function POST(request: Request) {
       ]
     : (messages.map((m) => ({ role: m.role, content: m.content })) as CoreMessage[])
 
-  // Stream the agent reply (AI SDK v4 model → streamLegacy).
+  // Stream the agent reply (picks streamLegacy/stream by model version).
   let result
   try {
-    result = await agent.streamLegacy(llmMessages)
+    result = await streamAgentText(agent, llmMessages)
   } catch (err) {
     console.error('[ai/chat] stream failed', err)
     return new Response(
