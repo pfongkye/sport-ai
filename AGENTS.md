@@ -121,6 +121,74 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 30. `encrypt_api_key`/`decrypt_api_key` fail with "pgp_sym_encrypt does not exist" — search_path
+Symptom: connecting Strava fails with the callback's generic "Something went wrong" and the
+dev log shows `ERROR: function pgp_sym_encrypt(text, text) does not exist`. Also affects AI
+provider key encryption (same functions) — it just hadn't been exercised.
+Cause: Supabase installs **pgcrypto into the `extensions` schema**, not `public`. The
+`encrypt_api_key`/`decrypt_api_key` functions (migration 007) were pinned
+`SECURITY DEFINER SET search_path = public`, which EXCLUDES `extensions`, so pgcrypto's
+`pgp_sym_encrypt`/`pgp_sym_decrypt` aren't resolvable inside the function body. (The DB's
+DEFAULT search_path is `"$user", public, extensions`, so a direct call OUTSIDE the function
+works — which masks the bug until something calls the function.)
+Fix: migration `012_fix_crypto_search_path.sql` redefines both with
+`SET search_path = public, extensions` (CREATE OR REPLACE, idempotent). Verify:
+`select public.decrypt_api_key(public.encrypt_api_key('x'))='x';` → `t`.
+Related trap: the `011_strava.sql` migration must actually be applied — `strava_connections`
+missing also surfaces as the same generic callback error (the upsert fails). Check with
+`select to_regclass('public.strava_connections');`. Migrations are applied MANUALLY (gotcha
+#4) — a new migration file does nothing until you run it.
+
+### 29. Login access allow-list is APP-side (Google has none), enforced in TWO places
+Google OAuth can't restrict which emails sign in, so access control is `ALLOWED_EMAILS` (an
+app-side env var in `app/.env.local`, read server-side) + `lib/auth/allow-list.ts`
+(`isEmailAllowed`, exact + case-insensitive). Current = option 1 (env var); option 2 (DB
+`allowed_emails` table, editable without redeploy) is the long-term plan.
+- **Fail-OPEN when unset**: empty/unset `ALLOWED_EMAILS` disables the gate (everyone with a
+  valid Google login is allowed) — intentional for local dev. Set it to turn gating on.
+- **Enforced in TWO places, both needed**:
+  1. OAuth callback (`api/auth/callback/route.ts`): by the time it runs,
+     `exchangeCodeForSession` has ALREADY created the `auth.users` row + session + fired the
+     `handle_new_user` profile trigger. So rejecting isn't just a redirect — we `signOut()`
+     AND `createAdminClient().auth.admin.deleteUser(id)` to avoid an orphan account, then
+     redirect `/login?error=not_allowed`. Deleting needs the SERVICE-ROLE client.
+  2. Middleware (`lib/supabase/middleware.ts`): re-checks every request so removing someone
+     from the list kills their EXISTING session (signOut + bounce). Middleware uses the
+     anon-key client so it canNOT delete the user — deletion only happens at the callback.
+- Login page maps `error=not_allowed` to a friendly message (else it renders the raw code).
+- `ALLOWED_EMAILS` lives in `app/.env.local`, NOT `docker/.env` (it's app logic, not GoTrue).
+  Changing it needs an app restart / Docker `app` rebuild (it's a plain env read).
+
+### 28. Strava is a DATA integration (import activities), NOT a login provider
+Login is **Google-only** now (login-form.tsx has a single Google button; Apple/Facebook/Strava
+login buttons were removed). Strava is a separate per-user OAuth *connect* under
+`/api/integrations/strava/*`, wired entirely in the Next.js app — it does NOT touch GoTrue and
+is unrelated to the `GOTRUE_EXTERNAL_*` config. Traps:
+- **Two different callbacks**: Google's redirect URI is the Supabase gateway
+  `:8000/auth/v1/callback`; Strava's is the APP route `:3000/api/integrations/strava/callback`.
+  The Strava app's "Authorization Callback Domain" must be the APP host (localhost / app ngrok
+  host / Cloud Run domain), domain-only (no scheme/path) — using the Supabase host fails.
+- **Creds live in `app/.env.local`** (`STRAVA_CLIENT_ID`/`STRAVA_CLIENT_SECRET`), read
+  server-side by the app — NOT in `docker/.env` (that's for GoTrue). The client secret must
+  never reach the browser; all Strava calls are server-side.
+- **Tokens are encrypted** with the SAME pgcrypto helpers as AI keys (`encrypt_api_key` /
+  `decrypt_api_key`, service_role only). So the one-time `app.encryption_key` GUC MUST be set
+  (install step 4) or connect fails with `app.encryption_key not set`. Decryption needs the
+  service-role admin client — that's why `buildCoachTools(supabase, userId, admin?)` gained an
+  optional admin param and the chat route now creates `admin` BEFORE building the agent.
+- **Dedup = `external_id = strava_<activity.id>`**, reusing the activities
+  `UNIQUE (user_id, external_id)` constraint. The file-upload route and the Strava importer now
+  share one write path (`lib/activities/insert-normalized.ts`) so dedup/stream-insert behave
+  identically; a 23505 unique-violation is treated as a skip, not an error.
+- **On token refresh Strava returns no athlete block and no scope** — `saveConnection` only
+  writes the fields it actually has (never nulls `scope`/`athlete_*` on refresh via upsert).
+- **react-hooks/set-state-in-effect** is an ERROR in this repo's eslint (not caught by
+  `npm run build`, only `npx eslint`). Don't call `setState` synchronously in a `useEffect`
+  body: fetch-then-apply in a `.then` (see strava-import-panel.tsx), or derive initial state in
+  a `useState(() => ...)` initializer (see strava-settings.tsx banner). Run `npx eslint <paths>`
+  on new client components before claiming done.
+- Migration: `supabase/migrations/011_strava.sql` (`strava_connections`, RLS owner-scoped).
+
 ### 26. Migrating data between two Supabase stacks: app-data + UUID remap, NOT a full auth dump
 Symptom (first attempt, `pg_dump --data-only` of `auth`+`storage`+`public`): a wall of
 `must be owner of table <auth/storage table>` and `permission denied: RI_ConstraintTrigger... is

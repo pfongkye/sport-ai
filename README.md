@@ -365,7 +365,9 @@ After updating secrets, run `docker compose --env-file .env down -v && docker co
 
 ## Enabling Google Sign-In
 
-Social login is wired in the app but disabled in the auth service by default. To enable Google:
+**Google is the only login provider.** The login screen shows a single "Continue with Google"
+button; email/password and other social providers are intentionally not offered. Google is
+disabled in the auth service by default — to enable it:
 
 1. Create OAuth credentials at [console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
 2. Under **Authorized redirect URIs**, add:
@@ -385,7 +387,31 @@ Social login is wired in the app but disabled in the auth service by default. To
    cd docker && docker compose --env-file .env up -d auth
    ```
 
-The same pattern applies to Facebook (`FACEBOOK_*`) and other providers.
+> Only Google is wired. To add another provider later you'd add the matching
+> `GOTRUE_EXTERNAL_<PROVIDER>_*` lines to the `auth` service and a button to the login form —
+> but that's deliberately out of scope for now.
+
+> **Strava is NOT a login provider.** Strava is a per-user data integration for importing
+> activities — see [Connecting Strava](#connecting-strava-import-activities) below.
+
+### Restricting who can sign in (access allow-list)
+
+Google OAuth has no per-user allow-list, so access control is enforced in the app. Set
+`ALLOWED_EMAILS` in `app/.env.local` to a comma/space-separated list of **exact** emails:
+
+```bash
+ALLOWED_EMAILS="you@example.com, teammate@example.com"
+```
+
+- Matching is exact and case-insensitive.
+- Leave it **unset/empty to disable** the allow-list (anyone with a valid Google login gets in)
+  — convenient for local dev.
+- A rejected sign-in is bounced at the OAuth callback with a clear message, and the
+  just-created Supabase user is deleted so no orphan account lingers. Removing someone from the
+  list also ends their existing session (re-checked in middleware) on their next request.
+- You must restart the app (or rebuild the Docker `app` service) after changing the value.
+- This is the near-term approach; a DB-backed `allowed_emails` table (editable without a
+  redeploy) is the planned long-term solution.
 
 ### Redirect URI vs JavaScript origin — which do you need?
 
@@ -407,6 +433,67 @@ Key points:
   app's `:3000/api/auth/callback`.
 - Use `localhost` consistently everywhere — Google treats `localhost` and `127.0.0.1` as
   different origins, so don't mix them.
+
+---
+
+## Connecting Strava (import activities)
+
+Strava is a **data integration**, not a login method. Each athlete connects their own Strava
+account from **Settings → Integrations** and can then import activities — via the picker, the
+"Import from Strava" button on the Activities page, or by asking the coach in plain language
+(e.g. "import my last 3 Strava runs"). Duplicates are skipped automatically.
+
+### 1. Create a Strava API application
+
+1. Go to [strava.com/settings/api](https://www.strava.com/settings/api) and create an app.
+2. Set **Authorization Callback Domain** to your **app** host — the domain only, no scheme or
+   path:
+   - Local: `localhost`
+   - Mobile/ngrok: your app tunnel host, e.g. `your-app-1234.ngrok-free.app`
+   - Production: your Cloud Run domain, e.g. `sportai-xxxx.run.app`
+
+   > This is the **app** host (port 3000 locally), NOT the Supabase gateway (8000) used for
+   > Google login. Strava's callback lands on `/api/integrations/strava/callback` in the app.
+
+3. Copy the **Client ID** and **Client Secret**.
+
+### 2. Add the credentials to the app
+
+Strava is called **server-side by the Next.js app** (not by GoTrue), so the creds go in
+`app/.env.local`:
+
+```bash
+STRAVA_CLIENT_ID=your-strava-client-id
+STRAVA_CLIENT_SECRET=your-strava-client-secret
+```
+
+Restart the app (`npm run dev`), or rebuild the Docker `app` service if running in a
+container (`docker compose --env-file .env up -d --build app`).
+
+### 3. Apply the migration
+
+The connection table ships in `supabase/migrations/011_strava.sql`:
+
+```bash
+docker exec -i sportai-db psql -U postgres -d postgres < supabase/migrations/011_strava.sql
+```
+
+Tokens are stored **encrypted** (same pgcrypto key as AI API keys — so the one-time
+`app.encryption_key` setup in step 4 of the install must be done, else connect fails with
+`app.encryption_key not set`).
+
+### How it works
+
+- **Connect**: Settings → "Connect Strava" → Strava consent → back to Settings. The OAuth
+  tokens are encrypted and stored in `strava_connections`; access tokens auto-refresh.
+- **Dedup**: each imported activity gets `external_id = strava_<activity.id>`, enforced by the
+  `activities UNIQUE (user_id, external_id)` constraint — re-importing is a no-op skip.
+- **Import paths** (all share one write path, all skip duplicates):
+  - Picker in Settings / "Import from Strava" on the Activities page (choose which to import).
+  - Coach chat: "import my last 3 Strava runs" → the `importFromStrava` tool previews then,
+    on your confirmation, imports.
+- **Disconnect**: Settings → "Disconnect" removes the stored tokens. Already-imported
+  activities are kept.
 
 ---
 

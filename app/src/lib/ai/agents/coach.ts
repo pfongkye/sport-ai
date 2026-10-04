@@ -14,6 +14,8 @@ interface BuildCoachAgentParams {
   readiness: ReadinessResult | null
   /** User's decrypted API key — null means use system default */
   userApiKey: string | null
+  /** Service-role client — required by the Strava tools (token decryption). */
+  admin?: SupabaseClient<Database>
 }
 
 /**
@@ -30,13 +32,13 @@ interface BuildCoachAgentParams {
  * prefer adding typed tools or a remote (HTTP) MCP service. See AGENTS.md.
  */
 export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Agent> {
-  const { supabase, userId, profile, settings, readiness, userApiKey } = params
+  const { supabase, userId, profile, settings, readiness, userApiKey, admin } = params
 
   const provider: AIProvider = settings?.ai_provider ?? 'openai'
   const modelId = settings?.ai_model ?? 'gpt-4o'
   const model = resolveModel(provider, modelId, userApiKey)
 
-  const tools = buildCoachTools(supabase, userId)
+  const tools = buildCoachTools(supabase, userId, admin)
 
   const instructions = buildCoachSystemPrompt({
     profile,

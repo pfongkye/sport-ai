@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ActivityUploader } from './activity-uploader'
 import { AddActivityByVoice } from './add-activity-by-voice'
+import { StravaImportPanel } from '@/components/strava/strava-import-panel'
 import {
   SPORT_EMOJI,
   SPORT_LABELS,
@@ -36,6 +37,7 @@ const SPORTS = ['all', 'run', 'football', 'gym', 'cycle', 'other']
 export function ActivitiesView({ initialActivities }: { initialActivities: ActivityRow[] }) {
   const [showUpload, setShowUpload] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [showStrava, setShowStrava] = useState(false)
   const [filter, setFilter] = useState('all')
 
   const activities =
@@ -53,14 +55,26 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
             onClick={() => {
               setShowAdd((s) => !s)
               setShowUpload(false)
+              setShowStrava(false)
             }}
           >
             {showAdd ? 'Close' : 'Add by voice/text'}
           </Button>
           <Button
+            variant="outline"
+            onClick={() => {
+              setShowStrava((s) => !s)
+              setShowUpload(false)
+              setShowAdd(false)
+            }}
+          >
+            {showStrava ? 'Close' : 'Import from Strava'}
+          </Button>
+          <Button
             onClick={() => {
               setShowUpload((s) => !s)
               setShowAdd(false)
+              setShowStrava(false)
             }}
           >
             {showUpload ? 'Close' : 'Upload'}
@@ -72,6 +86,14 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
         <Card>
           <CardContent className="pt-6">
             <AddActivityByVoice onDone={() => setShowAdd(false)} />
+          </CardContent>
+        </Card>
+      )}
+
+      {showStrava && (
+        <Card>
+          <CardContent className="pt-6">
+            <StravaImportPanel />
           </CardContent>
         </Card>
       )}

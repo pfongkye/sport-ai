@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/types/database'
 import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY, SUPABASE_STORAGE_KEY } from './config'
+import { isEmailAllowed } from '@/lib/auth/allow-list'
 
 /**
  * Refreshes the Supabase auth session in middleware.
@@ -77,6 +78,18 @@ export async function updateSession(request: NextRequest) {
   // Public routes that don't require auth.
   const publicRoutes = ['/login', '/auth/callback']
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route))
+
+  // Allow-list re-check: if a signed-in user's email is no longer permitted
+  // (e.g. removed from ALLOWED_EMAILS), end their session and bounce to login.
+  // The callback is the primary gate; this catches existing sessions. We can't
+  // delete the user here (anon-key client) — that happens at the callback — but
+  // signing out + redirect is enough to lock them out.
+  if (user && !isEmailAllowed(user.email) && !isPublicRoute) {
+    await supabase.auth.signOut()
+    const url = redirectTo('/login')
+    url.searchParams.set('error', 'not_allowed')
+    return NextResponse.redirect(url)
+  }
 
   // Redirect unauthenticated users to login
   if (!user && !isPublicRoute) {

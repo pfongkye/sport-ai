@@ -7,12 +7,26 @@ import { computeBestSplits } from '../splits'
 import { formatPace } from '@/lib/utils'
 import { activityDraftSchema } from '@/lib/activities/draft-schema'
 import { insertManualActivity, findLikelyDuplicate } from '@/lib/activities/insert-manual'
+import {
+  listStravaActivities as listStravaActivitiesSvc,
+  importStravaActivities as importStravaActivitiesSvc,
+} from '@/lib/integrations/strava/sync'
+import { formatDistance, formatDuration } from '@/lib/utils'
 
 /**
  * Factory — builds all typed Mastra tools with a scoped Supabase client.
  * Called per-request so RLS applies to the authenticated user.
+ *
+ * `admin` is an optional service-role client. It's required ONLY for the Strava
+ * tools, which must decrypt the user's stored Strava tokens (service_role-only
+ * pgcrypto). When omitted, the Strava tools return a clear "not available"
+ * message instead of failing. All other tools use the RLS-scoped `supabase`.
  */
-export function buildCoachTools(supabase: SupabaseClient<Database>, userId: string) {
+export function buildCoachTools(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  admin?: SupabaseClient<Database>
+) {
   // ─── getRecentActivities ──────────────────────────────────────────────────
   const getRecentActivities = createTool({
     id: 'getRecentActivities',
@@ -261,6 +275,118 @@ export function buildCoachTools(supabase: SupabaseClient<Database>, userId: stri
     },
   })
 
+  // ─── listStravaActivities ─────────────────────────────────────────────────
+  const listStravaActivities = createTool({
+    id: 'listStravaActivities',
+    description:
+      "List the athlete's recent Strava activities, flagging which are already imported into SportAI. " +
+      'Use this when the athlete asks what\'s on Strava or before importing, so you can read back exactly what will be imported. ' +
+      'Requires the athlete to have connected Strava in Settings.',
+    inputSchema: z.object({
+      limit: z.number().min(1).max(50).default(10).describe('How many recent Strava activities to list'),
+    }),
+    execute: async ({ context }) => {
+      if (!admin) {
+        return { available: false, message: 'Strava import is not available in this context.' }
+      }
+      try {
+        const activities = await listStravaActivitiesSvc(admin, userId, { limit: context.limit })
+        return {
+          available: true,
+          count: activities.length,
+          activities: activities.map((a) => ({
+            stravaId: a.id,
+            name: a.name,
+            sport: a.sportType,
+            date: a.startedAt.slice(0, 10),
+            distance: a.distanceM ? formatDistance(a.distanceM) : null,
+            duration: a.durationS ? formatDuration(a.durationS) : null,
+            alreadyImported: a.alreadyImported,
+          })),
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to list Strava activities'
+        if (msg === 'STRAVA_NOT_CONNECTED') {
+          return { available: false, message: 'Strava is not connected. Ask the athlete to connect it in Settings.' }
+        }
+        return { available: false, message: msg }
+      }
+    },
+  })
+
+  // ─── importFromStrava ─────────────────────────────────────────────────────
+  const importFromStrava = createTool({
+    id: 'importFromStrava',
+    description:
+      'Import activities from the athlete\'s connected Strava account into SportAI. Duplicates are skipped automatically. ' +
+      'TWO-STEP: first call with confirmed=false to preview which recent activities would be imported (read them back to the athlete), ' +
+      'then call with confirmed=true to actually import. ' +
+      'To import specific sessions, pass their stravaId values in `stravaIds` (get these from listStravaActivities). ' +
+      'Otherwise set `limit` to import the most recent N new activities.',
+    inputSchema: z.object({
+      confirmed: z.boolean().default(false).describe('false = preview; true = actually import'),
+      stravaIds: z
+        .array(z.number())
+        .optional()
+        .describe('Specific Strava activity ids to import (from listStravaActivities)'),
+      limit: z
+        .number()
+        .min(1)
+        .max(50)
+        .default(5)
+        .describe('When no stravaIds given, import the most recent N activities'),
+    }),
+    execute: async ({ context }) => {
+      if (!admin) {
+        return { imported: false, message: 'Strava import is not available in this context.' }
+      }
+      try {
+        // Step 1: preview — list what would be imported (new ones only).
+        if (!context.confirmed) {
+          const activities = await listStravaActivitiesSvc(admin, userId, {
+            limit: context.stravaIds?.length ? 50 : context.limit,
+          })
+          const candidates = context.stravaIds?.length
+            ? activities.filter((a) => context.stravaIds!.includes(a.id))
+            : activities.filter((a) => !a.alreadyImported).slice(0, context.limit)
+          return {
+            imported: false,
+            needsConfirmation: true,
+            willImport: candidates.map((a) => ({
+              stravaId: a.id,
+              name: a.name,
+              date: a.startedAt.slice(0, 10),
+              alreadyImported: a.alreadyImported,
+            })),
+            message:
+              candidates.length === 0
+                ? 'Nothing new to import — those activities are already in SportAI.'
+                : 'Read these back to the athlete and confirm before importing.',
+          }
+        }
+
+        // Step 2: confirmed → import (duplicates skipped by external_id).
+        const result = await importStravaActivitiesSvc(admin, userId, {
+          activityIds: context.stravaIds,
+          limit: context.limit,
+        })
+        return {
+          imported: true,
+          created: result.imported,
+          skippedDuplicates: result.skipped,
+          failed: result.failed,
+          message: `Imported ${result.imported}, skipped ${result.skipped} duplicate(s)${result.failed ? `, ${result.failed} failed` : ''}.`,
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Strava import failed'
+        if (msg === 'STRAVA_NOT_CONNECTED') {
+          return { imported: false, message: 'Strava is not connected. Ask the athlete to connect it in Settings.' }
+        }
+        return { imported: false, message: msg }
+      }
+    },
+  })
+
   return {
     getRecentActivities,
     getTrainingLoad,
@@ -269,6 +395,8 @@ export function buildCoachTools(supabase: SupabaseClient<Database>, userId: stri
     getUserProfile,
     updateSessionStatus,
     addActivity,
+    listStravaActivities,
+    importFromStrava,
   }
 }
 

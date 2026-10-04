@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { isEmailAllowed } from '@/lib/auth/allow-list'
 
 /**
  * Resolves the public-facing origin for redirects.
@@ -54,6 +55,22 @@ export async function GET(request: Request) {
       const {
         data: { user },
       } = await supabase.auth.getUser()
+
+      // Allow-list gate: reject emails not on ALLOWED_EMAILS. The session was
+      // just created by exchangeCodeForSession, so we must tear it down — sign
+      // out (clears the cookie) AND delete the freshly-created auth.users row so
+      // no orphaned account/profile lingers for a rejected sign-in.
+      if (user && !isEmailAllowed(user.email)) {
+        console.warn('[auth/callback] rejected sign-in — not on allow-list:', user.email)
+        await supabase.auth.signOut()
+        try {
+          const admin = await createAdminClient()
+          await admin.auth.admin.deleteUser(user.id)
+        } catch (delErr) {
+          console.error('[auth/callback] failed to delete rejected user', delErr)
+        }
+        return NextResponse.redirect(`${origin}/login?error=not_allowed`)
+      }
 
       if (user) {
         const { data: profile } = await supabase

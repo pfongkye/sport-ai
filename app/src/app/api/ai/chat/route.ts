@@ -75,6 +75,10 @@ export async function POST(request: Request) {
     computeReadiness(supabase, user.id),
   ])
 
+  // Service-role client — used for RAG persistence (off the request lifecycle)
+  // and by the Strava coach tools (token decryption needs service_role).
+  const admin = await createAdminClient()
+
   let agent
   try {
     agent = await buildCoachAgent({
@@ -84,6 +88,7 @@ export async function POST(request: Request) {
       settings: aiSettings.settings,
       readiness,
       userApiKey: aiSettings.userApiKey,
+      admin,
     })
   } catch (err) {
     console.error('[ai/chat] failed to build agent', err)
@@ -92,8 +97,6 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
-
-  const admin = await createAdminClient()
 
   // RAG: retrieve relevant past context for this query and embed the user
   // message for storage — both best-effort, run in parallel.

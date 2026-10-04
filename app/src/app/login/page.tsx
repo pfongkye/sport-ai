@@ -43,7 +43,9 @@ export default async function LoginPage({
           >
             {error === 'auth_callback_failed'
               ? 'Sign-in failed. Please try again.'
-              : decodeURIComponent(error)}
+              : error === 'not_allowed'
+                ? "This account isn't on the access list for SportAI. Contact the owner if you think this is a mistake."
+                : decodeURIComponent(error)}
           </div>
         )}
 
