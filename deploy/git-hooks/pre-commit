@@ -53,14 +53,35 @@ if [ "${#scan_files[@]}" -gt 0 ]; then
   added=$(git diff --cached -U0 --diff-filter=ACMR -- "${scan_files[@]}" | grep -E '^\+' | grep -vE '^\+\+\+' || true)
 fi
 if [ -n "$added" ]; then
-  # Patterns: private keys, Google/OpenAI-style keys, generic long secrets in env assignments.
-  # NOTE: pass the pattern via -e (and the alternation avoids a leading '-' being
-  # parsed as a grep option — "BEGIN ... PRIVATE KEY" is matched without leading dashes).
+  # (a) Always-bad literals: private keys and provider key formats. These are real
+  #     secrets no matter the context. (-e so a leading '-' isn't read as a flag.)
   if printf '%s\n' "$added" | grep -qiE -e \
-      'BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}|SERVICE_ROLE_KEY=.+|JWT_SECRET=.{16,}|POSTGRES_PASSWORD=.+'; then
-    echo "${RED}✗ blocked (secret-like content in staged diff).${NC}"
-    echo "  A private key or a real-looking key/password assignment was detected."
+      'BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}'; then
+    echo "${RED}✗ blocked (private key or API key literal in staged diff).${NC}"
     blocked=1
+  fi
+
+  # (b) Secret ENV ASSIGNMENTS (KEY=value). Flag only when the value looks like a
+  #     real literal — NOT a variable ref ($FOO / ${FOO}), command substitution
+  #     $(...), another KEY-name/:latest ref, or an empty/placeholder. This avoids
+  #     flagging deploy scripts that merely READ secrets (e.g.
+  #     `grep '^POSTGRES_PASSWORD=' .env` or `--set-secrets KEY=KEY:latest`).
+  assigns=$(printf '%s\n' "$added" | grep -E '(SERVICE_ROLE_KEY|JWT_SECRET|POSTGRES_PASSWORD|GOOGLE_SECRET|ANON_KEY)=' || true)
+  if [ -n "$assigns" ]; then
+    # drop safe RHS: $VAR, ${VAR}, $(...), KEY:latest refs, grep patterns ('^KEY='),
+    # CHANGE_ME placeholders, empty values, and lines that are clearly a flag value.
+    suspicious=$(printf '%s\n' "$assigns" \
+      | grep -vE "=\\\$[A-Za-z_{(]" \
+      | grep -vE "=['\"]?\\\$\\(" \
+      | grep -vE "[A-Z_]+=[A-Z_]+:latest" \
+      | grep -vE "'\^[A-Z_]+='" \
+      | grep -vE '=CHANGE_ME' \
+      | grep -vE '=["'\'']?\s*$' \
+      | grep -E "=['\"]?[A-Za-z0-9+/_-]{12,}" || true)
+    if [ -n "$suspicious" ]; then
+      echo "${RED}✗ blocked (real-looking secret assignment in staged diff).${NC}"
+      blocked=1
+    fi
   fi
 fi
 
