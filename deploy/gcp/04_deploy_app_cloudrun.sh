@@ -30,10 +30,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 cd "$(dirname "$0")"
+# config.sh loads deploy/gcp/.deploy.env (GCP_PROJECT, SUPABASE_DOMAIN, ANON_KEY,
+# NEXT_PUBLIC_APP_URL, ALLOWED_EMAILS, STRAVA_CLIENT_ID/SECRET, …) and requires
+# GCP_PROJECT. Shell exports still override the file. Copy the template first:
+#   cp deploy/gcp/.deploy.env.example deploy/gcp/.deploy.env   # then fill it in
 source ./config.sh
 
-: "${SUPABASE_DOMAIN:?set SUPABASE_DOMAIN=<dashed-ip>.nip.io}"
-: "${ANON_KEY:?set ANON_KEY=<prod anon key>}"
+: "${SUPABASE_DOMAIN:?set SUPABASE_DOMAIN (in deploy/gcp/.deploy.env or export it)}"
+: "${ANON_KEY:?set ANON_KEY (in deploy/gcp/.deploy.env or export it)}"
 SUPABASE_URL="https://${SUPABASE_DOMAIN}"
 
 echo "[04] Ensuring Artifact Registry repo '$AR_REPO'…"
@@ -96,6 +100,17 @@ echo "[04] Deploying to Cloud Run '$APP_SERVICE'…"
 # The delimiter is a SINGLE char between carets; we use '|' since it can't appear
 # in emails/URLs. ALLOWED_EMAILS is only appended when set (unset = disabled).
 ENV_VARS="NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}|NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+# NEXT_PUBLIC_APP_URL is the app's own public origin, used for proxy-safe auth
+# redirects AND the Strava OAuth redirect URI. --set-env-vars replaces the FULL
+# env set, so it must be included here or every redeploy drops it. Defaults to the
+# existing Cloud Run URL if not exported.
+APP_URL="${NEXT_PUBLIC_APP_URL:-$(gcloud run services describe "$APP_SERVICE" --region "$GCP_REGION" --format='value(status.url)' 2>/dev/null || true)}"
+if [[ -n "$APP_URL" ]]; then
+  ENV_VARS="${ENV_VARS}|NEXT_PUBLIC_APP_URL=${APP_URL}"
+  echo "     NEXT_PUBLIC_APP_URL=${APP_URL}"
+else
+  echo "     NOTE: NEXT_PUBLIC_APP_URL not set and no existing service URL found; set it after first deploy."
+fi
 if [[ -n "${ALLOWED_EMAILS:-}" ]]; then
   # Normalise any spaces in the list to nothing so only commas separate emails.
   ALLOWED_EMAILS_CLEAN="${ALLOWED_EMAILS// /}"

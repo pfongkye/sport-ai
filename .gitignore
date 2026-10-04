@@ -8,11 +8,14 @@ app/.env*.local
 .env
 .env.local
 .env.*
+# Cloud Run deploy inputs (anon key + Strava secret) — never commit the real file.
+deploy/gcp/.deploy.env
 # Re-allow example templates (negations after the ignores above)
 !*.env.example
 !**/.env.example
 !**/.env.prod.example
 !**/*.env.local.example
+!deploy/gcp/.deploy.env.example
 # env backups created by ngrok-sync.sh
 *.env.bak
 docker/.env.bak
