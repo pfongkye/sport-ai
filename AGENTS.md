@@ -616,11 +616,22 @@ configs change between versions.
 - **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
   the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
   Never echo secret values into chat, logs, or commits.
-- **Testing**: no formal suite yet by design (surface area still churning). Automated tests
-  (Vitest + React Testing Library + Playwright) get introduced at MVP — see the Testing
-  section in `.kiro/specs/sportai-coaching-app/tasks.md`. From MVP onward: every bug fix gets
-  a regression test, every new API route gets auth+happy+error tests, every new table gets an
-  RLS isolation test.
+- **Testing**: Vitest is set up (`cd app && npm test`; `npm run test:watch`), pinned to
+  `vitest@3.2.7` — NOT 5.x, which requires Node ≥22 while the app runs Node 20 (host + the
+  `node:20-alpine` image); 3.2.x supports Node 20. Config: `app/vitest.config.ts` (node env,
+  `@/` alias, `src/**/*.test.ts`). The first suite is CHARACTERIZATION tests pinning the
+  deterministic AI-adjacent code ahead of the AI SDK v5 / Mastra upgrade: splits math, Strava
+  mapping, dedup write path, Strava error mapping, login allow-list, coach-tool wiring (all
+  offline — no OpenAI/DB; Supabase is stubbed). Broader coverage (React Testing Library +
+  Playwright) still planned for MVP. From MVP onward: every bug fix gets a regression test,
+  every new API route gets auth+happy+error tests, every new table gets an RLS isolation test.
+- **npm install gotcha**: a FULL `npm install` currently crashes with
+  `Cannot read properties of null (reading 'edgesOut')` — an npm bug tripped by
+  `@mastra/core@0.24`'s aliased `@openrouter/ai-sdk-provider-v5` (peer `ai@^5`) conflicting with
+  our pinned `ai@4`. Use `npm ci` (installs from the lockfile, no tree rebuild) for normal work,
+  and `npm install --legacy-peer-deps` when you must change deps. Do NOT delete package-lock.json
+  then `npm install` — it fails to even write a lockfile. The committed lockfile is the source of
+  truth; `npm ci` is what the Dockerfile and CI use.
 
 ---
 

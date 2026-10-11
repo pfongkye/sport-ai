@@ -6,6 +6,16 @@
 
 ---
 
+## Standalone / tech-debt tasks
+
+- **AI SDK v5 + Mastra 1.x upgrade** → see
+  [`task-ai-sdk-v5-mastra-upgrade.md`](./task-ai-sdk-v5-mastra-upgrade.md). The AI stack is
+  pinned to the v4 line (`@ai-sdk/openai@1.3.24`, `ai@4`, `@mastra/core@0.24.9`) because v5
+  breaks `@mastra/core@0.24` (AGENTS.md #35). That doc is a self-contained brief to move to the
+  current generation. Do it on its own branch with full chat/insight/parse testing.
+
+---
+
 ## Phase 1: Core Foundation
 
 ### Task 1.1 — Project Scaffold
