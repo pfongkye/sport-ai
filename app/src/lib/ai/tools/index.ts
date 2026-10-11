@@ -88,32 +88,43 @@ export function buildCoachTools(
       activityId: z.string().uuid().optional().describe('Restrict to one activity'),
     }),
     execute: async ({ context }) => {
-      const splits = await computeBestSplits(supabase, userId, {
-        limit: context.limit,
-        activityId: context.activityId,
-      })
-      if (!splits.length) {
-        return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
+      // TEMP INSTRUMENTATION [splitdbg] — remove after prod diagnosis.
+      console.error('[splitdbg] getBestSplits ENTER', JSON.stringify({ limit: context.limit, activityId: context.activityId }))
+      try {
+        const splits = await computeBestSplits(supabase, userId, {
+          limit: context.limit,
+          activityId: context.activityId,
+        })
+        console.error('[splitdbg] getBestSplits computed', JSON.stringify({ count: splits.length }))
+        if (!splits.length) {
+          console.error('[splitdbg] getBestSplits EXIT hasData=false')
+          return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
+        }
+        // Format for the model: include both raw seconds and human pace so it can't misread.
+        const runs = splits.map((s) => ({
+          activityId: s.activityId,
+          date: s.startedAt.slice(0, 10),
+          distanceKm: s.distanceM ? +(s.distanceM / 1000).toFixed(2) : null,
+          fastest: Object.fromEntries(
+            Object.entries(s.best).map(([dist, secs]) => [
+              dist,
+              secs == null
+                ? null
+                : {
+                    seconds: secs,
+                    // pace over that split, as s/km, formatted
+                    pace: formatPace(paceForSplit(dist, secs)),
+                  },
+            ])
+          ),
+        }))
+        const out = { hasData: true, runs }
+        console.error('[splitdbg] getBestSplits EXIT ok, payloadChars=', JSON.stringify(out).length)
+        return out
+      } catch (err) {
+        console.error('[splitdbg] getBestSplits THREW', err instanceof Error ? err.stack || err.message : String(err))
+        throw err
       }
-      // Format for the model: include both raw seconds and human pace so it can't misread.
-      const runs = splits.map((s) => ({
-        activityId: s.activityId,
-        date: s.startedAt.slice(0, 10),
-        distanceKm: s.distanceM ? +(s.distanceM / 1000).toFixed(2) : null,
-        fastest: Object.fromEntries(
-          Object.entries(s.best).map(([dist, secs]) => [
-            dist,
-            secs == null
-              ? null
-              : {
-                  seconds: secs,
-                  // pace over that split, as s/km, formatted
-                  pace: formatPace(paceForSplit(dist, secs)),
-                },
-          ])
-        ),
-      }))
-      return { hasData: true, runs }
     },
   })
 

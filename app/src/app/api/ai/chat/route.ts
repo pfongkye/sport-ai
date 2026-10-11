@@ -142,17 +142,20 @@ export async function POST(request: Request) {
   // Tee the text stream: forward to client, accumulate for persistence.
   const encoder = new TextEncoder()
   let full = ''
+  let chunkCount = 0
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         for await (const chunk of result.textStream) {
+          chunkCount++
           full += chunk
           controller.enqueue(encoder.encode(chunk))
         }
       } catch (err) {
-        console.error('[ai/chat] mid-stream error', err)
+        console.error('[ai/chat] mid-stream error', err instanceof Error ? err.stack || err.message : String(err))
       } finally {
+        console.error('[splitdbg] route stream closed chunks=', chunkCount, 'fullLen=', full.length)
         controller.close()
         // Persist assistant reply (best-effort) using admin client so it isn't
         // tied to the request lifecycle/RLS cookie after the stream ends.
