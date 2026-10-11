@@ -104,62 +104,41 @@ export async function streamAgentText(
   } catch {
     // couldn't introspect — fall through to the v1 default below
   }
-  console.error('[splitdbg] streamAgentText specVersion=', specVersion)
-
-  // TEMP INSTRUMENTATION [splitdbg] — lifecycle callbacks to see where a
-  // tool-calling turn dies in prod. Remove after diagnosis.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dbgOpts: any = {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onStepFinish: (step: any) => {
-      try {
-        console.error(
-          '[splitdbg] onStepFinish',
-          JSON.stringify({
-            finishReason: step?.finishReason,
-            text: typeof step?.text === 'string' ? step.text.slice(0, 60) : undefined,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            toolCalls: (step?.toolCalls ?? []).map((t: any) => t?.toolName),
-            toolResults: (step?.toolResults ?? []).length,
-          })
-        )
-      } catch (e) {
-        console.error('[splitdbg] onStepFinish log err', e)
-      }
-    },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onFinish: (res: any) => {
-      console.error(
-        '[splitdbg] onFinish',
-        JSON.stringify({
-          finishReason: res?.finishReason,
-          textLen: typeof res?.text === 'string' ? res.text.length : undefined,
-          steps: res?.steps?.length,
-          usage: res?.usage,
-        })
-      )
-    },
+  // Stream options. `maxSteps` lets the model continue past a tool call to a
+  // text answer. `onError` logs loop errors that would otherwise be INVISIBLE:
+  // a tool-call error (e.g. invalid tool arguments) ends the turn with empty
+  // text and no route-level exception — this log is how we catch it. Kept
+  // permanently; it's cheap and the one signal that surfaces silent failures.
+  const opts = {
+    maxSteps: 6,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onError: (e: any) => {
-      console.error('[splitdbg] onError', e?.error instanceof Error ? e.error.stack || e.error.message : JSON.stringify(e))
+      const err = e?.error ?? e
+      console.error(
+        '[ai/agent] stream onError:',
+        err instanceof Error ? err.stack || err.message : JSON.stringify(err)
+      )
     },
-    maxSteps: 6,
   }
 
   if (specVersion === 'v2') {
     try {
-      return await agent.stream(messages, dbgOpts)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await agent.stream(messages, opts as any)
     } catch (err) {
-      if (isWrongMethodError(err)) return agent.streamLegacy(messages, dbgOpts)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (isWrongMethodError(err)) return agent.streamLegacy(messages, opts as any)
       throw err
     }
   }
 
   // v1 or unknown (our pinned v4 default) → streamLegacy().
   try {
-    return await agent.streamLegacy(messages, dbgOpts)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return await agent.streamLegacy(messages, opts as any)
   } catch (err) {
-    if (isWrongMethodError(err)) return agent.stream(messages, dbgOpts)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (isWrongMethodError(err)) return agent.stream(messages, opts as any)
     throw err
   }
 }

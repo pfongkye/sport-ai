@@ -82,49 +82,51 @@ export function buildCoachTools(
   const getBestSplits = createTool({
     id: 'getBestSplits',
     description:
-      'Compute the athlete\'s FASTEST rolling splits (400m, 1km, 1mile, 5km, 10km) from the actual GPS/pace stream of recent runs. USE THIS for any "fastest / best pace over X distance" question. Never estimate splits from average pace — always call this tool. Returns split times per run; null means the run was shorter than that distance.',
+      'Compute the athlete\'s FASTEST rolling splits (400m, 1km, 1mile, 5km, 10km) from the actual GPS/pace stream of recent runs. USE THIS for any "fastest / best pace over X distance" question. Never estimate splits from average pace — always call this tool. ' +
+      'For "my most recent run" or "my last run", just call with limit=1 and DO NOT set activityId. ' +
+      'Only set activityId when you have a real activity UUID from a previous tool result. ' +
+      'Returns split times per run; null means the run was shorter than that distance.',
     inputSchema: z.object({
-      limit: z.number().min(1).max(20).default(5).describe('How many recent runs to analyse'),
-      activityId: z.string().uuid().optional().describe('Restrict to one activity'),
+      limit: z.number().min(1).max(20).default(5).describe('How many recent runs to analyse (use 1 for "most recent run")'),
+      // NOTE: plain optional string, NOT z.string().uuid(). The model sometimes
+      // passes a non-UUID sentinel like "latest"/"most-recent"; a strict uuid()
+      // schema makes AI SDK reject the WHOLE tool call (AI_InvalidToolArgumentsError),
+      // which ends the turn with no text → "No response". We accept any string and
+      // ignore anything that isn't a real UUID in execute().
+      activityId: z
+        .string()
+        .optional()
+        .describe('A specific activity UUID from a prior tool result. Omit for "most recent run".'),
     }),
     execute: async ({ context }) => {
-      // TEMP INSTRUMENTATION [splitdbg] — remove after prod diagnosis.
-      console.error('[splitdbg] getBestSplits ENTER', JSON.stringify({ limit: context.limit, activityId: context.activityId }))
-      try {
-        const splits = await computeBestSplits(supabase, userId, {
-          limit: context.limit,
-          activityId: context.activityId,
-        })
-        console.error('[splitdbg] getBestSplits computed', JSON.stringify({ count: splits.length }))
-        if (!splits.length) {
-          console.error('[splitdbg] getBestSplits EXIT hasData=false')
-          return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
-        }
-        // Format for the model: include both raw seconds and human pace so it can't misread.
-        const runs = splits.map((s) => ({
-          activityId: s.activityId,
-          date: s.startedAt.slice(0, 10),
-          distanceKm: s.distanceM ? +(s.distanceM / 1000).toFixed(2) : null,
-          fastest: Object.fromEntries(
-            Object.entries(s.best).map(([dist, secs]) => [
-              dist,
-              secs == null
-                ? null
-                : {
-                    seconds: secs,
-                    // pace over that split, as s/km, formatted
-                    pace: formatPace(paceForSplit(dist, secs)),
-                  },
-            ])
-          ),
-        }))
-        const out = { hasData: true, runs }
-        console.error('[splitdbg] getBestSplits EXIT ok, payloadChars=', JSON.stringify(out).length)
-        return out
-      } catch (err) {
-        console.error('[splitdbg] getBestSplits THREW', err instanceof Error ? err.stack || err.message : String(err))
-        throw err
+      // Only honour activityId when it's a real UUID; ignore sentinels like "latest".
+      const activityId = isUuid(context.activityId) ? context.activityId : undefined
+      const splits = await computeBestSplits(supabase, userId, {
+        limit: context.limit,
+        activityId,
+      })
+      if (!splits.length) {
+        return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
       }
+      // Format for the model: include both raw seconds and human pace so it can't misread.
+      const runs = splits.map((s) => ({
+        activityId: s.activityId,
+        date: s.startedAt.slice(0, 10),
+        distanceKm: s.distanceM ? +(s.distanceM / 1000).toFixed(2) : null,
+        fastest: Object.fromEntries(
+          Object.entries(s.best).map(([dist, secs]) => [
+            dist,
+            secs == null
+              ? null
+              : {
+                  seconds: secs,
+                  // pace over that split, as s/km, formatted
+                  pace: formatPace(paceForSplit(dist, secs)),
+                },
+          ])
+        ),
+      }))
+      return { hasData: true, runs }
     },
   })
 
@@ -183,20 +185,32 @@ export function buildCoachTools(
   const updateSessionStatus = createTool({
     id: 'updateSessionStatus',
     description:
-      "Update a planned session's status (completed, skipped, modified). Call this after the athlete confirms they completed or skipped a session.",
+      "Update a planned session's status (completed, skipped, modified). Call this after the athlete confirms they completed or skipped a session. " +
+      'sessionId MUST be a real session UUID from a getPlannedSessions result — never a guess or placeholder.',
     inputSchema: z.object({
-      sessionId: z.string().uuid().describe('The planned session ID'),
+      // Plain string, NOT z.string().uuid(): a strict uuid() schema makes the AI
+      // SDK reject the whole tool call (AI_InvalidToolArgumentsError) if the model
+      // passes a non-UUID, which silently ends the turn with no reply. We validate
+      // inside execute() and return a graceful message the model can act on.
+      sessionId: z.string().describe('The planned session UUID (from getPlannedSessions)'),
       status: z.enum(['completed', 'skipped', 'modified']),
       notes: z.string().optional().describe('Optional note about what happened'),
     }),
     execute: async ({ context }) => {
+      if (!isUuid(context.sessionId)) {
+        return {
+          success: false,
+          error:
+            'That is not a valid session id. Call getPlannedSessions first and use the exact "id" of the session you want to update.',
+        }
+      }
       const { error } = await supabase
         .from('planned_sessions')
         .update({ status: context.status, ai_notes: context.notes })
         .eq('id', context.sessionId)
         .eq('user_id', userId)
 
-      if (error) throw new Error(`Failed to update session: ${error.message}`)
+      if (error) return { success: false, error: `Failed to update session: ${error.message}` }
       return { success: true, sessionId: context.sessionId, status: context.status }
     },
   })
@@ -424,6 +438,14 @@ export function buildCoachTools(
     listStravaActivities,
     importFromStrava,
   }
+}
+
+/** True when `v` is a real UUID (so we ignore model sentinels like "latest"). */
+function isUuid(v: string | undefined): v is string {
+  return (
+    typeof v === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+  )
 }
 
 /** Convert a split (distance label + elapsed seconds) to pace in s/km. */

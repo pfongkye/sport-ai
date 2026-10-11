@@ -121,6 +121,29 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 36. Coach tool schemas must NOT be strict — a rejected tool call silently kills the turn
+Symptom: coach chat returns "No response. Try again." for a tool-triggering question (e.g.
+"fastest 1km segment"), HTTP 200, no route error. Plain non-tool chat works.
+Root cause (found via a temporary `onError` stream callback — logs showed it):
+`AI_InvalidToolArgumentsError: Invalid arguments for tool getBestSplits: Value:
+{"limit":1,"activityId":"latest"}`. The model passed `activityId:"latest"` for "most recent
+run", but the schema was `z.string().uuid()`. The AI SDK rejects the WHOLE tool call before it
+runs; Mastra 0.24 then ends the turn (`finishReason:"tool-calls"`, empty text, 1 step) → 0
+chunks → empty stream. No exception reaches the route, so it's invisible without the callback.
+Rule: coach tool `inputSchema` fields the MODEL fills should be permissive — avoid
+`z.string().uuid()` and other strict refinements on model-supplied values. Accept a plain
+string and validate INSIDE `execute`:
+  - optional id (getBestSplits.activityId): ignore it unless `isUuid()` (helper in tools/index.ts).
+  - required id (updateSessionStatus.sessionId): if not `isUuid()`, RETURN a graceful
+    `{ success:false, error:'…call getPlannedSessions first…' }` the model can relay — don't throw.
+`z.enum([...])` is fine (constrained choice the model picks from). Also: `streamAgentText` now
+passes a permanent `onError` logger (`[ai/agent] stream onError`) + `maxSteps:6`, so this class
+of silent failure is never invisible again. Regression tests in tools/index.test.ts assert both
+schemas accept the non-UUID args that used to kill the turn.
+NOTE: this, not the AI SDK version, was the real cause of the long "No response" saga. The
+version-pinning (#35) and streamAgentText version-selection were still correct/necessary, but
+the empty tool-turn was a schema bug. A full AI SDK v5 / Mastra upgrade would NOT have fixed it.
+
 ### 35. "No response. Try again." in coach chat = SAME @ai-sdk/openai@3 drift (recurs via volume)
 Symptom: a chat question that triggers a tool (e.g. "fastest 1km segment" → getBestSplits)
 returns empty text; client shows "No response. Try again." The POST is HTTP 200 (no server
