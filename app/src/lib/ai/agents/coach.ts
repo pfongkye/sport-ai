@@ -77,10 +77,18 @@ export async function streamAgentText(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   messages: any
 ): Promise<{ textStream: AsyncIterable<string> }> {
-  // Mastra's streaming APIs are model-version specific (`stream()` for v2,
-  // `streamLegacy()` for v1) and the installed @ai-sdk/* version decides which
-  // one a given model needs. We try `stream()` and, ONLY if Mastra rejects it
-  // with its specific wrong-method error, fall back to `streamLegacy()`.
+  // Mastra's streaming APIs are model-version specific: `streamLegacy()` for v1
+  // models (AI SDK v4, specificationVersion 'v1') and `stream()` for v2 (AI SDK
+  // v5). Calling the wrong one errors — and crucially that error can be thrown
+  // at the await OR deferred until the textStream is iterated. The deferred case
+  // is invisible to a try/catch around the call and surfaced downstream as an
+  // EMPTY stream (the "No response. Try again." prod bug: stream() was called on
+  // a v1 model, didn't throw at the await, so the fallback never ran).
+  //
+  // Fix: DECIDE up front from the model's own specificationVersion rather than
+  // probe-and-catch. Our pinned AI SDK v4 produces v1 → streamLegacy(). A single
+  // cross-method retry remains as a safety net if detection disagrees with what
+  // the API accepts (when the error IS thrown at the await).
   const isWrongMethodError = (err: unknown): boolean => {
     const msg = err instanceof Error ? err.message : String(err)
     return /not supported for streamLegacy|not compatible with stream\(\)|use AI SDK v5 models|use stream instead|use the .*streamLegacy/i.test(
@@ -88,26 +96,29 @@ export async function streamAgentText(
     )
   }
 
+  let specVersion: string | undefined
   try {
-    return await agent.stream(messages)
-  } catch (streamErr) {
-    if (!isWrongMethodError(streamErr)) throw streamErr
+    const llm = await agent.getLLM()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    specVersion = (llm.getModel() as any)?.specificationVersion
+  } catch {
+    // couldn't introspect — fall through to the v1 default below
+  }
+
+  if (specVersion === 'v2') {
     try {
-      return await agent.streamLegacy(messages)
-    } catch (legacyErr) {
-      // BOTH methods rejected the model → the installed @ai-sdk/* version is
-      // incompatible with @mastra/core (e.g. a drifted @ai-sdk/openai@3 producing
-      // a 'v3'/openai.responses model that neither gate accepts). This is a
-      // DEPENDENCY problem, not a request problem — surface it clearly instead of
-      // the misleading cross-method message. See AGENTS.md gotcha #33/#35.
-      if (isWrongMethodError(legacyErr)) {
-        throw new Error(
-          'AI model/SDK version mismatch: neither stream() nor streamLegacy() accepts this ' +
-            'model. The installed @ai-sdk/* version is incompatible with @mastra/core — reinstall ' +
-            'deps from the lockfile (in Docker: `npm ci` in the app container). See AGENTS.md #35.'
-        )
-      }
-      throw legacyErr
+      return await agent.stream(messages)
+    } catch (err) {
+      if (isWrongMethodError(err)) return agent.streamLegacy(messages)
+      throw err
     }
+  }
+
+  // v1 or unknown (our pinned v4 default) → streamLegacy().
+  try {
+    return await agent.streamLegacy(messages)
+  } catch (err) {
+    if (isWrongMethodError(err)) return agent.stream(messages)
+    throw err
   }
 }

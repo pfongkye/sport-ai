@@ -143,9 +143,22 @@ Fix (prod/Cloud Run): the production image (`runner` stage, no volume) is built 
 from the lockfile via `npm ci`, so a FRESH deploy (`04_deploy_app_cloudrun.sh`) with the current
 lockfile (`@ai-sdk/openai@1.3.24`) produces a correct image. If prod shows the empty-response
 symptom, redeploy. Do NOT rely on `restart`.
-Defensive code: `streamAgentText` now, when BOTH methods reject, throws an explicit
-"AI model/SDK version mismatch … reinstall deps from the lockfile" error instead of the
-misleading cross-method message, so the next occurrence is obvious.
+SECOND, DISTINCT cause of the SAME "No response" symptom (found later, prod): even with the
+CORRECT v1 model (`openai.chat`, `@ai-sdk/openai@1.3.24`), chat returned empty. Reason:
+`agent.stream()` called on a v1 model does NOT throw at the `await` — it resolves to a stream
+that only errors when ITERATED. The old `streamAgentText` wrapped just the `await` in try/catch,
+so the deferred error escaped into the chat route's `mid-stream` catch, which swallowed it →
+empty text. The `streamLegacy()` fallback never ran. (`streamLegacy()` on that model works
+perfectly — proven by probing `agent.stream` vs `agent.streamLegacy` separately in a temp
+route.) Fix: `streamAgentText` now DECIDES up front from `agent.getLLM().getModel()
+.specificationVersion` — v2 → `stream()`, else (v1/unknown, our pinned v4 default) →
+`streamLegacy()` — with a single cross-method retry only for the throw-at-await case. Never rely
+on catching a wrong-method error around the `await`; it can be deferred to iteration.
+Debugging technique that cracked it: a temporary token-guarded route
+(`app/src/app/api/zdebugchat`) that builds the agent for a given user and reports
+`chunks`/`len`/`preview` for `stream()`, `streamLegacy()`, and `streamAgentText()` separately —
+run it in prod, read the log, delete it. (Don't prefix the route folder with `_`; Next excludes
+those from routing.)
 Permanent fix (DONE): `@ai-sdk/openai`/`anthropic`/`google`, `ai`, and `@mastra/core` are now
 pinned EXACT in package.json (no `^`) at the known-good v4 line — `@ai-sdk/openai@1.3.24`,
 `ai@4.3.19`, `@mastra/core@0.24.9` — so a stray `npm install` can't float them to v5/v3. Also
