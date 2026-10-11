@@ -167,6 +167,24 @@ export async function refreshAccessToken(refreshToken: string): Promise<StravaTo
 }
 
 /**
+ * Fetch the currently-authenticated athlete (`GET /athlete`).
+ * Used as a fallback when the token exchange response omits the `athlete` block,
+ * so we can still populate the connection's athlete fields on first connect.
+ */
+export async function getAuthenticatedAthlete(accessToken: string): Promise<StravaAthlete> {
+  const res = await fetch(`${STRAVA_API_BASE}/athlete`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    const classified = classifyStravaError(res.status, body)
+    if (classified) throw classified
+    throw new Error(`Strava getAuthenticatedAthlete failed (${res.status}): ${body}`)
+  }
+  return (await res.json()) as StravaAthlete
+}
+
+/**
  * List the athlete's activities (most recent first).
  * `page`/`perPage` map to Strava's pagination; `before`/`after` are unix epoch
  * seconds for incremental sync.

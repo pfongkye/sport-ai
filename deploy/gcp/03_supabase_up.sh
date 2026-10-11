@@ -40,7 +40,7 @@ for i in $(seq 1 30); do
   sleep 3
 done
 
-echo '[vm] Applying migrations 001–010…'
+echo '[vm] Applying all migrations (supabase/migrations/*.sql, in order)…'
 for f in ~/sportai/supabase/migrations/*.sql; do
   echo "   → $(basename "$f")"
   sudo docker exec -i sportai-db psql -U postgres -d postgres < "$f"

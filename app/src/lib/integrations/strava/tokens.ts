@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import {
+  getAuthenticatedAthlete,
   refreshAccessToken,
   type StravaTokenResponse,
 } from './client'
@@ -70,11 +71,28 @@ export async function saveConnection(
     updated_at: new Date().toISOString(),
   }
   if (scope) row.scope = scope
-  if (token.athlete) {
-    row.athlete_id = String(token.athlete.id)
-    row.athlete_firstname = token.athlete.firstname ?? null
-    row.athlete_lastname = token.athlete.lastname ?? null
-    row.athlete_username = token.athlete.username ?? null
+
+  // Populate athlete fields from the token response when present. Strava usually
+  // includes the `athlete` block on the authorization-code exchange but NOT on a
+  // refresh (and occasionally omits it even on first connect). When it's absent,
+  // fall back to GET /athlete so athlete_id is still set on first connect. On a
+  // refresh the row already exists, so we simply leave the athlete fields as-is.
+  // `scope` is passed only on first connect (the refresh path omits it), so it
+  // doubles as the "is this the initial connection?" signal.
+  const isFirstConnect = scope != null
+  let athlete = token.athlete
+  if (!athlete && isFirstConnect) {
+    try {
+      athlete = await getAuthenticatedAthlete(token.access_token)
+    } catch (err) {
+      console.error('[strava] getAuthenticatedAthlete fallback failed', err)
+    }
+  }
+  if (athlete) {
+    row.athlete_id = String(athlete.id)
+    row.athlete_firstname = athlete.firstname ?? null
+    row.athlete_lastname = athlete.lastname ?? null
+    row.athlete_username = athlete.username ?? null
   }
 
   const { error } = await admin.from('strava_connections').upsert(row, { onConflict: 'user_id' })

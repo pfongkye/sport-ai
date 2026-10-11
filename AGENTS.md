@@ -121,6 +121,28 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 34. Strava connect failed in prod: null athlete_id — missing migration + fragile NOT NULL
+Symptom (deployed only): `Failed to save strava connection: null value in column "athlete_id"
+of relation "strava_connections" violates not-null constraint`.
+Two compounding causes:
+1. `athlete_id` was NOT NULL but populated only from the OAuth token response's `athlete`
+   block, which Strava does NOT reliably include (absent on refresh; can be absent on the
+   code exchange too). It's denormalised DISPLAY data — the row's identity is the PK `user_id`.
+2. Likely the prod DB was also missing later migrations: `03_supabase_up.sh` DOES apply all
+   `migrations/*.sql` (the "001–010" text was stale, now fixed), but that only runs on a fresh
+   deploy — a prod stack that was already up before 011/012/013 existed won't have them until
+   you apply them manually (migrations are applied MANUALLY, gotcha #4).
+Fix (both layers):
+- `013_strava_athlete_id_nullable.sql` drops the NOT NULL (defense in depth).
+- `saveConnection` now falls back to `getAuthenticatedAthlete` (`GET /athlete`) when the token
+  response lacks the athlete block, but ONLY on first connect (detected via `scope != null` —
+  scope is passed on connect, omitted on refresh), so the display fields still get populated.
+Apply a NEW migration to an ALREADY-RUNNING prod (don't re-run script 03):
+  gcloud compute ssh sportai-supabase --zone europe-west1-b --command \
+    'cd ~/sportai && git pull && sudo docker exec -i sportai-db psql -U postgres -d postgres \
+       < supabase/migrations/013_strava_athlete_id_nullable.sql'
+Then redeploy the app (script 04) so the code fallback ships too.
+
 ### 33. Mastra streaming version errors = DRIFTED container deps (not a code bug)
 Symptoms (seen in sequence, confusingly contradictory):
 - `V2 models are not supported for streamLegacy. Please use stream instead. { modelId:'gpt-4o' }`

@@ -165,7 +165,9 @@ gcloud compute scp ./docker/.env.prod sportai-supabase:~/sportai/docker/.env --z
 What it does on the VM:
 - `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
   (hardened: no Studio/meta, no public DB port, Caddy on 80/443).
-- Applies `supabase/migrations/001…010`.
+- Applies ALL `supabase/migrations/*.sql` (in order). Migrations are idempotent, so re-running
+  is safe. After adding a new migration to an ALREADY-RUNNING prod, apply just that file (see
+  the "apply a new migration to running prod" snippet in the Troubleshooting section).
 - Sets the DB `app.encryption_key` from `SUPABASE_ENCRYPTION_KEY` via `supabase_admin`.
 
 **Verify TLS** (Caddy needs ~30s to get the first Let's Encrypt cert):
