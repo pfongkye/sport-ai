@@ -51,22 +51,55 @@ export async function resolveUserAISettings(userId: string): Promise<{
  * (`parseActivity`) so both honour the user's provider/key selection.
  */
 export function resolveModel(provider: AIProvider, modelId: string, userApiKey: string | null) {
-  switch (provider) {
-    case 'anthropic': {
-      const client = createAnthropic({ apiKey: userApiKey ?? process.env.ANTHROPIC_API_KEY })
-      return client(modelId)
+  // The three provider factories return a LanguageModelV1 (AI SDK v4); the model
+  // type is slightly different per provider, so hold it loosely for the shared
+  // drift check below. The returned value preserves each provider's own type.
+  const build = () => {
+    switch (provider) {
+      case 'anthropic': {
+        const client = createAnthropic({ apiKey: userApiKey ?? process.env.ANTHROPIC_API_KEY })
+        return client(modelId)
+      }
+      case 'google': {
+        const client = createGoogleGenerativeAI({
+          apiKey: userApiKey ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+        })
+        return client(modelId)
+      }
+      case 'openai':
+      default: {
+        const client = createOpenAI({ apiKey: userApiKey ?? process.env.OPENAI_API_KEY })
+        return client(modelId)
+      }
     }
-    case 'google': {
-      const client = createGoogleGenerativeAI({
-        apiKey: userApiKey ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-      })
-      return client(modelId)
-    }
-    case 'openai':
-    default: {
-      const client = createOpenAI({ apiKey: userApiKey ?? process.env.OPENAI_API_KEY })
-      return client(modelId)
-    }
+  }
+  const model = build()
+  warnOnModelVersionDrift(model)
+  return model
+}
+
+/**
+ * Preflight guard against the @ai-sdk/* version drift that silently breaks the
+ * coach chat (see AGENTS.md #35). We pin AI SDK v4 (LanguageModelV1,
+ * `specificationVersion: 'v1'`) to match @mastra/core@0.24. If a stray install
+ * floats @ai-sdk/* to v5 (v2) or the responses variant (v3), the model's spec
+ * version changes and Mastra's streamLegacy/stream gate rejects it → empty
+ * responses. This logs ONCE, loudly, at the point the model is created so the
+ * drift is obvious in logs instead of surfacing as a cryptic "No response".
+ */
+let versionWarned = false
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function warnOnModelVersionDrift(model: any): void {
+  if (versionWarned) return
+  const spec = model?.specificationVersion
+  if (spec && spec !== 'v1') {
+    versionWarned = true
+    console.error(
+      `[ai/provider] ⚠ @ai-sdk model specificationVersion is "${spec}" (expected "v1"). ` +
+        `The installed @ai-sdk/* version has drifted from the pinned v4 line and is INCOMPATIBLE ` +
+        `with @mastra/core@0.24 — the coach chat will return empty responses. Reinstall deps from ` +
+        `the lockfile (in Docker: 'npm ci' in the app container). See AGENTS.md #35.`
+    )
   }
 }
 

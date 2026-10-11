@@ -77,12 +77,10 @@ export async function streamAgentText(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   messages: any
 ): Promise<{ textStream: AsyncIterable<string> }> {
-  // The model's reported `specificationVersion` (e.g. 'v3' for openai.responses)
-  // does NOT map cleanly onto Mastra's v1/v2 stream gate, and which value you
-  // get differs by environment (host vs the Docker container's node_modules).
-  // So instead of predicting, we TRY one method and, only if Mastra rejects it
-  // with its specific "wrong method for this model version" error, fall back to
-  // the other. Any other error propagates unchanged.
+  // Mastra's streaming APIs are model-version specific (`stream()` for v2,
+  // `streamLegacy()` for v1) and the installed @ai-sdk/* version decides which
+  // one a given model needs. We try `stream()` and, ONLY if Mastra rejects it
+  // with its specific wrong-method error, fall back to `streamLegacy()`.
   const isWrongMethodError = (err: unknown): boolean => {
     const msg = err instanceof Error ? err.message : String(err)
     return /not supported for streamLegacy|not compatible with stream\(\)|use AI SDK v5 models|use stream instead|use the .*streamLegacy/i.test(
@@ -92,10 +90,24 @@ export async function streamAgentText(
 
   try {
     return await agent.stream(messages)
-  } catch (err) {
-    if (isWrongMethodError(err)) {
-      return agent.streamLegacy(messages)
+  } catch (streamErr) {
+    if (!isWrongMethodError(streamErr)) throw streamErr
+    try {
+      return await agent.streamLegacy(messages)
+    } catch (legacyErr) {
+      // BOTH methods rejected the model → the installed @ai-sdk/* version is
+      // incompatible with @mastra/core (e.g. a drifted @ai-sdk/openai@3 producing
+      // a 'v3'/openai.responses model that neither gate accepts). This is a
+      // DEPENDENCY problem, not a request problem — surface it clearly instead of
+      // the misleading cross-method message. See AGENTS.md gotcha #33/#35.
+      if (isWrongMethodError(legacyErr)) {
+        throw new Error(
+          'AI model/SDK version mismatch: neither stream() nor streamLegacy() accepts this ' +
+            'model. The installed @ai-sdk/* version is incompatible with @mastra/core — reinstall ' +
+            'deps from the lockfile (in Docker: `npm ci` in the app container). See AGENTS.md #35.'
+        )
+      }
+      throw legacyErr
     }
-    throw err
   }
 }

@@ -121,6 +121,43 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 35. "No response. Try again." in coach chat = SAME @ai-sdk/openai@3 drift (recurs via volume)
+Symptom: a chat question that triggers a tool (e.g. "fastest 1km segment" → getBestSplits)
+returns empty text; client shows "No response. Try again." The POST is HTTP 200 (no server
+error logged) because the empty stream isn't an exception at the route level.
+Reproduced locally by running the chat path for a hardcoded user via a throwaway debug route:
+`streamAgentText` threw `V2 models are not supported for streamLegacy` — because `agent.stream()`
+first threw a wrong-method error (model was `v3`/openai.responses), the fallback ran
+`streamLegacy()`, and THAT also threw. Both methods reject a v3 model → empty/err.
+Root cause: AGAIN the container's `@ai-sdk/openai` was `3.0.99` (should be `1.3.24` per lockfile).
+It RECURS because the compose `app` service mounts an anonymous volume at `/app/node_modules`
+(gotcha #16) that PERSISTS across `docker compose up/restart` — so a one-time bad
+`npm install @ai-sdk/...@3` sticks until the volume is wiped. `docker compose restart` and even
+`up` reuse the stale volume; the image's correct deps don't win.
+Fix (local): `docker exec sportai-app sh -lc 'cd /app && npm ci'` then
+`docker compose --env-file .env restart app`. To fully clear it, recreate without the volume:
+`docker compose --env-file .env up -d --force-recreate --renew-anon-volumes app`.
+Verify: `docker exec sportai-app node -e "console.log(require('@ai-sdk/openai/package.json').version)"`
+→ `1.3.24`, and model spec → `v1`.
+Fix (prod/Cloud Run): the production image (`runner` stage, no volume) is built by Cloud Build
+from the lockfile via `npm ci`, so a FRESH deploy (`04_deploy_app_cloudrun.sh`) with the current
+lockfile (`@ai-sdk/openai@1.3.24`) produces a correct image. If prod shows the empty-response
+symptom, redeploy. Do NOT rely on `restart`.
+Defensive code: `streamAgentText` now, when BOTH methods reject, throws an explicit
+"AI model/SDK version mismatch … reinstall deps from the lockfile" error instead of the
+misleading cross-method message, so the next occurrence is obvious.
+Permanent fix (DONE): `@ai-sdk/openai`/`anthropic`/`google`, `ai`, and `@mastra/core` are now
+pinned EXACT in package.json (no `^`) at the known-good v4 line — `@ai-sdk/openai@1.3.24`,
+`ai@4.3.19`, `@mastra/core@0.24.9` — so a stray `npm install` can't float them to v5/v3. Also
+added a boot preflight: `resolveModel` (lib/ai/provider.ts) logs a loud one-time
+`console.error` if the created model's `specificationVersion !== 'v1'`, so future drift is
+visible in logs instead of a cryptic empty response.
+Why pinned to v4, NOT "latest": latest is `@ai-sdk/openai@4.0.91` / `ai@7` / `@mastra/core@1.76`
+(a v5-era stack). Those produce v2/v3 models that `@mastra/core@0.24` rejects — exactly this
+bug. Moving to latest is a REAL migration (Mastra 0.24→1.76 major, `ai` 4→7, drop
+`streamLegacy` for `stream()`-only), deliberately NOT bundled into the "pin" task. Do it as its
+own change with full chat/insight testing if/when desired.
+
 ### 34. Strava connect failed in prod: null athlete_id — missing migration + fragile NOT NULL
 Symptom (deployed only): `Failed to save strava connection: null value in column "athlete_id"
 of relation "strava_connections" violates not-null constraint`.
