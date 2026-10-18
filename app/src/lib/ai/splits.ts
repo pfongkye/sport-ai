@@ -93,7 +93,7 @@ export interface BestSplits {
 export async function computeBestSplits(
   supabase: SupabaseClient<Database>,
   userId: string,
-  opts: { limit?: number; activityId?: string } = {}
+  opts: { limit?: number; activityId?: string; date?: string } = {}
 ): Promise<BestSplits[]> {
   const limit = Math.min(opts.limit ?? 5, 20)
 
@@ -105,6 +105,13 @@ export async function computeBestSplits(
     .order('started_at', { ascending: false })
     .limit(limit)
   if (opts.activityId) actQuery = actQuery.eq('id', opts.activityId)
+  // Date filter: match runs that started on the given calendar day (UTC). Lets
+  // "fastest segment on my run on 2026-10-06" resolve without an activityId.
+  if (opts.date && /^\d{4}-\d{2}-\d{2}$/.test(opts.date)) {
+    actQuery = actQuery
+      .gte('started_at', `${opts.date}T00:00:00.000Z`)
+      .lte('started_at', `${opts.date}T23:59:59.999Z`)
+  }
 
   const { data: activities } = await actQuery
   if (!activities?.length) return []

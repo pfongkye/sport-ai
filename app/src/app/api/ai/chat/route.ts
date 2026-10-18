@@ -1,4 +1,4 @@
-import type { CoreMessage } from 'ai'
+import type { ModelMessage } from 'ai'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { buildCoachAgent, streamAgentText } from '@/lib/ai/agents/coach'
 import { resolveUserAISettings } from '@/lib/ai/provider'
@@ -117,17 +117,17 @@ export async function POST(request: Request) {
 
   // Prepend retrieved memory as a system message so the agent can recall
   // things from outside the recent window.
-  const llmMessages: CoreMessage[] = retrievedContext
+  const llmMessages: ModelMessage[] = retrievedContext
     ? [
         {
           role: 'system',
           content: `Relevant context from this athlete's past conversations and session notes (use if helpful, don't force it):\n${retrievedContext}`,
         },
-        ...messages.map((m) => ({ role: m.role, content: m.content }) as CoreMessage),
+        ...messages.map((m) => ({ role: m.role, content: m.content }) as ModelMessage),
       ]
-    : (messages.map((m) => ({ role: m.role, content: m.content })) as CoreMessage[])
+    : (messages.map((m) => ({ role: m.role, content: m.content })) as ModelMessage[])
 
-  // Stream the agent reply (picks streamLegacy/stream by model version).
+  // Stream the agent reply via Mastra 1.x standard agent.stream() (v5 models).
   let result
   try {
     result = await streamAgentText(agent, llmMessages)
@@ -151,7 +151,7 @@ export async function POST(request: Request) {
           controller.enqueue(encoder.encode(chunk))
         }
       } catch (err) {
-        console.error('[ai/chat] mid-stream error', err)
+        console.error('[ai/chat] mid-stream error', err instanceof Error ? err.stack || err.message : String(err))
       } finally {
         controller.close()
         // Persist assistant reply (best-effort) using admin client so it isn't

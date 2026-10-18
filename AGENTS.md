@@ -121,7 +121,67 @@ traps we hit:
   so server calls fall back to the public nip.io URL; browser+server then share a URL so the
   pinned storageKey keeps PKCE consistent (#10).
 
+### 36. Coach tool schemas must NOT be strict — a rejected tool call silently kills the turn
+Symptom: coach chat returns "No response. Try again." for a tool-triggering question (e.g.
+"fastest 1km segment"), HTTP 200, no route error. Plain non-tool chat works.
+Root cause (found via a temporary `onError` stream callback — logs showed it):
+`AI_InvalidToolArgumentsError: Invalid arguments for tool getBestSplits: Value:
+{"limit":1,"activityId":"latest"}`. The model passed `activityId:"latest"` for "most recent
+run", but the schema was `z.string().uuid()`. The AI SDK rejects the WHOLE tool call before it
+runs; Mastra 0.24 then ends the turn (`finishReason:"tool-calls"`, empty text, 1 step) → 0
+chunks → empty stream. No exception reaches the route, so it's invisible without the callback.
+Rule: coach tool `inputSchema` fields the MODEL fills should be permissive — avoid
+`z.string().uuid()` and other strict refinements on model-supplied values. Accept a plain
+string and validate INSIDE `execute`:
+  - optional id (getBestSplits.activityId): ignore it unless `isUuid()` (helper in tools/index.ts).
+  - required id (updateSessionStatus.sessionId): if not `isUuid()`, RETURN a graceful
+    `{ success:false, error:'…call getPlannedSessions first…' }` the model can relay — don't throw.
+`z.enum([...])` is fine (constrained choice the model picks from). Also: `streamAgentText` now
+passes a permanent `onError` logger (`[ai/agent] stream onError`) + `maxSteps:6`, so this class
+of silent failure is never invisible again. Regression tests in tools/index.test.ts assert both
+schemas accept the non-UUID args that used to kill the turn.
+FOLLOW-UP #1 (date lookups): added an optional `date` ("YYYY-MM-DD") param to getBestSplits +
+a date filter in computeBestSplits, so "my run on <date>" resolves without the model guessing an
+activityId. Good, but revealed the REAL root cause below.
+
+FOLLOW-UP #2 — THE ACTUAL ROOT CAUSE (`.optional()` ≠ optional under strict function calling):
+"Fastest segment on a run on <date>" kept failing. The full onError payload (reassemble the
+multi-line Cloud Run entries — `gcloud logging read` splits the stack) showed:
+  code:"invalid_type", expected:"string", received:"undefined", path:["activityId"], "Required"
+i.e. the model sent `{"limit":1,"date":"2026-10-10"}` (correctly omitting activityId) and
+validation rejected it because **activityId was treated as REQUIRED** — even though it was
+`z.string().optional()`. Cause: OpenAI function-calling STRICT mode (used on the AI SDK v4 +
+Mastra path) emits EVERY property as `required` in the JSON schema; an `.optional()` Zod field
+is still required at the wire, so OMITTING it → `received: undefined` → AI_InvalidToolArgumentsError
+→ silent dead turn. (Plain `zodSchema()`/`zod-to-json-schema` in isolation say required:undefined,
+which is why isolated probes mislead — the strict-mode requirement is applied at the call layer.)
+FIX (the one that works): model-facing optional fields must be `.nullable().default(null)`, NOT
+`.optional()`. That makes the field ALWAYS PRESENT (defaults to null when the model omits it),
+so "Required" can't fire, and the JSON type becomes `["string","null"]`. Normalise null→default
+in execute(). Applied to getBestSplits (limit/date/activityId) and updateSessionStatus (notes).
+Verified: `zodSchema(z.object({activityId:z.string().nullable().default(null)}))` → required
+undefined, and safeParse({limit:1,date:"..."}) fills activityId:null.
+RULE for ALL coach tool schemas: optional model inputs = `.nullable().default(null)` (never bare
+`.optional()`); no `.min/.max/.uuid`; validate/clamp/UUID-check in execute(). Treat inputSchema
+as a loose wire contract, not a validator. Regression tests assert the exact prod args pass.
+NOTE: this, not the AI SDK version, was the real cause of the long "No response" saga. The
+version-pinning (#35) and streamAgentText version-selection were still correct/necessary, but
+the empty tool-turn was a schema bug. A full AI SDK v5 / Mastra upgrade would NOT have fixed it.
+
 ### 35. "No response. Try again." in coach chat = SAME @ai-sdk/openai@3 drift (recurs via volume)
+> **RESOLVED by the v5 migration (branch `upgrade/ai-sdk-v5-mastra-1x`).** The stack is now the
+> AI SDK **v5-era** line pinned EXACT: `@ai-sdk/openai@4.0.96`, `@ai-sdk/anthropic@4.0.82`,
+> `@ai-sdk/google@4.0.99`, `ai@7.0.143`, `@mastra/core@1.78.0`. The `@ai-sdk/openai@4` model
+> reports `specificationVersion: 'v4'` (a v5-generation value), and `@mastra/core@1.x`'s single
+> standard `agent.stream()` accepts the v5 generation (v2/v3/v4). The whole v1/v2
+> `stream()`/`streamLegacy()` ambiguity — and the `streamAgentText` detection shim that existed
+> to tolerate it — are GONE: `streamAgentText` now just calls `agent.stream(messages, {maxSteps,
+> onError})` directly and returns its `MastraModelOutput` (`.textStream` unchanged for the
+> routes). The `resolveModel` preflight now warns if the spec version is NOT one of v2/v3/v4
+> (i.e. a stray drift BACK to the legacy `@ai-sdk/openai@1` / spec `'v1'`, which the standard
+> stream rejects). The drift mechanics below (anonymous `node_modules` volume, `npm ci` in the
+> container) still apply — only the version target changed from v4→v5.
+> Historical account below kept for context.
 Symptom: a chat question that triggers a tool (e.g. "fastest 1km segment" → getBestSplits)
 returns empty text; client shows "No response. Try again." The POST is HTTP 200 (no server
 error logged) because the empty stream isn't an exception at the route level.
@@ -143,9 +203,22 @@ Fix (prod/Cloud Run): the production image (`runner` stage, no volume) is built 
 from the lockfile via `npm ci`, so a FRESH deploy (`04_deploy_app_cloudrun.sh`) with the current
 lockfile (`@ai-sdk/openai@1.3.24`) produces a correct image. If prod shows the empty-response
 symptom, redeploy. Do NOT rely on `restart`.
-Defensive code: `streamAgentText` now, when BOTH methods reject, throws an explicit
-"AI model/SDK version mismatch … reinstall deps from the lockfile" error instead of the
-misleading cross-method message, so the next occurrence is obvious.
+SECOND, DISTINCT cause of the SAME "No response" symptom (found later, prod): even with the
+CORRECT v1 model (`openai.chat`, `@ai-sdk/openai@1.3.24`), chat returned empty. Reason:
+`agent.stream()` called on a v1 model does NOT throw at the `await` — it resolves to a stream
+that only errors when ITERATED. The old `streamAgentText` wrapped just the `await` in try/catch,
+so the deferred error escaped into the chat route's `mid-stream` catch, which swallowed it →
+empty text. The `streamLegacy()` fallback never ran. (`streamLegacy()` on that model works
+perfectly — proven by probing `agent.stream` vs `agent.streamLegacy` separately in a temp
+route.) Fix: `streamAgentText` now DECIDES up front from `agent.getLLM().getModel()
+.specificationVersion` — v2 → `stream()`, else (v1/unknown, our pinned v4 default) →
+`streamLegacy()` — with a single cross-method retry only for the throw-at-await case. Never rely
+on catching a wrong-method error around the `await`; it can be deferred to iteration.
+Debugging technique that cracked it: a temporary token-guarded route
+(`app/src/app/api/zdebugchat`) that builds the agent for a given user and reports
+`chunks`/`len`/`preview` for `stream()`, `streamLegacy()`, and `streamAgentText()` separately —
+run it in prod, read the log, delete it. (Don't prefix the route folder with `_`; Next excludes
+those from routing.)
 Permanent fix (DONE): `@ai-sdk/openai`/`anthropic`/`google`, `ai`, and `@mastra/core` are now
 pinned EXACT in package.json (no `^`) at the known-good v4 line — `@ai-sdk/openai@1.3.24`,
 `ai@4.3.19`, `@mastra/core@0.24.9` — so a stray `npm install` can't float them to v5/v3. Also
@@ -181,6 +254,14 @@ Apply a NEW migration to an ALREADY-RUNNING prod (don't re-run script 03):
 Then redeploy the app (script 04) so the code fallback ships too.
 
 ### 33. Mastra streaming version errors = DRIFTED container deps (not a code bug)
+> **UPDATE after the v5 migration (branch `upgrade/ai-sdk-v5-mastra-1x`):** the stack is now
+> AI SDK v5-era + `@mastra/core@1.78.0` (see #35 for the exact pins). `streamAgentText` no longer
+> tries `stream()` then falls back to `streamLegacy()` — that defensive shim is DELETED. There is
+> one correct method now: Mastra 1.x standard `agent.stream()` for v5 models (our provider emits
+> `specificationVersion:'v4'`, accepted by the standard path). `streamLegacy()` is for v1 models
+> only, which we no longer produce. The container-drift mechanics (anonymous `node_modules`
+> volume → `npm ci` in the container) below STILL apply; only the correct pinned versions
+> changed. Historical v4-era account below kept for context.
 Symptoms (seen in sequence, confusingly contradictory):
 - `V2 models are not supported for streamLegacy. Please use stream instead. { modelId:'gpt-4o' }`
 - then after switching to stream(): `Agent is using AI SDK v4 model (openai.responses:gpt-4o)
@@ -583,7 +664,9 @@ configs change between versions.
 - **Verification**: always `npm run build` in `app/` after code changes — it runs the
   TypeScript check. The build passing is the bar before claiming a task is done.
 - **AI**: `CoachAgent` (`lib/ai/agents/coach.ts`) uses typed tools only — NO MCP in the app
-  runtime (see gotcha #20). Model via `@ai-sdk/*@1` factories, stream via `streamLegacy()`.
+  runtime (see gotcha #20). Model via `@ai-sdk/*@4` (v5-era) factories; stream via Mastra 1.x
+  standard `agent.stream()` (the old `streamLegacy()` shim was removed in the v5 migration — see
+  #33/#35).
 - **RAG memory**: coaching_messages are embedded on write (`text-embedding-3-small`, 1536-dim,
   `lib/ai/embeddings.ts`). The chat route retrieves relevant past context via the
   `search_coaching_messages` RPC (`lib/ai/memory.ts`) and injects it as a system message.
@@ -616,11 +699,22 @@ configs change between versions.
 - **Security**: never read `.env`/secret files (see `.kiro/steering/security.md`; enforced by
   the `block-secret-reads` PreToolUse hook). `*.env.example` templates are fine to read.
   Never echo secret values into chat, logs, or commits.
-- **Testing**: no formal suite yet by design (surface area still churning). Automated tests
-  (Vitest + React Testing Library + Playwright) get introduced at MVP — see the Testing
-  section in `.kiro/specs/sportai-coaching-app/tasks.md`. From MVP onward: every bug fix gets
-  a regression test, every new API route gets auth+happy+error tests, every new table gets an
-  RLS isolation test.
+- **Testing**: Vitest is set up (`cd app && npm test`; `npm run test:watch`), pinned to
+  `vitest@3.2.7` — NOT 5.x, which requires Node ≥22 while the app runs Node 20 (host + the
+  `node:20-alpine` image); 3.2.x supports Node 20. Config: `app/vitest.config.ts` (node env,
+  `@/` alias, `src/**/*.test.ts`). The first suite is CHARACTERIZATION tests pinning the
+  deterministic AI-adjacent code ahead of the AI SDK v5 / Mastra upgrade: splits math, Strava
+  mapping, dedup write path, Strava error mapping, login allow-list, coach-tool wiring (all
+  offline — no OpenAI/DB; Supabase is stubbed). Broader coverage (React Testing Library +
+  Playwright) still planned for MVP. From MVP onward: every bug fix gets a regression test,
+  every new API route gets auth+happy+error tests, every new table gets an RLS isolation test.
+- **npm install gotcha**: a FULL `npm install` currently crashes with
+  `Cannot read properties of null (reading 'edgesOut')` — an npm bug tripped by
+  `@mastra/core@0.24`'s aliased `@openrouter/ai-sdk-provider-v5` (peer `ai@^5`) conflicting with
+  our pinned `ai@4`. Use `npm ci` (installs from the lockfile, no tree rebuild) for normal work,
+  and `npm install --legacy-peer-deps` when you must change deps. Do NOT delete package-lock.json
+  then `npm install` — it fails to even write a lockfile. The committed lockfile is the source of
+  truth; `npm ci` is what the Dockerfile and CI use.
 
 ---
 
