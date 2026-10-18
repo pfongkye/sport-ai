@@ -12,6 +12,7 @@ import {
   importStravaActivities as importStravaActivitiesSvc,
 } from '@/lib/integrations/strava/sync'
 import { formatDistance, formatDuration } from '@/lib/utils'
+import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
  * Factory — builds all typed Mastra tools with a scoped Supabase client.
@@ -451,6 +452,78 @@ export function buildCoachTools(
     },
   })
 
+  // ─── suggestRoute ───────────────────────────────────────────────────────
+  const suggestRoute = createTool({
+    id: 'suggestRoute',
+    description:
+      'Suggest a round-trip running route of roughly a given distance near the athlete, biased flat or uphill. ' +
+      'Use this when the athlete asks for a route/loop to run (e.g. "give me a flat 8k near home", "a hilly 10k around the park"). ' +
+      'Resolves the start automatically: a named place if given, else the athlete\'s saved home, else their last run\'s start. ' +
+      'Returns the actual vs requested distance, ascent, terrain and start label — read these back honestly. ' +
+      'If it returns needsLocation=true, ask the athlete where they want to run (a place name or to set their home in Settings).',
+    // gotcha #36: every model-facing optional field is .nullable().default(null),
+    // NEVER bare .optional() (strict function-calling still emits it as required,
+    // so omitting it fails validation and silently kills the turn). No
+    // .min/.max/.uuid — we clamp/validate inside execute(). z.enum is fine.
+    inputSchema: z.object({
+      distanceKm: z
+        .number()
+        .nullable()
+        .default(null)
+        .describe('Target round-trip distance in km; null = default ~8km. Clamped to 1..60.'),
+      terrain: z
+        .enum(['flat', 'uphill'])
+        .nullable()
+        .default(null)
+        .describe('Terrain preference; null = flat.'),
+      place: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe('A named place to start from (geocoded); null uses the saved home or last run start.'),
+    }),
+    execute: async (inputData) => {
+      // Normalise null/defaults here (see schema note). Clamp distance 1..60.
+      const rawKm = typeof inputData.distanceKm === 'number' ? inputData.distanceKm : 8
+      const distanceKm = Math.min(Math.max(rawKm, 1), 60)
+      const terrain: Terrain = inputData.terrain === 'uphill' ? 'uphill' : 'flat'
+      const place =
+        typeof inputData.place === 'string' && inputData.place.trim() ? inputData.place.trim() : null
+
+      try {
+        // No browserCoord in chat — resolution falls back to place → home → last run.
+        const route = await suggestRouteSvc(supabase, userId, {
+          distanceKm,
+          terrain,
+          placeText: place,
+        })
+        return {
+          distance: formatDistance(route.distanceM),
+          requestedDistance: formatDistance(route.requestedDistanceM),
+          terrain: route.terrain,
+          ascent: `${route.ascentM} m`,
+          startLabel: route.start.label ?? 'your start point',
+          note:
+            'Describe the distance, ascent and terrain honestly, including how the actual distance ' +
+            'compares to what was requested. Do NOT invent named streets or landmarks.',
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg === NO_LOCATION) {
+          return {
+            needsLocation: true,
+            message: 'Ask the athlete where they want to run.',
+          }
+        }
+        // ORS_* sentinels or any other failure — surface a plain message, never throw.
+        return {
+          error:
+            'I couldn\'t build a route right now. Tell the athlete to try a different distance or start point, or try again shortly.',
+        }
+      }
+    },
+  })
+
   return {
     getRecentActivities,
     getTrainingLoad,
@@ -461,6 +534,7 @@ export function buildCoachTools(
     addActivity,
     listStravaActivities,
     importFromStrava,
+    suggestRoute,
   }
 }
 
