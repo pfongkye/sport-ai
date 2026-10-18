@@ -39,7 +39,7 @@ export function buildCoachTools(
         .optional()
         .describe('Filter by sport type'),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       let query = supabase
         .from('activities')
         .select(
@@ -47,10 +47,10 @@ export function buildCoachTools(
         )
         .eq('user_id', userId)
         .order('started_at', { ascending: false })
-        .limit(context.limit)
+        .limit(inputData.limit)
 
-      if (context.sportType) {
-        query = query.eq('sport_type', context.sportType)
+      if (inputData.sportType) {
+        query = query.eq('sport_type', inputData.sportType)
       }
 
       const { data, error } = await query
@@ -88,8 +88,8 @@ export function buildCoachTools(
       'Only set activityId when you have a real activity UUID from a previous tool result. ' +
       'Returns split times per run; null means the run was shorter than that distance.',
     // IMPORTANT: every field is NULLABLE with a default, NOT `.optional()`.
-    // Under OpenAI function-calling strict mode (used by the AI SDK v4 path via
-    // Mastra), an `.optional()` field is still emitted as a REQUIRED JSON-schema
+    // Under OpenAI function-calling strict mode (used on the AI SDK → Mastra
+    // tool path), an `.optional()` field is still emitted as a REQUIRED JSON-schema
     // property, so when the model omits it the call fails validation with
     // `activityId: Required (received undefined)` → AI_InvalidToolArgumentsError
     // → the turn dies silently ("No response"). Making fields nullable-with-
@@ -113,15 +113,15 @@ export function buildCoachTools(
         .default(null)
         .describe('A specific activity UUID from a prior tool result; null for "most recent" or date queries.'),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       // Normalise null/defaults here rather than in the schema (see note above).
-      const rawLimit = typeof context.limit === 'number' ? context.limit : 5
+      const rawLimit = typeof inputData.limit === 'number' ? inputData.limit : 5
       const limit = Math.min(Math.max(Math.trunc(rawLimit), 1), 20)
       // Only honour activityId when it's a real UUID; ignore null/sentinels like "latest".
-      const activityId = isUuid(context.activityId ?? undefined) ? context.activityId! : undefined
+      const activityId = isUuid(inputData.activityId ?? undefined) ? inputData.activityId! : undefined
       const date =
-        typeof context.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(context.date)
-          ? context.date
+        typeof inputData.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(inputData.date)
+          ? inputData.date
           : undefined
       const splits = await computeBestSplits(supabase, userId, { limit, activityId, date })
       if (!splits.length) {
@@ -167,10 +167,10 @@ export function buildCoachTools(
         .default(7)
         .describe('How many days ahead to look'),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       const today = new Date().toISOString().slice(0, 10)
       const until = new Date()
-      until.setDate(until.getDate() + context.days)
+      until.setDate(until.getDate() + inputData.days)
 
       const { data, error } = await supabase
         .from('planned_sessions')
@@ -220,8 +220,8 @@ export function buildCoachTools(
       // validation and kill the turn. Model passes null when there's no note.
       notes: z.string().nullable().default(null).describe('Optional note about what happened; null if none'),
     }),
-    execute: async ({ context }) => {
-      if (!isUuid(context.sessionId)) {
+    execute: async (inputData) => {
+      if (!isUuid(inputData.sessionId)) {
         return {
           success: false,
           error:
@@ -230,12 +230,12 @@ export function buildCoachTools(
       }
       const { error } = await supabase
         .from('planned_sessions')
-        .update({ status: context.status, ai_notes: context.notes })
-        .eq('id', context.sessionId)
+        .update({ status: inputData.status, ai_notes: inputData.notes })
+        .eq('id', inputData.sessionId)
         .eq('user_id', userId)
 
       if (error) return { success: false, error: `Failed to update session: ${error.message}` }
-      return { success: true, sessionId: context.sessionId, status: context.status }
+      return { success: true, sessionId: inputData.sessionId, status: inputData.status }
     },
   })
 
@@ -273,21 +273,21 @@ export function buildCoachTools(
         )
         .default([]),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       const draftInput = {
-        sportType: context.sportType,
-        startedAt: context.startedAt,
+        sportType: inputData.sportType,
+        startedAt: inputData.startedAt,
         dateTimeNeedsConfirmation: false,
-        durationS: context.durationS,
-        distanceM: context.distanceM,
-        avgHrBpm: context.avgHrBpm,
-        maxHrBpm: context.maxHrBpm,
-        avgPaceSPerKm: context.avgPaceSPerKm,
+        durationS: inputData.durationS,
+        distanceM: inputData.distanceM,
+        avgHrBpm: inputData.avgHrBpm,
+        maxHrBpm: inputData.maxHrBpm,
+        avgPaceSPerKm: inputData.avgPaceSPerKm,
         avgCadenceRpm: null,
         caloriesKcal: null,
-        rpe: context.rpe,
-        notes: context.notes,
-        strength: context.strength,
+        rpe: inputData.rpe,
+        notes: inputData.notes,
+        strength: inputData.strength,
         assumptions: [],
         confidence: 'high' as const,
         transcript: '',
@@ -300,7 +300,7 @@ export function buildCoachTools(
       const draft = parsed.data
 
       // Step 1: not confirmed → return the normalised draft for read-back only.
-      if (!context.confirmed) {
+      if (!inputData.confirmed) {
         const dup = await findLikelyDuplicate(supabase, userId, {
           sportType: draft.sportType,
           startedAt: draft.startedAt,
@@ -334,12 +334,12 @@ export function buildCoachTools(
     inputSchema: z.object({
       limit: z.number().min(1).max(50).default(10).describe('How many recent Strava activities to list'),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       if (!admin) {
         return { available: false, message: 'Strava import is not available in this context.' }
       }
       try {
-        const activities = await listStravaActivitiesSvc(admin, userId, { limit: context.limit })
+        const activities = await listStravaActivitiesSvc(admin, userId, { limit: inputData.limit })
         return {
           available: true,
           count: activities.length,
@@ -385,19 +385,19 @@ export function buildCoachTools(
         .default(5)
         .describe('When no stravaIds given, import the most recent N activities'),
     }),
-    execute: async ({ context }) => {
+    execute: async (inputData) => {
       if (!admin) {
         return { imported: false, message: 'Strava import is not available in this context.' }
       }
       try {
         // Step 1: preview — list what would be imported (new ones only).
-        if (!context.confirmed) {
+        if (!inputData.confirmed) {
           const activities = await listStravaActivitiesSvc(admin, userId, {
-            limit: context.stravaIds?.length ? 50 : context.limit,
+            limit: inputData.stravaIds?.length ? 50 : inputData.limit,
           })
-          const candidates = context.stravaIds?.length
-            ? activities.filter((a) => context.stravaIds!.includes(a.id))
-            : activities.filter((a) => !a.alreadyImported).slice(0, context.limit)
+          const candidates = inputData.stravaIds?.length
+            ? activities.filter((a) => inputData.stravaIds!.includes(a.id))
+            : activities.filter((a) => !a.alreadyImported).slice(0, inputData.limit)
           return {
             imported: false,
             needsConfirmation: true,
@@ -416,8 +416,8 @@ export function buildCoachTools(
 
         // Step 2: confirmed → import (duplicates skipped by external_id).
         const result = await importStravaActivitiesSvc(admin, userId, {
-          activityIds: context.stravaIds,
-          limit: context.limit,
+          activityIds: inputData.stravaIds,
+          limit: inputData.limit,
         })
         return {
           imported: true,

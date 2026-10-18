@@ -96,8 +96,7 @@ export async function parseActivity(
   let parsed: ParsedDraft
   try {
     const result = await generateObject({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      model: model as any,
+      model,
       schema: parsedDraftSchema,
       system,
       prompt: transcript,

@@ -22,12 +22,12 @@ interface BuildCoachAgentParams {
  * Builds a CoachAgent scoped to the current user and request.
  * Injects typed tools and a context-aware system prompt.
  *
- * Model version note: depending on which @ai-sdk/* versions are installed in a
- * given environment, the provider factory may produce a v1 (AI SDK v4) or v2
- * (AI SDK v5) model. Mastra's streaming APIs are version-specific
- * (`streamLegacy()` = v1, `stream()` = v2) and throw on a mismatch. Use the
- * `streamAgentText()` helper below, which detects the model version and calls
- * the correct one, so routes don't have to care.
+ * Streaming model note: the stack runs the AI SDK v5-era line
+ * (`@ai-sdk/openai@4` etc. → a LanguageModelV2) with `@mastra/core@1.x`. Mastra
+ * 1.x has a single standard streaming API — `agent.stream()` — for v5 models;
+ * the old v1/v2 `stream()`/`streamLegacy()` ambiguity (and the detection shim
+ * that lived here) is gone. `streamAgentText()` below just calls
+ * `agent.stream()` directly. See AGENTS.md #33/#35 for the history.
  *
  * NOTE: MCP servers were intentionally NOT wired here. Typed tools (safe,
  * RLS-enforced, testable, deploy-anywhere) cover our needs, and stdio-based MCP
@@ -51,94 +51,48 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
   })
 
   return new Agent({
+    id: 'CoachAgent',
     name: 'CoachAgent',
     instructions,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    model: model as any,
+    model,
     tools,
   })
 }
 
 /**
- * Stream an agent reply as a text stream, picking the right Mastra API for the
- * model's AI SDK version:
- *   - v1 models (LanguageModelV1, AI SDK v4) → `streamLegacy()`
- *   - v2 models (LanguageModelV2, AI SDK v5) → `stream()`
- * Mastra throws if you call the wrong one for the model's `specificationVersion`
- * (e.g. "V2 models are not supported for streamLegacy"), and which version the
- * installed `@ai-sdk/*` factories produce can differ between environments
- * (host vs the Docker container's own node_modules — see AGENTS.md). Detecting
- * at runtime makes the chat/insight routes work regardless.
+ * Stream an agent reply as a text stream.
  *
- * Both APIs expose `.textStream`, so callers consume the result identically.
+ * Mastra 1.x exposes one standard streaming API, `agent.stream()`, for AI SDK
+ * v5 models (our pinned `@ai-sdk/openai@4` etc.). It returns a
+ * `MastraModelOutput` whose `.textStream` is an async iterable of string chunks,
+ * which the chat and insight routes consume directly. (The old
+ * `stream()`/`streamLegacy()` version-detection shim is gone — there is exactly
+ * one correct method now that the stack is v5-only. See AGENTS.md #33/#35.)
+ *
+ * Options:
+ *  - `maxSteps: 6` lets the model continue past a tool call to a final text
+ *    answer (Mastra's standard `stream()` accepts `maxSteps` directly; we use
+ *    it rather than `stopWhen: stepCountIs(n)` because `stepCountIs` from our
+ *    top-level `ai@7` yields a `StopCondition` whose generic shape doesn't match
+ *    the one Mastra expects via its bundled `ai-v5` alias — `maxSteps` is the
+ *    equivalent, type-clean option).
+ *  - `onError` logs loop errors that would otherwise be INVISIBLE: a tool-call
+ *    error (e.g. invalid tool arguments) ends the turn with empty text and no
+ *    route-level exception — this log is how we catch it. Kept permanently;
+ *    it's cheap and the one signal that surfaces silent failures.
  */
 export async function streamAgentText(
   agent: Agent,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   messages: any
 ): Promise<{ textStream: AsyncIterable<string> }> {
-  // Mastra's streaming APIs are model-version specific: `streamLegacy()` for v1
-  // models (AI SDK v4, specificationVersion 'v1') and `stream()` for v2 (AI SDK
-  // v5). Calling the wrong one errors — and crucially that error can be thrown
-  // at the await OR deferred until the textStream is iterated. The deferred case
-  // is invisible to a try/catch around the call and surfaced downstream as an
-  // EMPTY stream (the "No response. Try again." prod bug: stream() was called on
-  // a v1 model, didn't throw at the await, so the fallback never ran).
-  //
-  // Fix: DECIDE up front from the model's own specificationVersion rather than
-  // probe-and-catch. Our pinned AI SDK v4 produces v1 → streamLegacy(). A single
-  // cross-method retry remains as a safety net if detection disagrees with what
-  // the API accepts (when the error IS thrown at the await).
-  const isWrongMethodError = (err: unknown): boolean => {
-    const msg = err instanceof Error ? err.message : String(err)
-    return /not supported for streamLegacy|not compatible with stream\(\)|use AI SDK v5 models|use stream instead|use the .*streamLegacy/i.test(
-      msg
-    )
-  }
-
-  let specVersion: string | undefined
-  try {
-    const llm = await agent.getLLM()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    specVersion = (llm.getModel() as any)?.specificationVersion
-  } catch {
-    // couldn't introspect — fall through to the v1 default below
-  }
-  // Stream options. `maxSteps` lets the model continue past a tool call to a
-  // text answer. `onError` logs loop errors that would otherwise be INVISIBLE:
-  // a tool-call error (e.g. invalid tool arguments) ends the turn with empty
-  // text and no route-level exception — this log is how we catch it. Kept
-  // permanently; it's cheap and the one signal that surfaces silent failures.
-  const opts = {
+  return agent.stream(messages, {
     maxSteps: 6,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onError: (e: any) => {
-      const err = e?.error ?? e
+    onError: ({ error }: { error: Error | string }) => {
       console.error(
         '[ai/agent] stream onError:',
-        err instanceof Error ? err.stack || err.message : JSON.stringify(err)
+        error instanceof Error ? error.stack || error.message : String(error)
       )
     },
-  }
-
-  if (specVersion === 'v2') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await agent.stream(messages, opts as any)
-    } catch (err) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (isWrongMethodError(err)) return agent.streamLegacy(messages, opts as any)
-      throw err
-    }
-  }
-
-  // v1 or unknown (our pinned v4 default) → streamLegacy().
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return await agent.streamLegacy(messages, opts as any)
-  } catch (err) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (isWrongMethodError(err)) return agent.stream(messages, opts as any)
-    throw err
-  }
+  })
 }

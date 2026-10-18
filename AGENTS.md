@@ -169,6 +169,19 @@ version-pinning (#35) and streamAgentText version-selection were still correct/n
 the empty tool-turn was a schema bug. A full AI SDK v5 / Mastra upgrade would NOT have fixed it.
 
 ### 35. "No response. Try again." in coach chat = SAME @ai-sdk/openai@3 drift (recurs via volume)
+> **RESOLVED by the v5 migration (branch `upgrade/ai-sdk-v5-mastra-1x`).** The stack is now the
+> AI SDK **v5-era** line pinned EXACT: `@ai-sdk/openai@4.0.96`, `@ai-sdk/anthropic@4.0.82`,
+> `@ai-sdk/google@4.0.99`, `ai@7.0.143`, `@mastra/core@1.78.0`. The `@ai-sdk/openai@4` model
+> reports `specificationVersion: 'v4'` (a v5-generation value), and `@mastra/core@1.x`'s single
+> standard `agent.stream()` accepts the v5 generation (v2/v3/v4). The whole v1/v2
+> `stream()`/`streamLegacy()` ambiguity — and the `streamAgentText` detection shim that existed
+> to tolerate it — are GONE: `streamAgentText` now just calls `agent.stream(messages, {maxSteps,
+> onError})` directly and returns its `MastraModelOutput` (`.textStream` unchanged for the
+> routes). The `resolveModel` preflight now warns if the spec version is NOT one of v2/v3/v4
+> (i.e. a stray drift BACK to the legacy `@ai-sdk/openai@1` / spec `'v1'`, which the standard
+> stream rejects). The drift mechanics below (anonymous `node_modules` volume, `npm ci` in the
+> container) still apply — only the version target changed from v4→v5.
+> Historical account below kept for context.
 Symptom: a chat question that triggers a tool (e.g. "fastest 1km segment" → getBestSplits)
 returns empty text; client shows "No response. Try again." The POST is HTTP 200 (no server
 error logged) because the empty stream isn't an exception at the route level.
@@ -241,6 +254,14 @@ Apply a NEW migration to an ALREADY-RUNNING prod (don't re-run script 03):
 Then redeploy the app (script 04) so the code fallback ships too.
 
 ### 33. Mastra streaming version errors = DRIFTED container deps (not a code bug)
+> **UPDATE after the v5 migration (branch `upgrade/ai-sdk-v5-mastra-1x`):** the stack is now
+> AI SDK v5-era + `@mastra/core@1.78.0` (see #35 for the exact pins). `streamAgentText` no longer
+> tries `stream()` then falls back to `streamLegacy()` — that defensive shim is DELETED. There is
+> one correct method now: Mastra 1.x standard `agent.stream()` for v5 models (our provider emits
+> `specificationVersion:'v4'`, accepted by the standard path). `streamLegacy()` is for v1 models
+> only, which we no longer produce. The container-drift mechanics (anonymous `node_modules`
+> volume → `npm ci` in the container) below STILL apply; only the correct pinned versions
+> changed. Historical v4-era account below kept for context.
 Symptoms (seen in sequence, confusingly contradictory):
 - `V2 models are not supported for streamLegacy. Please use stream instead. { modelId:'gpt-4o' }`
 - then after switching to stream(): `Agent is using AI SDK v4 model (openai.responses:gpt-4o)
@@ -643,7 +664,9 @@ configs change between versions.
 - **Verification**: always `npm run build` in `app/` after code changes — it runs the
   TypeScript check. The build passing is the bar before claiming a task is done.
 - **AI**: `CoachAgent` (`lib/ai/agents/coach.ts`) uses typed tools only — NO MCP in the app
-  runtime (see gotcha #20). Model via `@ai-sdk/*@1` factories, stream via `streamLegacy()`.
+  runtime (see gotcha #20). Model via `@ai-sdk/*@4` (v5-era) factories; stream via Mastra 1.x
+  standard `agent.stream()` (the old `streamLegacy()` shim was removed in the v5 migration — see
+  #33/#35).
 - **RAG memory**: coaching_messages are embedded on write (`text-embedding-3-small`, 1536-dim,
   `lib/ai/embeddings.ts`). The chat route retrieves relevant past context via the
   `search_coaching_messages` RPC (`lib/ai/memory.ts`) and injects it as a system message.
