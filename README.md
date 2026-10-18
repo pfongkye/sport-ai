@@ -516,6 +516,31 @@ a few minutes and import the rest.
 
 ---
 
+## Suggested routes (ORS)
+
+The **Routes** page (and the coach's `suggestRoute` tool) propose round-trip running routes for
+a target distance and terrain (flatter vs hillier), with an elevation profile and a map. They
+are powered by [OpenRouteService](https://openrouteservice.org).
+
+1. Create a free account and generate a token at
+   [openrouteservice.org/dev/#/signup](https://openrouteservice.org/dev/#/signup).
+2. Add it to `app/.env.local` (it's a **server-only** secret — never exposed to the browser,
+   never under a `NEXT_PUBLIC_` name):
+   ```bash
+   ORS_API_KEY=your-openrouteservice-api-key
+   # Optional, defaults to the public API:
+   # ORS_BASE_URL=https://api.openrouteservice.org
+   ```
+3. Restart the app (host: restart `npm run dev`). If you run the app **inside Docker**, the
+   `app` service already passes `ORS_API_KEY`/`ORS_BASE_URL` through from `app/.env.local`, but
+   remember a new dependency like `maplibre-gl` must also be installed in the container (see the
+   [`Module not found`](#module-not-found-cant-resolve-package) troubleshooting entry).
+
+Set a **home location** in Settings → Location to use as the default route start. You can also
+pick "My location" (uses the browser's geolocation) or type a place on the Routes page.
+
+---
+
 ## Troubleshooting
 
 ### `auth` / `rest` / `storage` containers stuck `Restarting`, or Envoy returns "no healthy upstream"
@@ -734,6 +759,18 @@ change to apply without a restart/rebuild.
 Free Ngrok URLs rotate on restart. Either use a stable Ngrok domain (paid/reserved) or
 update `SITE_URL` + `ADDITIONAL_REDIRECT_URLS` in `docker/.env`, the OAuth provider's
 redirect URI, and `NEXT_PUBLIC_APP_URL` every time, then `restart auth`.
+
+---
+
+### Suggesting a route fails / the coach says routes aren't configured
+
+**Cause**: `ORS_API_KEY` is missing or invalid. The ORS layer maps an auth failure to a
+server error telling you the owner must set the key (it never leaks the key to the client).
+
+**Fix**: get a free key at
+[openrouteservice.org/dev/#/signup](https://openrouteservice.org/dev/#/signup), set
+`ORS_API_KEY` in `app/.env.local`, and restart the app (Docker `app` needs a recreate to pick
+up a new env var — `up -d`, not `restart`). See [Suggested routes (ORS)](#suggested-routes-ors).
 
 ---
 

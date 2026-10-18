@@ -396,6 +396,10 @@ services:
       # browser bundle points at the host-reachable URL.
       # Server-side code uses this internal URL to reach the gateway on the Docker network:
       SUPABASE_INTERNAL_URL: http://api-gw:8000
+      # OpenRouteService (suggested routes) — app-side server secret, sourced from
+      # app/.env.local via env_file. Passed through here so it's explicit.
+      ORS_API_KEY: ${ORS_API_KEY}
+      ORS_BASE_URL: ${ORS_BASE_URL:-https://api.openrouteservice.org}
     volumes:
       - ../app:/app
       - /app/node_modules
