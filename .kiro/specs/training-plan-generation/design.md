@@ -98,16 +98,33 @@ Maps 1:1 to the insert columns (`targetDistanceM`→`target_distance_m`, etc.).
 
 4. **`GET /api/plan`** (or server-component read) — active plan + its sessions for the view.
 
-5. **`/plan` page + `PlanView` client component** — replace the stub: week-grouped list/calendar,
-   session cards with target + status, "Generate plan" CTA when none active.
+5. **`/plan` page + `PlanView` client component** — replace the stub: **week-grouped calendar view**
+   (Req 2.1), session cards with target + status, "Generate plan" CTA when none active.
+   **Mobile-first** (Req 2.1/5.3): single-week/single-column on a phone, scaling up to a multi-column
+   week grid on larger screens; no horizontal scroll or clipped day cells; verify on a narrow
+   viewport.
 
-6. **Chat tools** in `buildCoachTools`:
+   **Manual reschedule (Req 2a)** — each FUTURE `pending` session card carries a keyboard-accessible
+   "reschedule to date" control (a date picker / "move to…" affordance, NOT drag-and-drop in v1).
+   Touch-friendly, no hover-only affordance (gotcha #23). Changing the date calls
+   `PATCH /api/plan/sessions/[id]/reschedule` and refreshes. Past/completed sessions show no
+   reschedule control. Drag-and-drop is a documented later enhancement.
+
+6. **`PATCH /api/plan/sessions/[id]/reschedule`** (Req 2a.4) — auth → load the session (RLS, owner)
+   → re-validate server-side that it is FUTURE (`scheduled_date >= today` in the athlete's timezone)
+   AND `status='pending'` → update only `scheduled_date` (and set `status='modified'` + an `ai_notes`
+   trace that it was manually moved, Req 2a.3); reject past/completed/non-owned with a clear error.
+   Never trust the client's guardrail (Req 2a.4). Shares the future-and-pending predicate with
+   `adjustUpcomingSessions` (factor it into one helper so AI and manual paths can't diverge).
+
+7. **Chat tools** in `buildCoachTools`:
    - `generatePlan` — confirm intent, call the SAME workflow, return a short summary (not every
      session). Two-step confirm like `addActivity` (Req 4.2).
    - **Adaptation** reuses `updateSessionStatus` (exists) plus a new `adjustUpcomingSessions` tool
-     that only edits FUTURE `pending` sessions (Req 3.3).
+     that only edits FUTURE `pending` sessions (Req 3.3). Shares the future-and-pending predicate
+     helper with the reschedule endpoint (component 6).
 
-7. **Activity auto-link (Req 3.4)** — in the shared `insertManualActivity` path (and, later, file
+8. **Activity auto-link (Req 3.4)** — in the shared `insertManualActivity` path (and, later, file
    upload), after inserting an activity, look for a same-day + same-sport `pending` planned session
    and set it `completed` + `completed_activity_id`. Best-effort, non-fatal.
 
@@ -162,8 +179,12 @@ data-stream work.
    timezone (`user_settings.timezone`) so "start next Monday" and taper land correctly.
 4. **Model over-scheduling.** Guardrails must reject sessions outside [start,end], missing rest
    days, or >~10%/week volume jumps — don't trust the LLM to self-limit.
-5. **Adaptation scope (Req 3.3).** `adjustUpcomingSessions` must filter `scheduled_date >= today AND
-   status='pending'`; never touch completed/past rows.
+5. **Adaptation scope (Req 3.3) + manual reschedule (Req 2a.2).** BOTH the `adjustUpcomingSessions`
+   tool and the `PATCH …/reschedule` endpoint must filter `scheduled_date >= today AND
+   status='pending'` and never touch completed/past rows. Factor the predicate into ONE shared
+   helper so the AI path and the manual UI path cannot diverge, and re-check it server-side on the
+   reschedule endpoint (never trust the client, Req 2a.4). Compute "today" in the athlete's timezone
+   (`user_settings.timezone`), consistent with point 3.
 6. **Cost/latency.** One `generateObject` call, but a long marathon block is many sessions → large
    output. Bound tokens, set a timeout, and consider generating week-by-week if output size is a
    problem (deterministic loop, still one schema per week).

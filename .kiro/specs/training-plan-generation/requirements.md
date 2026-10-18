@@ -46,11 +46,33 @@ agent for flexible ops") supports this.
 
 ### 2. Plan viewing
 
-- **2.1** MUST replace the `/plan` stub with a view listing the active plan and its sessions
-  (calendar or grouped-by-week list), reading from `planned_sessions`.
+- **2.1** MUST replace the `/plan` stub with a **week-grouped calendar view** of the active plan and
+  its sessions, reading from `planned_sessions`. Sessions MUST be organised by week, with each day's
+  session(s) shown in its day slot so the athlete can see the week at a glance. The view MUST be
+  **mobile-first**: on a phone it reflows to a readable single-week/single-column layout (no
+  horizontal scroll, no clipped day cells) and scales up to a wider multi-column week grid on larger
+  screens. Phone is the primary target.
 - **2.2** MUST show each session's type, target, and status; completed sessions link to the
   activity (`completed_activity_id`).
 - **2.3** SHOULD let the athlete trigger generation from this page when no active plan exists.
+
+### 2a. Manual rescheduling (moving sessions within the week)
+
+- **2a.1** MUST let the athlete **move a planned session to a different date** directly in the UI to
+  accommodate real-life adjustments during the week, via a keyboard-accessible "reschedule to date"
+  control (v1 baseline). Drag-and-drop is a later enhancement, NOT required for v1.
+- **2a.2** Rescheduling MUST only be allowed for **future `pending`** sessions (same guardrail as
+  AI adaptation, Req 3.3) — the athlete MUST NOT be able to move past or completed sessions.
+- **2a.3** Rescheduling MUST write only the session's `scheduled_date` (and, where appropriate, set
+  `status='modified'` / an `ai_notes` trace that it was manually moved); it MUST NOT alter the
+  session's training targets.
+- **2a.4** Rescheduling MUST be `user_id`/RLS-scoped and go through an API route (or server action)
+  that re-validates the future-and-pending guardrail server-side — never trust the client alone.
+- **2a.5** The reschedule control MUST be accessible AND **mobile-first**: operable by keyboard with
+  clear labels and a screen-reader confirmation of the new date, AND touch-friendly on a phone
+  (adequate hit targets, no hover-only affordance per gotcha #23). The lightweight date control is
+  chosen partly because it works cleanly on touch; drag-and-drop (deferred) would need separate
+  touch handling.
 
 ### 3. Plan lifecycle & adaptation
 
@@ -76,13 +98,18 @@ agent for flexible ops") supports this.
   is rejected, not written).
 - **5.2** All writes scoped to `user_id` (+ RLS). Session inserts MUST be transactional-ish: don't
   leave a `training_plans` row with zero sessions on partial failure (clean up or insert plan last).
-- **5.3** MUST be accessible (plan view keyboard-navigable, screen-reader labelled).
+- **5.3** MUST be accessible (plan view keyboard-navigable, screen-reader labelled) AND
+  **mobile-first** — the plan/calendar is designed for a phone screen first and scales up; verify on
+  a mobile viewport before considering a UI task done.
 
 ---
 
 ## Out of Scope (v1)
 
 - Multi-sport concurrent periodization beyond the athlete's stated prefs (keep running-goal-first).
-- Editing individual sessions by hand in the UI (adaptation is AI-driven for v1; manual edit later).
-- Calendar drag-and-drop.
+- Editing a session's **training content** by hand in the UI — type, distance, duration, HR zone
+  (content adaptation is AI-driven for v1; manual content edit later). NOTE: manually moving a
+  session to a different **date** IS in scope for v1 (Req 2a) — only content editing is deferred.
+- **Calendar drag-and-drop** (the v1 reschedule uses a keyboard-accessible date control; drag-and-
+  drop is a later enhancement — Req 2a.1).
 - Notifications/reminders.
