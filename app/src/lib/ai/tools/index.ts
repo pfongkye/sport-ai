@@ -87,26 +87,42 @@ export function buildCoachTools(
       'For "my run on <date>", pass date as "YYYY-MM-DD" (do NOT guess an activityId). ' +
       'Only set activityId when you have a real activity UUID from a previous tool result. ' +
       'Returns split times per run; null means the run was shorter than that distance.',
-    // IMPORTANT: keep this schema PERMISSIVE. The AI SDK (v4) converts the Zod
-    // schema to JSON Schema and validates the model's raw tool arguments against
-    // that — Zod refinements like .min()/.max()/.uuid()/.default() can cause an
-    // AI_InvalidToolArgumentsError that silently kills the turn ("No response").
-    // So: plain number/string, all optional, and we validate/clamp in execute().
+    // IMPORTANT: every field is NULLABLE with a default, NOT `.optional()`.
+    // Under OpenAI function-calling strict mode (used by the AI SDK v4 path via
+    // Mastra), an `.optional()` field is still emitted as a REQUIRED JSON-schema
+    // property, so when the model omits it the call fails validation with
+    // `activityId: Required (received undefined)` → AI_InvalidToolArgumentsError
+    // → the turn dies silently ("No response"). Making fields nullable-with-
+    // default means they're ALWAYS present (never "missing"); the model passes
+    // null when it has no value. We normalise null → sensible defaults here.
+    // Also no .min/.max/.uuid refinements — we validate/clamp in execute().
     inputSchema: z.object({
-      limit: z.number().optional().describe('How many recent runs to analyse (use 1 for "most recent run"). Default 5.'),
-      date: z.string().optional().describe('Target a run on this calendar day, formatted YYYY-MM-DD.'),
+      limit: z
+        .number()
+        .nullable()
+        .default(null)
+        .describe('How many recent runs to analyse (use 1 for "most recent run"); null = default 5.'),
+      date: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe('Target a run on this calendar day, formatted YYYY-MM-DD; null if not a date query.'),
       activityId: z
         .string()
-        .optional()
-        .describe('A specific activity UUID from a prior tool result. Omit for "most recent" or date queries.'),
+        .nullable()
+        .default(null)
+        .describe('A specific activity UUID from a prior tool result; null for "most recent" or date queries.'),
     }),
     execute: async ({ context }) => {
-      // Clamp/validate here rather than in the schema (see note above).
+      // Normalise null/defaults here rather than in the schema (see note above).
       const rawLimit = typeof context.limit === 'number' ? context.limit : 5
       const limit = Math.min(Math.max(Math.trunc(rawLimit), 1), 20)
-      // Only honour activityId when it's a real UUID; ignore sentinels like "latest".
-      const activityId = isUuid(context.activityId) ? context.activityId : undefined
-      const date = typeof context.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(context.date) ? context.date : undefined
+      // Only honour activityId when it's a real UUID; ignore null/sentinels like "latest".
+      const activityId = isUuid(context.activityId ?? undefined) ? context.activityId! : undefined
+      const date =
+        typeof context.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(context.date)
+          ? context.date
+          : undefined
       const splits = await computeBestSplits(supabase, userId, { limit, activityId, date })
       if (!splits.length) {
         return {
@@ -196,13 +212,13 @@ export function buildCoachTools(
       "Update a planned session's status (completed, skipped, modified). Call this after the athlete confirms they completed or skipped a session. " +
       'sessionId MUST be a real session UUID from a getPlannedSessions result — never a guess or placeholder.',
     inputSchema: z.object({
-      // Plain string, NOT z.string().uuid(): a strict uuid() schema makes the AI
-      // SDK reject the whole tool call (AI_InvalidToolArgumentsError) if the model
-      // passes a non-UUID, which silently ends the turn with no reply. We validate
-      // inside execute() and return a graceful message the model can act on.
+      // Plain string (NOT .uuid()) + required by nature; validated in execute().
       sessionId: z.string().describe('The planned session UUID (from getPlannedSessions)'),
       status: z.enum(['completed', 'skipped', 'modified']),
-      notes: z.string().optional().describe('Optional note about what happened'),
+      // nullable+default, NOT .optional() — an .optional() field is still emitted
+      // as required under strict function-calling, so omitting `notes` would fail
+      // validation and kill the turn. Model passes null when there's no note.
+      notes: z.string().nullable().default(null).describe('Optional note about what happened; null if none'),
     }),
     execute: async ({ context }) => {
       if (!isUuid(context.sessionId)) {

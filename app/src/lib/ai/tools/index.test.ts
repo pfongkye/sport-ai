@@ -65,6 +65,15 @@ describe('buildCoachTools', () => {
     expect(schema!.safeParse!({ limit: 1 }).success).toBe(true)
     expect(schema!.safeParse!({ date: '2026-10-06' }).success).toBe(true)
     expect(schema!.safeParse!({}).success).toBe(true)
+    // The EXACT prod args that failed: date query with no activityId. Must pass
+    // and the omitted activityId must default to null (not be "Required").
+    const r = schema!.safeParse!({ limit: 1, date: '2026-10-10' }) as {
+      success: boolean
+      data?: { activityId: unknown }
+    }
+    expect(r.success).toBe(true)
+    expect(r.data?.activityId).toBeNull()
+    expect(schema!.safeParse!({ limit: 1, activityId: null, date: null }).success).toBe(true)
     expect(
       schema!.safeParse!({ limit: 1, activityId: '550e8400-e29b-41d4-a716-446655440000' }).success
     ).toBe(true)
@@ -79,7 +88,9 @@ describe('buildCoachTools', () => {
       { inputSchema?: { safeParse?: (v: unknown) => { success: boolean } } }
     >
     const schema = tools.updateSessionStatus.inputSchema
+    // No `notes` sent → must pass (notes nullable+default), not fail as "Required".
     expect(schema!.safeParse!({ sessionId: 'not-a-uuid', status: 'completed' }).success).toBe(true)
+    expect(schema!.safeParse!({ sessionId: 'x', status: 'skipped', notes: null }).success).toBe(true)
     // enum is still enforced
     expect(schema!.safeParse!({ sessionId: 'x', status: 'bogus' }).success).toBe(false)
   })

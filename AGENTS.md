@@ -140,18 +140,30 @@ string and validate INSIDE `execute`:
 passes a permanent `onError` logger (`[ai/agent] stream onError`) + `maxSteps:6`, so this class
 of silent failure is never invisible again. Regression tests in tools/index.test.ts assert both
 schemas accept the non-UUID args that used to kill the turn.
-FOLLOW-UP (same class, wider): it wasn't only `.uuid()`. "Fastest segment on a run on a PAST
-date" failed with `AI_InvalidToolArgumentsError … Value: {"limit":1}` even though `{limit:1}`
-passes Zod directly. The AI SDK v4 converts the Zod schema to JSON Schema and validates the
-model's raw args against THAT, so `.min()/.max()/.default()` can also trigger a rejection that
-Zod's own `safeParse` would accept. Fix: make model-facing tool schemas maximally PERMISSIVE —
-plain `z.number().optional()` / `z.string().optional()`, NO `.min/.max/.default/.uuid`, and
-clamp/validate/default INSIDE `execute()`. getBestSplits now also takes an optional `date`
-("YYYY-MM-DD") and filters activities by that day, so "my run on <date>" resolves without the
-model guessing an activityId (the original trigger — the model sent junk args because it had no
-clean way to target a past run). computeBestSplits gained the `date` filter. Rule of thumb:
-treat a tool's inputSchema as a loose hint to the model, not a validator; do real validation in
-execute().
+FOLLOW-UP #1 (date lookups): added an optional `date` ("YYYY-MM-DD") param to getBestSplits +
+a date filter in computeBestSplits, so "my run on <date>" resolves without the model guessing an
+activityId. Good, but revealed the REAL root cause below.
+
+FOLLOW-UP #2 — THE ACTUAL ROOT CAUSE (`.optional()` ≠ optional under strict function calling):
+"Fastest segment on a run on <date>" kept failing. The full onError payload (reassemble the
+multi-line Cloud Run entries — `gcloud logging read` splits the stack) showed:
+  code:"invalid_type", expected:"string", received:"undefined", path:["activityId"], "Required"
+i.e. the model sent `{"limit":1,"date":"2026-10-10"}` (correctly omitting activityId) and
+validation rejected it because **activityId was treated as REQUIRED** — even though it was
+`z.string().optional()`. Cause: OpenAI function-calling STRICT mode (used on the AI SDK v4 +
+Mastra path) emits EVERY property as `required` in the JSON schema; an `.optional()` Zod field
+is still required at the wire, so OMITTING it → `received: undefined` → AI_InvalidToolArgumentsError
+→ silent dead turn. (Plain `zodSchema()`/`zod-to-json-schema` in isolation say required:undefined,
+which is why isolated probes mislead — the strict-mode requirement is applied at the call layer.)
+FIX (the one that works): model-facing optional fields must be `.nullable().default(null)`, NOT
+`.optional()`. That makes the field ALWAYS PRESENT (defaults to null when the model omits it),
+so "Required" can't fire, and the JSON type becomes `["string","null"]`. Normalise null→default
+in execute(). Applied to getBestSplits (limit/date/activityId) and updateSessionStatus (notes).
+Verified: `zodSchema(z.object({activityId:z.string().nullable().default(null)}))` → required
+undefined, and safeParse({limit:1,date:"..."}) fills activityId:null.
+RULE for ALL coach tool schemas: optional model inputs = `.nullable().default(null)` (never bare
+`.optional()`); no `.min/.max/.uuid`; validate/clamp/UUID-check in execute(). Treat inputSchema
+as a loose wire contract, not a validator. Regression tests assert the exact prod args pass.
 NOTE: this, not the AI SDK version, was the real cause of the long "No response" saga. The
 version-pinning (#35) and streamAgentText version-selection were still correct/necessary, but
 the empty tool-turn was a schema bug. A full AI SDK v5 / Mastra upgrade would NOT have fixed it.
