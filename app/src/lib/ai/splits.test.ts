@@ -21,6 +21,8 @@ function makeSupabase(opts: {
   const client = {
     from(table: string) {
       let activityIdFilter: string | null = null
+      let gteFilter: string | null = null
+      let lteFilter: string | null = null
       const builder: Record<string, unknown> = {}
       const chain = () => builder
       builder.select = chain
@@ -31,10 +33,24 @@ function makeSupabase(opts: {
       builder.order = chain
       builder.limit = chain
       builder.in = chain
+      builder.gte = (_col: string, val: string) => {
+        gteFilter = val
+        return builder
+      }
+      builder.lte = (_col: string, val: string) => {
+        lteFilter = val
+        return builder
+      }
       // Make the builder awaitable (thenable) so `await query` resolves data.
       builder.then = (resolve: (v: { data: unknown }) => void) => {
         if (table === 'activities') {
-          resolve({ data: opts.activities })
+          let rows = opts.activities
+          if (gteFilter && lteFilter) {
+            const lo = gteFilter
+            const hi = lteFilter
+            rows = rows.filter((a) => a.started_at >= lo && a.started_at <= hi)
+          }
+          resolve({ data: rows })
         } else {
           resolve({ data: activityIdFilter ? opts.streamsByActivity[activityIdFilter] ?? [] : [] })
         }
@@ -127,5 +143,37 @@ describe('computeBestSplits', () => {
     expect(res).toHaveLength(1)
     expect(res[0].best['1km']).toBeNull()
     expect(res[0].best['400m']).toBeNull()
+  })
+
+  it('filters to a specific date when `date` is given (past run, not the latest)', async () => {
+    // Three runs on different days; ask for the MIDDLE one by date.
+    const mk = (id: string, day: string) => ({
+      id,
+      started_at: `${day}T07:00:00Z`,
+      distance_m: 2000,
+    })
+    const latlng = straightLineLatLng(2000, 300)
+    const supabase = makeSupabase({
+      activities: [mk('new', '2026-03-10'), mk('mid', '2026-03-05'), mk('old', '2026-03-01')],
+      streamsByActivity: {
+        new: [{ stream_type: 'latlng', data: latlng }],
+        mid: [{ stream_type: 'latlng', data: latlng }],
+        old: [{ stream_type: 'latlng', data: latlng }],
+      },
+    })
+
+    const res = await computeBestSplits(supabase, 'user-1', { date: '2026-03-05' })
+    expect(res).toHaveLength(1)
+    expect(res[0].activityId).toBe('mid')
+    expect(res[0].best['1km']).not.toBeNull()
+  })
+
+  it('returns [] for a date with no run', async () => {
+    const supabase = makeSupabase({
+      activities: [{ id: 'a1', started_at: '2026-03-10T07:00:00Z', distance_m: 2000 }],
+      streamsByActivity: { a1: [{ stream_type: 'latlng', data: straightLineLatLng(2000, 300) }] },
+    })
+    const res = await computeBestSplits(supabase, 'user-1', { date: '2026-03-05' })
+    expect(res).toEqual([])
   })
 })

@@ -83,30 +83,38 @@ export function buildCoachTools(
     id: 'getBestSplits',
     description:
       'Compute the athlete\'s FASTEST rolling splits (400m, 1km, 1mile, 5km, 10km) from the actual GPS/pace stream of recent runs. USE THIS for any "fastest / best pace over X distance" question. Never estimate splits from average pace — always call this tool. ' +
-      'For "my most recent run" or "my last run", just call with limit=1 and DO NOT set activityId. ' +
+      'For "my most recent run" or "my last run", call with limit=1 and no other args. ' +
+      'For "my run on <date>", pass date as "YYYY-MM-DD" (do NOT guess an activityId). ' +
       'Only set activityId when you have a real activity UUID from a previous tool result. ' +
       'Returns split times per run; null means the run was shorter than that distance.',
+    // IMPORTANT: keep this schema PERMISSIVE. The AI SDK (v4) converts the Zod
+    // schema to JSON Schema and validates the model's raw tool arguments against
+    // that — Zod refinements like .min()/.max()/.uuid()/.default() can cause an
+    // AI_InvalidToolArgumentsError that silently kills the turn ("No response").
+    // So: plain number/string, all optional, and we validate/clamp in execute().
     inputSchema: z.object({
-      limit: z.number().min(1).max(20).default(5).describe('How many recent runs to analyse (use 1 for "most recent run")'),
-      // NOTE: plain optional string, NOT z.string().uuid(). The model sometimes
-      // passes a non-UUID sentinel like "latest"/"most-recent"; a strict uuid()
-      // schema makes AI SDK reject the WHOLE tool call (AI_InvalidToolArgumentsError),
-      // which ends the turn with no text → "No response". We accept any string and
-      // ignore anything that isn't a real UUID in execute().
+      limit: z.number().optional().describe('How many recent runs to analyse (use 1 for "most recent run"). Default 5.'),
+      date: z.string().optional().describe('Target a run on this calendar day, formatted YYYY-MM-DD.'),
       activityId: z
         .string()
         .optional()
-        .describe('A specific activity UUID from a prior tool result. Omit for "most recent run".'),
+        .describe('A specific activity UUID from a prior tool result. Omit for "most recent" or date queries.'),
     }),
     execute: async ({ context }) => {
+      // Clamp/validate here rather than in the schema (see note above).
+      const rawLimit = typeof context.limit === 'number' ? context.limit : 5
+      const limit = Math.min(Math.max(Math.trunc(rawLimit), 1), 20)
       // Only honour activityId when it's a real UUID; ignore sentinels like "latest".
       const activityId = isUuid(context.activityId) ? context.activityId : undefined
-      const splits = await computeBestSplits(supabase, userId, {
-        limit: context.limit,
-        activityId,
-      })
+      const date = typeof context.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(context.date) ? context.date : undefined
+      const splits = await computeBestSplits(supabase, userId, { limit, activityId, date })
       if (!splits.length) {
-        return { hasData: false, message: 'No runs with usable pace/GPS data found.' }
+        return {
+          hasData: false,
+          message: date
+            ? `No run with usable pace/GPS data found on ${date}.`
+            : 'No runs with usable pace/GPS data found.',
+        }
       }
       // Format for the model: include both raw seconds and human pace so it can't misread.
       const runs = splits.map((s) => ({

@@ -63,6 +63,8 @@ describe('buildCoachTools', () => {
     expect(schema?.safeParse).toBeTypeOf('function')
     expect(schema!.safeParse!({ limit: 1, activityId: 'latest' }).success).toBe(true)
     expect(schema!.safeParse!({ limit: 1 }).success).toBe(true)
+    expect(schema!.safeParse!({ date: '2026-10-06' }).success).toBe(true)
+    expect(schema!.safeParse!({}).success).toBe(true)
     expect(
       schema!.safeParse!({ limit: 1, activityId: '550e8400-e29b-41d4-a716-446655440000' }).success
     ).toBe(true)

@@ -140,6 +140,18 @@ string and validate INSIDE `execute`:
 passes a permanent `onError` logger (`[ai/agent] stream onError`) + `maxSteps:6`, so this class
 of silent failure is never invisible again. Regression tests in tools/index.test.ts assert both
 schemas accept the non-UUID args that used to kill the turn.
+FOLLOW-UP (same class, wider): it wasn't only `.uuid()`. "Fastest segment on a run on a PAST
+date" failed with `AI_InvalidToolArgumentsError … Value: {"limit":1}` even though `{limit:1}`
+passes Zod directly. The AI SDK v4 converts the Zod schema to JSON Schema and validates the
+model's raw args against THAT, so `.min()/.max()/.default()` can also trigger a rejection that
+Zod's own `safeParse` would accept. Fix: make model-facing tool schemas maximally PERMISSIVE —
+plain `z.number().optional()` / `z.string().optional()`, NO `.min/.max/.default/.uuid`, and
+clamp/validate/default INSIDE `execute()`. getBestSplits now also takes an optional `date`
+("YYYY-MM-DD") and filters activities by that day, so "my run on <date>" resolves without the
+model guessing an activityId (the original trigger — the model sent junk args because it had no
+clean way to target a past run). computeBestSplits gained the `date` filter. Rule of thumb:
+treat a tool's inputSchema as a loose hint to the model, not a validator; do real validation in
+execute().
 NOTE: this, not the AI SDK version, was the real cause of the long "No response" saga. The
 version-pinning (#35) and streamAgentText version-selection were still correct/necessary, but
 the empty tool-turn was a schema bug. A full AI SDK v5 / Mastra upgrade would NOT have fixed it.
