@@ -170,7 +170,7 @@ export default async function DashboardPage() {
         ) : (
           <div className="space-y-2">
             {recentActivities.map((activity) => (
-              <Link key={activity.id} href={`/activities/${activity.id}`}>
+              <Link key={activity.id} href={`/activities/${activity.id}`} className="block">
                 <Card className="hover:bg-[var(--muted)]/40 transition-colors cursor-pointer">
                   <CardContent className="py-3 px-4 flex items-center gap-3">
                     <span className="text-2xl" aria-hidden>
