@@ -56,7 +56,7 @@ export async function updateSession(request: NextRequest) {
     pathname === '/robots.txt' ||
     pathname === '/sitemap.xml' ||
     pathname.startsWith('/icons/') ||
-    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?|ttf)$/.test(pathname)
+    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?|ttf|mjs)$/.test(pathname)
 
   if (isPublicAsset) {
     return supabaseResponse

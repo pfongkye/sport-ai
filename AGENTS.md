@@ -78,6 +78,10 @@ Fix: `maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs')` in `route-map.tsx`. Th
 from `node_modules/maplibre-gl/dist` into `app/public/` by `scripts/copy-maplibre-worker.mjs`
 (npm `predev`/`prebuild`; output gitignored). Any new MapLibre map needs the same. Also: create
 the map once and update the GeoJSON source with `setData`, don't re-create it per route.
+Also: the auth proxy must let `.mjs` through. `proxy.ts` matcher AND `isPublicAsset` in
+`lib/supabase/middleware.ts` list static extensions; without `mjs` an unauthenticated request for
+`/maplibre-gl-worker.mjs` gets a 307 to /login (HTML, not JS). Any new root-level static file type
+in `public/` needs adding to both lists. Verify with `curl -sI <host>/maplibre-gl-worker.mjs` → 200.
 
 ### 38. New Cloud Run runtime secret: add to RUN_SECRETS in BOTH deploy paths, create it BEFORE merge
 Symptom: after adding a feature that reads a new `process.env.<KEY>`, prod loses the key on the
