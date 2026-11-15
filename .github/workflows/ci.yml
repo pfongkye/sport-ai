@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SportAI — CI checks for the Next.js app (lint, typecheck, tests, build).
+#
+# Runs on every pull request and on pushes to main, and is also called by
+# deploy.yml (workflow_call) so a deploy only starts after the checks pass.
+#
+# No `paths:` filter on purpose: a required status check must always report,
+# otherwise a PR that touches only docs would wait forever for `app-checks`.
+#
+# Required check for branch protection: `app-checks` (see deploy/gcp/CI_DEPLOY.md).
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app-checks:
+    name: app-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    env:
+      # Dummy values: NEXT_PUBLIC_* are inlined at build time (AGENTS.md #2) and
+      # `npm run build` needs them to be set. Real values are used by the deploy.
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-dummy-anon-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
