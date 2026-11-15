@@ -62,3 +62,45 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Non-blocking: screenshots + layout checks. Not in the required checks and not
+  # called by deploy.yml's needs, so a flaky browser run never blocks a merge or deploy.
+  app-e2e:
+    name: app-e2e
+    # PRs only: deploy.yml calls this workflow on push, and must not wait on browser tests.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        run: npm run e2e
+
+      - name: Upload screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            app/e2e-screenshots
+            app/e2e-report
+          if-no-files-found: ignore
