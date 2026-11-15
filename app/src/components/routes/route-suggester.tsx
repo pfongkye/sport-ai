@@ -24,6 +24,7 @@ interface RouteResult {
   geometry: { type: 'LineString'; coordinates: number[][] }
   elevationProfile: { distM: number; eleM: number }[]
   start: { lng: number; lat: number; label: string | null }
+  distanceWithinTolerance?: boolean
 }
 
 type Terrain = 'flat' | 'uphill'
@@ -227,6 +228,7 @@ export function RouteSuggester({ hasHome }: { hasHome: boolean }) {
               descentM={route.descentM}
               terrain={route.terrain}
               startLabel={route.start.label}
+              distanceWithinTolerance={route.distanceWithinTolerance}
             />
             <RouteMapFrame
               geometry={route.geometry}
@@ -238,6 +240,7 @@ export function RouteSuggester({ hasHome }: { hasHome: boolean }) {
                 descentM: route.descentM,
                 terrain: route.terrain,
                 startLabel: route.start.label,
+                distanceWithinTolerance: route.distanceWithinTolerance,
               }}
             />
             <ElevationProfile profile={route.elevationProfile} />

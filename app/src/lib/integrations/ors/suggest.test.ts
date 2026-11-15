@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-import { resolveStart, suggestRoute, NO_LOCATION } from './suggest'
+import { resolveStart, suggestRoute, selectCandidate, nextRoundTripLength, NO_LOCATION } from './suggest'
 import { ORS_NO_ROUTE } from './client'
 
 /**
@@ -303,5 +303,84 @@ describe('suggestRoute', () => {
       })
     ).rejects.toThrow(ORS_NO_ROUTE)
     expect(inserts).toHaveLength(0)
+  })
+})
+
+describe('distance-first selection', () => {
+  const coord = { lng: -0.1, lat: 51.5 }
+  /** Mock fetch returning [ascent, distance] per call; records the request bodies. */
+  function stub(cands: Array<[number, number]>) {
+    const bodies: Array<{ options: { round_trip: { length: number; seed: number } } }> = []
+    let call = 0
+    const fn = vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body))
+      const [a, d] = cands[call++] ?? cands[cands.length - 1]
+      return orsResponse(a, d)
+    })
+    vi.stubGlobal('fetch', fn)
+    return { bodies, fn }
+  }
+
+  it('scales the next request length down after a 30% overshoot', async () => {
+    const { bodies } = stub([[10, 6500], [10, 5000], [10, 5000]])
+    await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(bodies[0].options.round_trip.length).toBe(5000)
+    expect(bodies[1].options.round_trip.length).toBe(3846)
+    expect(bodies.map((b) => b.options.round_trip.seed)).toEqual([0, 1, 2])
+  })
+
+  it('prefers an in-tolerance candidate over a flatter out-of-tolerance one', async () => {
+    stub([[5, 6500], [40, 5200], [60, 3000]])
+    const r = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(r.distanceM).toBe(5200)
+    expect(r.distanceWithinTolerance).toBe(true)
+  })
+
+  it('terrain decides among in-tolerance candidates', async () => {
+    stub([[30, 5100], [10, 4900], [80, 7000]])
+    const flat = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(flat.ascentM).toBe(10)
+    stub([[30, 5100], [10, 4900], [80, 7000]])
+    const hill = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'uphill', coord })
+    expect(hill.ascentM).toBe(30)
+  })
+
+  it('none in tolerance: closest by distance wins and is flagged', async () => {
+    stub([[5, 6500], [90, 5700], [20, 3000]])
+    const r = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(r.distanceM).toBe(5700)
+    expect(r.distanceWithinTolerance).toBe(false)
+  })
+
+  it('never makes more than 3 ORS calls', async () => {
+    const { fn } = stub([[10, 9000]])
+    await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  it('failures write no row', async () => {
+    const inserts: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, text: async () => '' })))
+    await expect(
+      suggestRoute(makeSupabase({ onInsert: (r) => inserts.push(r) }), 'u1', {
+        distanceKm: 5,
+        terrain: 'flat',
+        coord,
+      })
+    ).rejects.toThrow()
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('selectCandidate / nextRoundTripLength helpers', () => {
+    const { chosen } = selectCandidate(
+      [{ distanceM: 100, ascentM: 1 }, { distanceM: 1050, ascentM: 9 }],
+      'flat',
+      1000
+    )
+    expect(chosen.ascentM).toBe(9)
+    // clamped to 0.5x of the request
+    expect(nextRoundTripLength(10000, 10000, 100000)).toBe(5000)
+    // clamped to 1.5x
+    expect(nextRoundTripLength(10000, 10000, 1000)).toBe(15000)
   })
 })

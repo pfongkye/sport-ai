@@ -503,6 +503,13 @@ export function buildCoachTools(
           terrain: route.terrain,
           ascent: `${route.ascentM} m`,
           startLabel: route.start.label ?? 'your start point',
+          distanceWithinTolerance: route.distanceWithinTolerance !== false,
+          ...(route.distanceWithinTolerance === false
+            ? {
+                toleranceNote:
+                  'No loop landed within 10% of the requested distance. Say plainly that this is the closest loop found and give both distances.',
+              }
+            : {}),
           note:
             'Describe the distance, ascent and terrain honestly, including how the actual distance ' +
             'compares to what was requested. Do NOT invent named streets or landmarks.',

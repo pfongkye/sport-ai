@@ -19,6 +19,8 @@ export interface RouteSummaryProps {
   startLabel?: string | null
   /** Optional caller note, e.g. a honest caveat about the distance match. */
   note?: string | null
+  /** False = the closest loop found is outside the distance tolerance. Undefined = unknown. */
+  distanceWithinTolerance?: boolean
 }
 
 const TERRAIN_LABEL: Record<'flat' | 'uphill', string> = {
@@ -34,6 +36,7 @@ export function RouteSummary({
   terrain,
   startLabel,
   note,
+  distanceWithinTolerance,
 }: RouteSummaryProps) {
   const stats: { label: string; value: string }[] = [
     { label: 'Distance', value: formatDistance(distanceM) },
@@ -63,6 +66,13 @@ export function RouteSummary({
           </div>
         ))}
       </dl>
+
+      {distanceWithinTolerance === false && (
+        <p className="text-sm font-medium text-[var(--foreground)]">
+          Closest loop found: {formatDistance(distanceM)} (requested{' '}
+          {formatDistance(requestedDistanceM)})
+        </p>
+      )}
 
       {note && <p className="text-xs text-[var(--muted-foreground)]">{note}</p>}
     </div>

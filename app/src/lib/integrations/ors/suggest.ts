@@ -62,6 +62,75 @@ export interface RouteResult {
   geometry: LineString
   elevationProfile: Array<{ distM: number; eleM: number }>
   start: { lng: number; lat: number; label: string | null }
+  /**
+   * True when the actual distance is within DISTANCE_TOLERANCE of the request.
+   * False means "closest loop found" — callers should say so honestly.
+   */
+  distanceWithinTolerance?: boolean
+}
+
+/** Relative distance tolerance (±10%) for a candidate to count as matching the request. */
+export const DISTANCE_TOLERANCE = 0.1
+
+/** The `length` sent to ORS is corrected per seed but kept within these bounds. */
+export const LENGTH_SCALE_MIN = 0.5
+export const LENGTH_SCALE_MAX = 1.5
+/** Absolute ORS round_trip length bounds (meters). */
+export const ORS_MIN_LENGTH_M = 500
+export const ORS_MAX_LENGTH_M = 100_000
+
+/** Length to send for the next seed, given what the last response actually measured. */
+export function nextRoundTripLength(
+  requestedM: number,
+  lastSentM: number,
+  lastActualM: number
+): number {
+  if (!(lastActualM > 0)) return lastSentM
+  const scaled = (lastSentM * requestedM) / lastActualM
+  const bounded = Math.min(
+    Math.max(scaled, requestedM * LENGTH_SCALE_MIN),
+    requestedM * LENGTH_SCALE_MAX
+  )
+  return Math.round(Math.min(Math.max(bounded, ORS_MIN_LENGTH_M), ORS_MAX_LENGTH_M))
+}
+
+interface Scored {
+  distanceM: number
+  ascentM: number
+}
+
+/**
+ * Distance-first selection. Candidates within `tolerance` of the request are
+ * eligible; among them terrain decides (flat = least ascent, uphill = most).
+ * If none is eligible, the smallest relative distance error wins.
+ */
+export function selectCandidate<T extends Scored>(
+  candidates: T[],
+  terrain: Terrain,
+  requestedM: number,
+  tolerance: number = DISTANCE_TOLERANCE
+): { chosen: T; withinTolerance: boolean } {
+  const err = (c: T) => Math.abs(c.distanceM - requestedM) / requestedM
+  const eligible = candidates.filter((c) => err(c) <= tolerance)
+  if (eligible.length > 0) {
+    const chosen = eligible.reduce((best, c) =>
+      terrain === 'uphill'
+        ? c.ascentM > best.ascentM
+          ? c
+          : best
+        : c.ascentM < best.ascentM
+          ? c
+          : best
+    )
+    return { chosen, withinTolerance: true }
+  }
+  const chosen = candidates.reduce((best, c) => (err(c) < err(best) ? c : best))
+  return { chosen, withinTolerance: false }
+}
+
+function featureDistanceM(feature: OrsRouteFeature, fallback: number): number {
+  const d = feature.properties?.summary?.distance
+  return Math.round(typeof d === 'number' ? d : fallback)
 }
 
 /**
@@ -215,19 +284,26 @@ export async function suggestRoute(
   const start = await resolveStart(supabase, userId, opts)
   const requestedDistanceM = Math.round(opts.distanceKm * 1000)
 
-  // Generate up to MAX_SEEDS candidates; keep the first ORS error to rethrow if
-  // ALL seeds fail (so the caller still gets an actionable sentinel).
+  // Generate up to MAX_SEEDS candidates (a hard call cap); keep the first ORS
+  // error to rethrow if ALL seeds fail. ORS `length` is only a target, so after
+  // each response the next seed's length is scaled by requested/actual.
   const candidates: OrsRouteFeature[] = []
   let firstError: unknown = null
+  let lengthM = requestedDistanceM
   for (let seed = 0; seed < MAX_SEEDS; seed++) {
     try {
       const feature = await orsRoundTrip({
         lng: start.lng,
         lat: start.lat,
-        lengthM: requestedDistanceM,
+        lengthM,
         seed,
       })
       candidates.push(feature)
+      lengthM = nextRoundTripLength(
+        requestedDistanceM,
+        lengthM,
+        featureDistanceM(feature, requestedDistanceM)
+      )
     } catch (err) {
       if (firstError === null) firstError = err
     }
@@ -237,14 +313,21 @@ export async function suggestRoute(
     throw firstError ?? new Error('ORS_NO_ROUTE')
   }
 
-  // Select by terrain: flat → least ascent, uphill → most ascent.
-  const analysed = candidates.map((feature) => ({ feature, analysis: analyse(feature) }))
-  const chosen = analysed.reduce((best, c) => {
-    const bestScore = best.analysis.ascentM
-    const score = c.analysis.ascentM
-    if (opts.terrain === 'uphill') return score > bestScore ? c : best
-    return score < bestScore ? c : best
+  // Distance first, then terrain (flat → least ascent, uphill → most).
+  const analysed = candidates.map((feature) => {
+    const analysis = analyse(feature)
+    return {
+      feature,
+      analysis,
+      distanceM: featureDistanceM(feature, requestedDistanceM),
+      ascentM: analysis.ascentM,
+    }
   })
+  const { chosen, withinTolerance } = selectCandidate(
+    analysed,
+    opts.terrain,
+    requestedDistanceM
+  )
 
   const normalised = normalise(
     chosen.feature,
@@ -277,5 +360,9 @@ export async function suggestRoute(
     .single()
   if (error) throw new Error(`Failed to save suggested route: ${error.message}`)
 
-  return { ...normalised, routeId: (inserted as { id: string }).id }
+  return {
+    ...normalised,
+    routeId: (inserted as { id: string }).id,
+    distanceWithinTolerance: withinTolerance,
+  }
 }
