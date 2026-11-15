@@ -47,8 +47,9 @@ export STATIC_IP_NAME="${STATIC_IP_NAME:-sportai-supabase-ip}"
 
 # --- SSH source range for the firewall (lock this to YOUR ip/32) ---
 # Find yours with: curl -s ifconfig.me
-#export SSH_SOURCE_RANGE="${SSH_SOURCE_RANGE:-0.0.0.0/0}"  # CHANGE to <your-ip>/32
-export SSH_SOURCE_RANGE="90.50.35.185/32"  # CHANGE to <your-ip>/32
+# Set SSH_SOURCE_RANGE=<your-ip>/32 in your gitignored deploy/gcp/.deploy.env (or export it).
+# No default here: never commit a personal IP. Only 01_provision_vm.sh requires it.
+export SSH_SOURCE_RANGE="${SSH_SOURCE_RANGE:-}"
 
 # --- Artifact Registry + Cloud Run (Next.js app) ---
 export AR_REPO="${AR_REPO:-sportai}"

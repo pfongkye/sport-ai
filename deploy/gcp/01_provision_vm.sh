@@ -40,9 +40,13 @@ gcloud compute firewall-rules create sportai-allow-web \
   --direction=INGRESS --action=ALLOW --rules=tcp:80,tcp:443 \
   --source-ranges=0.0.0.0/0 --target-tags=sportai-supabase
 
+if [ -z "${SSH_SOURCE_RANGE:-}" ]; then
+  echo "ERROR: SSH_SOURCE_RANGE is not set. Add SSH_SOURCE_RANGE=<your-ip>/32 to deploy/gcp/.deploy.env (find your IP: curl -s ifconfig.me)." >&2
+  exit 1
+fi
 echo "[01] Firewall: allow SSH (22) from $SSH_SOURCE_RANGE only…"
 if [ "$SSH_SOURCE_RANGE" = "0.0.0.0/0" ]; then
-  echo "  ⚠  SSH_SOURCE_RANGE is open to the world. Set it to <your-ip>/32 in config.sh."
+  echo "  ⚠  SSH_SOURCE_RANGE is open to the world. Set it to <your-ip>/32 in .deploy.env."
 fi
 gcloud compute firewall-rules describe sportai-allow-ssh >/dev/null 2>&1 || \
 gcloud compute firewall-rules create sportai-allow-ssh \
