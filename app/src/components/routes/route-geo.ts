@@ -72,3 +72,33 @@ export function routeBounds(feature: RouteFeature, bbox?: readonly number[] | nu
   }
   return [minLng, minLat, maxLng, maxLat]
 }
+
+/**
+ * [zoom, widthPx] stops for the route line. ~4px at zoom 13 matches the old
+ * fixed look at the default fitted zoom; thinner zoomed out, capped when zoomed in
+ * so street names stay readable.
+ */
+export const ROUTE_LINE_WIDTH_STOPS: ReadonlyArray<readonly [number, number]> = [
+  [10, 1.5],
+  [13, 4],
+  [16, 7],
+  [19, 12],
+]
+/** Extra px the casing adds over the line at every stop. */
+export const ROUTE_CASING_EXTRA_PX = 3
+
+type ZoomWidthExpression = ['interpolate', ['exponential', number], ['zoom'], ...number[]]
+
+function zoomWidthExpression(extra: number): ZoomWidthExpression {
+  return [
+    'interpolate',
+    ['exponential', 1.5],
+    ['zoom'],
+    ...ROUTE_LINE_WIDTH_STOPS.flatMap(([zoom, width]) => [zoom, width + extra]),
+  ]
+}
+
+/** MapLibre `line-width` expression for the route line. */
+export const ROUTE_LINE_WIDTH: ZoomWidthExpression = zoomWidthExpression(0)
+/** MapLibre `line-width` expression for the (wider) casing under the line. */
+export const ROUTE_CASING_WIDTH: ZoomWidthExpression = zoomWidthExpression(ROUTE_CASING_EXTRA_PX)

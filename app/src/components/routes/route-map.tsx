@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as maplibregl from 'maplibre-gl'
-import { routeBounds, toRouteFeature, type RouteLine } from './route-geo'
+import { ROUTE_CASING_WIDTH, ROUTE_LINE_WIDTH, routeBounds, toRouteFeature, type RouteLine } from './route-geo'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 /**
@@ -96,14 +96,14 @@ export default function RouteMap({ geometry, bbox }: RouteMapProps) {
           type: 'line',
           source: SOURCE_ID,
           layout,
-          paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 },
+          paint: { 'line-color': '#ffffff', 'line-width': ROUTE_CASING_WIDTH, 'line-opacity': 0.9 },
         })
         map.addLayer({
           id: 'route-line',
           type: 'line',
           source: SOURCE_ID,
           layout,
-          paint: { 'line-color': '#e11d48', 'line-width': 4.5 },
+          paint: { 'line-color': '#e11d48', 'line-width': ROUTE_LINE_WIDTH },
         })
       }
       markerRef.current?.remove()
