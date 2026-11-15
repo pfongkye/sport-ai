@@ -64,6 +64,27 @@ be added to `RUN_SECRETS` in both `deploy.yml` and script 04 (AGENTS.md #38).
 
 ---
 
+## ORS quota alert
+
+The app logs one line per ORS response when quota is low, and an error on a 429:
+
+- `[ors-quota] low endpoint=directions remaining=... limit=... pct=...` (severity WARNING)
+- `[ors-quota] exhausted endpoint=...` (severity ERROR)
+
+The threshold is `ORS_QUOTA_WARN_PCT` (default 10). Lines contain no coordinates or API key. To be notified,
+create a log-based alert in Cloud Logging (Logging -> Log-based alerts -> Create alert) with this query:
+
+```
+resource.type="cloud_run_revision"
+resource.labels.service_name="sportai-app"
+textPayload:"[ors-quota]"
+```
+
+Attach a notification channel (email) and set a notification rate limit (for example 1 per day). Self-hosted ORS
+only needs `ORS_BASE_URL`; it sends no `X-RateLimit-*` headers, so no `[ors-quota]` lines appear.
+
+---
+
 ## Image tagging & rollback
 
 Each CI build tags the image with its commit SHA:
