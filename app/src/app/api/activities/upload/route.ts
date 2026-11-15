@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { parseActivityFile, isSupportedFormat } from '@/lib/importers'
 import { insertNormalizedActivity } from '@/lib/activities/insert-normalized'
+import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { MAX_FILE_SIZE_BYTES } from '@/types/activity'
 
 export const runtime = 'nodejs' // fit-file-parser needs Node APIs, not edge
@@ -82,7 +83,7 @@ async function handleUpload(request: Request) {
       const result = await insertNormalizedActivity(supabase, user.id, activity, {
         buffer,
         filename: file.name,
-      })
+      }, tzFromCookieHeader(request.headers.get('cookie')))
 
       results.push({
         filename: file.name,

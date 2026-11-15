@@ -64,21 +64,32 @@ export const SESSION_TYPE_LABELS: Record<string, string> = {
 
 /** Format a date to a readable string */
 // TODO(i18n): use the active locale (user_settings.language) instead of hardcoded en-GB.
-export function formatDate(date: string | Date, format: 'short' | 'long' = 'short'): string {
+export function formatDate(
+  date: string | Date,
+  format: 'short' | 'long' = 'short',
+  /** IANA zone to show the date in; omit to use the runtime's zone (UTC on the server). */
+  timeZone?: string
+): string {
   const d = typeof date === 'string' ? new Date(date) : date
   if (format === 'long') {
     return d.toLocaleDateString('en-GB', {
+      timeZone,
       weekday: 'long',
       day: 'numeric',
       month: 'long',
       year: 'numeric',
     })
   }
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  return d.toLocaleDateString('en-GB', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 /** Relative time (e.g. "2 days ago") */
-export function timeAgo(date: string | Date): string {
+export function timeAgo(date: string | Date, timeZone?: string): string {
   const d = typeof date === 'string' ? new Date(date) : date
   const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60000)
@@ -88,5 +99,5 @@ export function timeAgo(date: string | Date): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return formatDate(d)
+  return formatDate(d, 'short', timeZone)
 }

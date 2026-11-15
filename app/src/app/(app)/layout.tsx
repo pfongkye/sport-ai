@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Sidebar } from '@/components/layout/sidebar'
 import { MobileHeader } from '@/components/layout/mobile-header'
 import { MobileNav } from '@/components/layout/mobile-nav'
+import { TimezoneSync } from '@/components/layout/timezone-sync'
 
 /**
  * App shell layout — wraps all authenticated routes.
@@ -16,6 +17,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   if (!user) redirect('/login')
 
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('timezone')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
   return (
     <div className="flex min-h-screen bg-[var(--background)]">
       <Sidebar />
@@ -24,6 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         {children}
       </main>
       <MobileNav />
+      <TimezoneSync settingsTimeZone={settings?.timezone ?? null} />
     </div>
   )
 }

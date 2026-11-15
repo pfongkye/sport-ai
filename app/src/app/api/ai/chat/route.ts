@@ -1,6 +1,7 @@
 import type { ModelMessage } from 'ai'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { buildCoachAgent, streamAgentText } from '@/lib/ai/agents/coach'
+import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { computeReadiness } from '@/lib/ai/readiness'
 import { retrieveRelevantContext, embedForStorage } from '@/lib/ai/memory'
@@ -89,6 +90,7 @@ export async function POST(request: Request) {
       readiness,
       userApiKey: aiSettings.userApiKey,
       admin,
+      timeZone: tzFromCookieHeader(request.headers.get('cookie')),
     })
   } catch (err) {
     console.error('[ai/chat] failed to build agent', err)

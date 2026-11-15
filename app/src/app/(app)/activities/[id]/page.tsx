@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ActivityDetail } from '@/components/activities/activity-detail'
+import { readTzCookie } from '@/lib/plan/request-timezone'
+import { getAthleteTimezone } from '@/lib/plan/session-guard'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Activity' }
@@ -31,5 +33,6 @@ export default async function ActivityDetailPage({
     .eq('activity_id', id)
     .eq('user_id', user!.id)
 
-  return <ActivityDetail activity={activity} streams={streams ?? []} />
+  const timeZone = await getAthleteTimezone(supabase, user!.id, await readTzCookie())
+  return <ActivityDetail activity={activity} streams={streams ?? []} timeZone={timeZone} />
 }

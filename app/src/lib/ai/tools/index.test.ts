@@ -24,6 +24,8 @@ const EXPECTED_TOOLS = [
   'listStravaActivities',
   'importFromStrava',
   'suggestRoute',
+  'generatePlan',
+  'adjustUpcomingSessions',
 ] as const
 
 describe('buildCoachTools', () => {
@@ -155,5 +157,68 @@ describe('buildCoachTools', () => {
     expect(schema!.safeParse!({ sessionId: 'x', status: 'skipped', notes: null }).success).toBe(true)
     // enum is still enforced
     expect(schema!.safeParse!({ sessionId: 'x', status: 'bogus' }).success).toBe(false)
+  })
+  it('generatePlan schema accepts the all-omitted payload as nulls (gotcha #36)', () => {
+    const tools = buildCoachTools(stubSupabase, 'user-1') as Record<
+      string,
+      { inputSchema?: { safeParse?: (v: unknown) => { success: boolean; data?: unknown } } }
+    >
+    const schema = tools.generatePlan.inputSchema!
+    const r = schema.safeParse!({}) as {
+      success: boolean
+      data?: { confirmed: unknown; goal: unknown; goalDate: unknown }
+    }
+    expect(r.success).toBe(true)
+    expect(r.data).toEqual({ confirmed: false, goal: null, goalDate: null })
+    // A non-ISO date must not reject the call at the schema; execute() handles it.
+    expect(schema.safeParse!({ confirmed: true, goal: 'marathon', goalDate: 'November' }).success).toBe(true)
+  })
+
+  it('generatePlan.execute returns a structured error for a bad goalDate (no throw)', async () => {
+    const tools = buildCoachTools(stubSupabase, 'user-1') as unknown as Record<
+      string,
+      { execute: (input: unknown) => Promise<{ created: boolean; error?: string }> }
+    >
+    const r = await tools.generatePlan.execute({ confirmed: true, goal: null, goalDate: 'November' })
+    expect(r.created).toBe(false)
+    expect(r.error).toMatch(/YYYY-MM-DD/)
+  })
+
+  it('adjustUpcomingSessions schema accepts non-UUID ids and omitted optional fields (gotcha #36)', () => {
+    const tools = buildCoachTools(stubSupabase, 'user-1') as Record<
+      string,
+      { inputSchema?: { safeParse?: (v: unknown) => { success: boolean; data?: unknown } } }
+    >
+    const schema = tools.adjustUpcomingSessions.inputSchema!
+    const r = schema.safeParse!({ adjustments: [{ sessionId: 'latest' }] }) as {
+      success: boolean
+      data?: { adjustments: Record<string, unknown>[] }
+    }
+    expect(r.success).toBe(true)
+    expect(r.data?.adjustments[0]).toEqual({
+      sessionId: 'latest',
+      scheduledDate: null,
+      sessionType: null,
+      description: null,
+      targetDistanceM: null,
+      targetDurationS: null,
+      targetHrZone: null,
+      reason: null,
+    })
+    expect(schema.safeParse!({}).success).toBe(true)
+    // Out-of-range numbers are not schema errors (clamped/ignored in execute).
+    expect(
+      schema.safeParse!({ adjustments: [{ sessionId: 'x', targetHrZone: 9, targetDistanceM: -1 }] }).success
+    ).toBe(true)
+  })
+
+  it('adjustUpcomingSessions.execute with no adjustments returns a message, not a throw', async () => {
+    const tools = buildCoachTools(stubSupabase, 'user-1') as unknown as Record<
+      string,
+      { execute: (input: unknown) => Promise<{ adjusted: unknown[]; message?: string }> }
+    >
+    const r = await tools.adjustUpcomingSessions.execute({ adjustments: [] })
+    expect(r.adjusted).toEqual([])
+    expect(r.message).toBeTruthy()
   })
 })

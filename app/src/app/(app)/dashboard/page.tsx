@@ -3,6 +3,8 @@ import { formatDistance, formatDuration, SPORT_EMOJI, timeAgo } from '@/lib/util
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
+import { readTzCookie } from '@/lib/plan/request-timezone'
+import { getAthleteTimezone } from '@/lib/plan/session-guard'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Dashboard' }
@@ -34,6 +36,7 @@ export default async function DashboardPage() {
       .gte('started_at', getWeekStart()),
   ])
 
+  const timeZone = await getAthleteTimezone(supabase, user!.id, await readTzCookie())
   const weeklyKm = (thisWeek ?? [])
     .filter((a) => a.sport_type === 'run' || a.sport_type === 'cycle')
     .reduce((sum, a) => sum + (a.distance_m ?? 0), 0) / 1000
@@ -182,7 +185,7 @@ export default async function DashboardPage() {
                           {activity.sport_type}
                         </span>
                         <span className="text-xs text-[var(--muted-foreground)]">
-                          {timeAgo(activity.started_at)}
+                          {timeAgo(activity.started_at, timeZone)}
                         </span>
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--muted-foreground)]">

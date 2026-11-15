@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import type { StrengthBlock } from '@/types/activity'
 import type { ActivityDraftInput } from './draft-schema'
+import { linkActivityToPlannedSession } from '@/lib/plan/link-activity'
 
 /** Dedup window: manual entries have no external_id, so we treat an activity of
  *  the same sport starting within this window as a likely duplicate (spec Req 4.5). */
@@ -93,7 +94,9 @@ export function composeNotes(notes: string | null, strength: StrengthBlock[]): s
 export async function insertManualActivity(
   supabase: SupabaseClient<Database>,
   userId: string,
-  draft: ActivityDraftInput
+  draft: ActivityDraftInput,
+  /** Browser zone from the request cookie, for matching the local day. */
+  cookieTz?: string | null
 ): Promise<{ id: string }> {
   const notes = composeNotes(draft.notes, draft.strength)
 
@@ -127,5 +130,11 @@ export async function insertManualActivity(
   if (error || !data) {
     throw new Error(error?.message ?? 'Failed to insert activity')
   }
+  // Best-effort, non-fatal: mark a same-day same-sport pending planned session done.
+  await linkActivityToPlannedSession(supabase, userId, {
+    id: data.id,
+    sportType: draft.sportType,
+    startedAt: draft.startedAt,
+  }, cookieTz)
   return { id: data.id }
 }

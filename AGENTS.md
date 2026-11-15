@@ -15,7 +15,7 @@ re-learn them the hard way. Read this before touching Docker, Supabase, auth, or
 
 - `app/` — Next.js 16 (App Router, TypeScript, Tailwind 4). All application code.
 - `docker/` — Supabase self-hosted stack + the `app` service. Run compose from here.
-- `supabase/migrations/` — ordered SQL (`001`–`008`). Applied manually, NOT auto-run.
+- `supabase/migrations/` — ordered SQL (`001`–`016`). Applied manually, NOT auto-run.
 - `.kiro/specs/sportai-coaching-app/` — requirements, design, tasks (source of truth for scope).
 
 Run everything with an explicit env file: `docker compose --env-file .env <cmd>` from `docker/`.
@@ -23,6 +23,75 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 ---
 
 ## Critical gotchas (in priority order)
+
+### 51. The athlete's time zone is the BROWSER's: `tz` cookie for SSR, `user_settings.timezone` as the synced copy
+`components/layout/timezone-sync.tsx` (mounted in `(app)/layout.tsx`) reads `Intl.DateTimeFormat().resolvedOptions().timeZone`, writes the
+`tz` cookie (Lax, path /, 1 year) and `PATCH /api/settings/timezone` (validated IANA, no write when unchanged, `lib/plan/set-timezone.ts`),
+and calls `router.refresh()` once when the cookie was missing/different, so the first server render used the stored zone and the next the
+browser's. Server code NEVER reads the zone ad hoc: use `resolveAthleteTimeZone({cookieTz, settingsTz})` (`lib/plan/timezone.ts`, cookie >
+setting > UTC, both validated). Server components read the cookie with `readTzCookie()` (`lib/plan/request-timezone.ts`); route handlers use
+`tzFromCookieHeader(request.headers.get('cookie'))` (testable without `next/headers`); `getAthleteToday/getAthleteTimezone(supabase, userId, now, cookieTz)`,
+`loadActivePlan(.., now, cookieTz)`, `generateTrainingPlan({timeZone})`, `buildCoachTools(.., admin, timeZone)` and `linkActivityToPlannedSession(.., cookieTz)`
+take it as a parameter. Paths with no request (Strava sync) fall back to the stored zone. Trap: `new Date('YYYY-MM-DD')` parses as UTC, so formatting it
+in a zone behind UTC shows the PREVIOUS day. Plan dates are plain strings: use `dayLabel`/`weekLabel` (`timeZone: 'UTC'`) or `addDays`/`diffDays`
+(UTC math); format timestamps (`started_at`) with the athlete zone (`formatDate(d, fmt, tz)`), never the runtime's (Cloud Run is UTC). New files may need
+`docker compose --env-file docker/.env restart app`.
+
+### 50. Plan baseline and prompt come from the training recap, not a flat mean or the 15 km floor
+`lib/ai/workflows/training-recap.ts` `computeTrainingRecap(activities, profile, today)` is the ONLY source of the plan's starting
+volume, the prompt's history block and the stored snapshot (pure, no clock; `today` is the athlete's local date, activities are
+bucketed by local date in the profile timezone). It looks at the last 6 COMPLETE Monday weeks (the current partial week is ignored),
+a week qualifies with >= 2 activities, recent 4 weeks weigh 2x the older 2, and a week above 1.5x the median week is capped for the
+baseline. Under 3 qualifying weeks it is SPARSE: baseline = min(history, clamp(training days x 3 km, 6, 20)) and the prompt says so.
+`MIN_START_KM` in the skeleton is now only a 5 km sanity floor. All tunables are exported constants at the top of the module. Durations
+and bpm ranges are filled AFTER guardrails by `plan-recap-targets.ts` (only when pace / max HR are known), so repaired distances and
+durations stay consistent. Tests that build a skeleton by hand must pass the SAME baseline the recap yields (12 km for the default
+4 training days with no history), otherwise the guardrails see a different skeleton. Not verified against a live LLM.
+
+### 49. `training_plans.recap` needs migration 016 applied BEFORE deploying: `persistPlan` writes it
+Symptom (if forgotten): `POST /api/plan/generate` returns PERSIST_FAILED and `GET /api/plan` fails to load ("column recap does not exist").
+Cause: `016_training_plan_recap.sql` is applied MANUALLY (#4, #34); CI never runs migrations, and both the plan insert and `loadActivePlan` now
+name the column. (The brief assumed 015; 015 is `suggested_routes_retention`, so the recap migration is 016.)
+Fix: local `docker exec -i sportai-db psql -U postgres -d postgres < supabase/migrations/016_training_plan_recap.sql` (it also runs
+`notify pgrst, 'reload schema'`), prod: same over `gcloud compute ssh` as in #34, then deploy. Old plans have `recap = null` and the UI shows "not available".
+
+### 48. Moved session locked after one move: the guard must accept `modified` (and no completed activity)
+Symptom: after one reschedule the Move button vanished, the coach could not adjust it, a same-day activity did not complete it.
+Cause: the reschedule sets `status='modified'` but the guard and `link-activity` only accepted `status='pending'`.
+Fix: `lib/plan/session-guard.ts` `isEditableUpcoming` / `applyEditableUpcoming` (SQL: `gte scheduled_date`, `in status
+[pending, modified]`, `is completed_activity_id null`) is the ONLY definition; reschedule, `adjustUpcomingSessions`, the
+Move UI and `link-activity` use it. Completed/skipped/past or already-linked sessions stay locked. Move traces and coach
+notes are APPENDED to `ai_notes` (` | `), never overwritten. Moving onto a date that already has a session is allowed.
+
+### 47. Plan rejected for a 14% week (23.0 vs 20.1 km): repair soft volume violations, don't discard the plan
+Symptom: `POST /api/plan/generate` 422 "did not meet safety checks" after ~22 s; log `Week of 2027-02-15 (23.0 km) jumps more
+than 10% over 20.1 km.` Cause: any guardrail issue rejected the whole plan, though the model only overshot the ramp by a few km.
+Fix (`plan-guardrails.ts`, `generate-plan.ts`): `validatePlanDetailed` returns `{hard, soft}`. HARD rejects. SOFT (weekly
+cap/ramp) goes through `repairPlan`: forward week-by-week, scales run distances/durations DOWN with one factor per week (floor,
+never up, long run stays longest, ratios kept), limited to `MIN_REPAIR_SCALE` (0.6); deeper cuts are left to ONE retry of
+`generateObject` with the violation messages appended (total budget `PLAN_TOTAL_BUDGET_MS` 170 s, route `maxDuration` 180;
+Cloud Run's default request timeout is 300 s). Repairs are returned as `adjustments`, shown in the plan UI and the coach tool,
+and traced in `planned_sessions.ai_notes`. The prompt gives each week `maxRunKm` = min(target x 1.15, previous target x 1.10).
+Tests mock `generateObject`; real-LLM behaviour is unverified. `generateObject` still logs `AISDK_DEP_GENERATE_OBJECT` (deprecated).
+
+### 46. Training plan: one shared future-and-editable guard (`isEditableUpcoming`, see #48), skeleton owns the numbers
+Plan generation (`lib/ai/workflows/generate-plan.ts`) is context → deterministic skeleton (`plan-skeleton.ts`:
+window, Monday weeks, slots from `profiles.training_days`, taper, +10%/wk cap) → ONE `generateObject` → guardrails
+(`plan-guardrails.ts`) → archive old active plan → insert plan → insert sessions (on session failure: delete the
+new plan AND reactivate the archived one). A guardrail failure writes nothing (422 `INVALID_PLAN`). Any code that
+edits planned sessions on the athlete's behalf (manual reschedule route, `adjustUpcomingSessions` tool) MUST use
+`lib/plan/session-guard.ts` (`isFutureAndPending` + `applyFutureAndPending` in the UPDATE, "today" from
+`user_settings.timezone` via `getAthleteToday`). Do not re-implement the filter. Single active plan is enforced in
+code only (no partial unique index yet; open decision). Activity auto-link (`lib/plan/link-activity.ts`) runs
+best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Guardrail failures are split HARD
+(structure: window, days, rest day, long run, empty: always reject) vs SOFT (weekly volume/ramp: repaired, see #47). Not
+verified against a live LLM: if repair + the single feedback retry still reject often, loosen `TARGET_TOLERANCE`.
+
+### 45. Vitest test fails with an error the code already caught: `beforeEach(() => mock.mockReset())`
+Symptom: a test asserting a mocked `generateObject` rejection is handled passes all its expects, then fails with
+the mock's own error (`→ boom`). Cause: a function RETURNED from `beforeEach` is run as a teardown hook, and
+`mockReset()` returns the mock itself, so Vitest calls the rejecting mock after the test. Fix: block body,
+`beforeEach(() => { mock.mockReset() })`.
 
 ### 44. Playwright e2e: server-side Supabase needs a real stub; mobile overflow check must not use innerWidth
 Symptom/needs: layout bugs (overflow, misplaced fixed bottom nav) only showed on a phone; `page.route` cannot mock

@@ -104,7 +104,7 @@ Maps 1:1 to the insert columns (`targetDistanceM`→`target_distance_m`, etc.).
    week grid on larger screens; no horizontal scroll or clipped day cells; verify on a narrow
    viewport.
 
-   **Manual reschedule (Req 2a)** — each FUTURE `pending` session card carries a keyboard-accessible
+   **Manual reschedule (Req 2a)** — each FUTURE, editable (pending or rescheduled-and-not-yet-completed) session card carries a keyboard-accessible
    "reschedule to date" control (a date picker / "move to…" affordance, NOT drag-and-drop in v1).
    Touch-friendly, no hover-only affordance (gotcha #23). Changing the date calls
    `PATCH /api/plan/sessions/[id]/reschedule` and refreshes. Past/completed sessions show no
@@ -112,20 +112,20 @@ Maps 1:1 to the insert columns (`targetDistanceM`→`target_distance_m`, etc.).
 
 6. **`PATCH /api/plan/sessions/[id]/reschedule`** (Req 2a.4) — auth → load the session (RLS, owner)
    → re-validate server-side that it is FUTURE (`scheduled_date >= today` in the athlete's timezone)
-   AND `status='pending'` → update only `scheduled_date` (and set `status='modified'` + an `ai_notes`
+   AND `status IN ('pending','modified')` AND `completed_activity_id IS NULL` → update only `scheduled_date` (and set `status='modified'` + an `ai_notes`
    trace that it was manually moved, Req 2a.3); reject past/completed/non-owned with a clear error.
-   Never trust the client's guardrail (Req 2a.4). Shares the future-and-pending predicate with
+   Never trust the client's guardrail (Req 2a.4). Shares the future-and-editable predicate (`isEditableUpcoming`) with
    `adjustUpcomingSessions` (factor it into one helper so AI and manual paths can't diverge).
 
 7. **Chat tools** in `buildCoachTools`:
    - `generatePlan` — confirm intent, call the SAME workflow, return a short summary (not every
      session). Two-step confirm like `addActivity` (Req 4.2).
    - **Adaptation** reuses `updateSessionStatus` (exists) plus a new `adjustUpcomingSessions` tool
-     that only edits FUTURE `pending` sessions (Req 3.3). Shares the future-and-pending predicate
+     that only edits FUTURE, editable sessions (Req 3.3). Shares the future-and-editable predicate (`isEditableUpcoming`)
      helper with the reschedule endpoint (component 6).
 
 8. **Activity auto-link (Req 3.4)** — in the shared `insertManualActivity` path (and, later, file
-   upload), after inserting an activity, look for a same-day + same-sport `pending` planned session
+   upload), after inserting an activity, look for a same-day + same-sport editable (pending or modified, no activity yet) planned session
    and set it `completed` + `completed_activity_id`. Best-effort, non-fatal.
 
 ---
@@ -167,6 +167,29 @@ data-stream work.
 
 ---
 
+## Training recap (Req 6)
+New pure module `app/src/lib/ai/workflows/training-recap.ts`; `computeTrainingRecap(activities, profile, today)`
+(`profile = { dateOfBirth, trainingDays, timezone }`, `today` is the athlete's local YYYY-MM-DD).
+- **Window**: the 6 complete Monday-based weeks before `mondayOf(today)`; activities are assigned to a week by
+  their local date (`localDateInTz`). Index 0 = oldest, 4 most recent weigh `RECENT_WEIGHT`.
+- **Qualifying** = `MIN_ACTIVITIES_PER_WEEK` activities of any sport. Excluded weeks keep their counts plus a `reason`.
+- **Run labels**: `long` (longest run of its week and >= `LONG_RUN_MEDIAN_RATIO` x median run distance), else by
+  HR share of max HR (`EASY_HR_MAX_PCT`, `HARD_HR_MIN_PCT`), else by pace relative to the median pace
+  (`TEMPO_PACE_RATIO`, `HARD_PACE_RATIO`); no HR and no pace gives `null`.
+- **Baseline**: weighted mean of week run km, each week capped at `OUTLIER_CAP_FACTOR` x the median when there are
+  at least `OUTLIER_MIN_WEEKS` qualifying weeks. Sparse (`< MIN_QUALIFYING_WEEKS`): `min(history, fallback)` where
+  `fallback = clamp(trainingDays x KM_PER_TRAINING_DAY, MIN_FALLBACK_KM, MAX_FALLBACK_KM)`; with no run history the fallback itself.
+  `MIN_START_KM` in the skeleton drops from 15 to a 5 km sanity floor.
+- **Recap shape** (`schemaVersion: 1`): `window`, `weeks[]`, `qualifyingWeeks`, `excludedWeeks`, `baseline`,
+  `typical { easyPace, tempoPace, long{distanceKm, pace}, runsPerWeek }`, `intensity`, `maxHr`, `trend`, `layoff`,
+  `otherSports`, `dataQuality`, `sparse`.
+- **Prompt**: `buildRecapBlock(recap)` in `generate-plan.ts`, delimited by `=== ATHLETE TRAINING RECAP ... ===` lines.
+- **Targets**: `plan-recap-targets.ts` `applyRecapTargets(plan, recap)` runs after guardrails/repair so durations follow the final
+  distances; it only fills `targetDurationS` (pace known) and appends the bpm range to the description (max HR known).
+- **Storage**: `training_plans.recap jsonb` (migration 016, applied by hand), written in the plan insert in `persistPlan`;
+  `loadActivePlan` returns it through `asRecap()` (null unless `schemaVersion` matches).
+- **UI**: `components/plan/plan-recap.tsx` (collapse state only) over the pure view model `recap-format.ts`.
+
 ## Things to be careful of
 
 1. **Empty-plan integrity (Req 5.2).** Never leave a `training_plans` row with zero sessions.
@@ -176,15 +199,18 @@ data-stream work.
 2. **Regeneration duplication (Req 1.7).** Archive the existing active plan before inserting a new
    one; enforce single-active in code (and ideally a partial unique index later).
 3. **Date/timezone.** `scheduled_date` is a date (no time). Compute the window in the athlete's
-   timezone (`user_settings.timezone`) so "start next Monday" and taper land correctly.
+   timezone so "start next Monday" and taper land correctly. The zone is the BROWSER's
+   (`Intl.DateTimeFormat().resolvedOptions().timeZone`), resolved per request by
+   `resolveAthleteTimeZone`: valid `tz` cookie (or the `timeZone` body field on generate) >
+   `user_settings.timezone` (synced copy for code with no request) > UTC.
 4. **Model over-scheduling.** Guardrails must reject sessions outside [start,end], missing rest
    days, or >~10%/week volume jumps — don't trust the LLM to self-limit.
 5. **Adaptation scope (Req 3.3) + manual reschedule (Req 2a.2).** BOTH the `adjustUpcomingSessions`
    tool and the `PATCH …/reschedule` endpoint must filter `scheduled_date >= today AND
-   status='pending'` and never touch completed/past rows. Factor the predicate into ONE shared
+   status IN ('pending','modified')` and never touch completed/past rows. Factor the predicate into ONE shared
    helper so the AI path and the manual UI path cannot diverge, and re-check it server-side on the
    reschedule endpoint (never trust the client, Req 2a.4). Compute "today" in the athlete's timezone
-   (`user_settings.timezone`), consistent with point 3.
+   (the resolved zone of point 3), consistent with it.
 6. **Cost/latency.** One `generateObject` call, but a long marathon block is many sessions → large
    output. Bound tokens, set a timeout, and consider generating week-by-week if output size is a
    problem (deterministic loop, still one schema per week).
@@ -194,6 +220,7 @@ data-stream work.
 ---
 
 ## Testing strategy
+- Unit (Req 6): `computeTrainingRecap` on fixed fixtures (normal, 1-activity week, missing HR/pace, layoff, outlier, empty, fallback), skeleton baseline, prompt block, `applyRecapTargets`, `persistPlan` writes the recap, `loadActivePlan` returns it, recap view model.
 
 - Unit: skeleton math (weeks-to-goal, taper window, weekly volume caps) — pure, deterministic.
 - Unit: `planToRows` mapping + guardrail validators (reject out-of-window dates, unsafe ramp).

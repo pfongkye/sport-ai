@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { activityDraftSchema } from '@/lib/activities/draft-schema'
+import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { insertManualActivity, findLikelyDuplicate } from '@/lib/activities/insert-manual'
 
 export const runtime = 'nodejs'
@@ -104,7 +105,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id } = await insertManualActivity(supabase, user.id, draft)
+    const { id } = await insertManualActivity(
+      supabase,
+      user.id,
+      draft,
+      tzFromCookieHeader(request.headers.get('cookie'))
+    )
     return NextResponse.json({ id }, { status: 201 })
   } catch (err) {
     return NextResponse.json(
