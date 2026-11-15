@@ -136,9 +136,9 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-3">
           {activities.map((a) => (
-            <Link key={a.id} href={`/activities/${a.id}`}>
+            <Link key={a.id} href={`/activities/${a.id}`} className="block">
               <Card className="hover:bg-[var(--muted)]/40 transition-colors cursor-pointer">
                 <CardContent className="py-3 px-4 flex items-center gap-3">
                   <span className="text-2xl shrink-0" aria-hidden>
