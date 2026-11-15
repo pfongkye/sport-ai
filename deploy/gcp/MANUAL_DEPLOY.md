@@ -46,7 +46,7 @@ Browser ──HTTPS──> Cloud Run: Next.js app        (https://sportai-xxxx.a
 
 ## 1. Configure the deploy scripts
 
-Edit `deploy/gcp/config.sh` and set at least:
+Edit your gitignored `deploy/gcp/.deploy.env` (copy from `.deploy.env.example`) and set at least:
 
 | Variable | Set to | Notes |
 |---|---|---|
@@ -194,6 +194,12 @@ printf '%s' '<your prod service_role key>' | gcloud secrets create SUPABASE_SERV
 ---
 
 ## 7. Build + deploy the app to Cloud Run  →  `04_deploy_app_cloudrun.sh`
+
+> **CI now automates this step.** Once you've done the first manual deploy, a
+> GitHub Actions workflow redeploys the app on every push to `main` (and on manual
+> dispatch) — no need to run this script by hand again. Setup and the full
+> secret/variable reference are in [`CI_DEPLOY.md`](./CI_DEPLOY.md). The manual
+> script below remains valid for the first-time deploy and for local/offline runs.
 
 The app needs two build-time values (baked into the browser bundle) — pass them as env:
 ```bash

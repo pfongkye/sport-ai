@@ -24,6 +24,29 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 37. GitHub Actions → Cloud Run: WIF repo-condition + NEXT_PUBLIC must be Cloud BUILD args
+CI deploy lives in `.github/workflows/deploy.yml` (setup/runbook: `deploy/gcp/CI_DEPLOY.md`).
+It automates ONLY script 04 (app build+deploy) — never the VM/Supabase/migrations/data.
+Three traps worth remembering:
+- **WIF attribute-condition is the security boundary, not optional.** The OIDC provider MUST
+  have `--attribute-condition="assertion.repository=='pfongkye/sport-ai'"` AND the SA binding
+  must be `principalSet://…/attribute.repository/pfongkye/sport-ai`. Without BOTH, any GitHub
+  repo in the world can mint a token and impersonate the deploy SA. Also set
+  `permissions: id-token: write` on the job or `google-github-actions/auth@v2` can't get the
+  OIDC token (symptom: "unable to get the ID token").
+- **NEXT_PUBLIC_* in CI must be Cloud BUILD args, same as locally (gotcha #2).** Passing them as
+  Cloud Run `--set-env-vars` only is NOT enough — they're baked into the browser bundle at
+  build time. The workflow passes them via `gcloud builds submit --substitutions=_NEXT_PUBLIC_*`
+  into `deploy/gcp/cloudbuild.yaml`. Building on Cloud Build also sidesteps the Apple-Silicon
+  arm64 problem (gotcha #27) for free — the runner is amd64 anyway, but Cloud Build is the
+  canonical path.
+- **App runtime secrets stay in GCP Secret Manager, NOT GitHub.** Only `GCP_WIF_PROVIDER` +
+  `GCP_DEPLOY_SA` go in GitHub (as secrets); `OPENAI_API_KEY`/`SUPABASE_SERVICE_ROLE_KEY`/
+  `STRAVA_CLIENT_SECRET` are mounted via `--set-secrets` and must already exist (first manual
+  deploy created them). The deploy SA needs `roles/iam.serviceAccountUser` on the RUNTIME SA
+  (`<projNum>-compute@developer.gserviceaccount.com`) or `run deploy` fails with
+  "does not have permission to act as" the runtime SA.
+
 ### 1. Never change `POSTGRES_PASSWORD` on an existing volume
 Supabase seeds service-role passwords (`supabase_auth_admin`, `authenticator`,
 `supabase_storage_admin`, etc.) from `POSTGRES_PASSWORD` **only on first DB init**.

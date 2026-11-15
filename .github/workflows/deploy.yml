@@ -1,0 +1,183 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SportAI — Deploy the Next.js app to Cloud Run (automates deploy/gcp step 7).
+#
+# This workflow replaces the MANUAL `deploy/gcp/04_deploy_app_cloudrun.sh` run.
+# It ONLY redeploys the app (Artifact Registry build via Cloud Build + Cloud Run
+# deploy). It does NOT touch the VM, Supabase, migrations, or data — those remain
+# a one-time manual setup (see deploy/gcp/MANUAL_DEPLOY.md steps 1–6, 8–11).
+#
+# Setup & secret/variable reference: deploy/gcp/CI_DEPLOY.md
+#
+# Key behaviours mirrored from script 04:
+#   • NEXT_PUBLIC_* are BUILD ARGS (baked into the browser bundle — AGENTS.md #2),
+#     passed to Cloud Build, NOT just runtime env.
+#   • Image built on Cloud Build → always amd64/linux (AGENTS.md #27 — sidesteps
+#     the Apple-Silicon arm64 problem).
+#   • Cloud Run deploy flags, env vars, and --set-secrets match the script exactly
+#     (same service, region, port, cpu/memory, min/max instances).
+#   • SUPABASE_INTERNAL_URL is intentionally LEFT UNSET.
+#   • ALLOWED_EMAILS uses gcloud's custom `^|^` delimiter (it may contain commas).
+#
+# CI improvement over the script: the image is tagged with BOTH the commit SHA and
+# :latest, so a deploy is traceable and you can roll back to any prior SHA.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Deploy app to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "docker/Dockerfile"
+      - "deploy/gcp/cloudbuild.yaml"
+      - ".github/workflows/deploy.yml"
+  # Manual trigger from the Actions tab — runs regardless of the paths filter.
+  workflow_dispatch:
+
+# Only one deploy at a time; a newer push cancels an in-flight run.
+concurrency:
+  group: deploy-cloudrun
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Required for google-github-actions/auth with Workload Identity Federation:
+    # the job needs permission to mint the OIDC token GitHub exchanges for GCP creds.
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      # ── GitHub VARIABLES (Settings → Secrets and variables → Actions → Variables)
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      GCP_REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
+      AR_REPO: sportai
+      APP_SERVICE: sportai-app
+      SUPABASE_DOMAIN: ${{ vars.SUPABASE_DOMAIN }}
+      ANON_KEY: ${{ vars.ANON_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+      ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+      STRAVA_CLIENT_ID: ${{ vars.STRAVA_CLIENT_ID }}
+      # ── GitHub SECRETS (Settings → Secrets and variables → Actions → Secrets)
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+      GCP_DEPLOY_SA: ${{ secrets.GCP_DEPLOY_SA }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail early and clearly if any required config is missing, rather than
+      # halfway through a gcloud call with a cryptic error.
+      - name: Preflight — check required secrets & variables
+        run: |
+          missing=0
+          check () {
+            if [ -z "$2" ]; then
+              echo "::error::Missing required $1 '$3'. See deploy/gcp/CI_DEPLOY.md."
+              missing=1
+            fi
+          }
+          check secret   "$GCP_WIF_PROVIDER"   GCP_WIF_PROVIDER
+          check secret   "$GCP_DEPLOY_SA"       GCP_DEPLOY_SA
+          check variable "$GCP_PROJECT"         GCP_PROJECT
+          check variable "$GCP_REGION"          GCP_REGION
+          check variable "$SUPABASE_DOMAIN"     SUPABASE_DOMAIN
+          check variable "$ANON_KEY"            ANON_KEY
+          check variable "$NEXT_PUBLIC_APP_URL" NEXT_PUBLIC_APP_URL
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::One or more required secrets/variables are missing — aborting."
+            exit 1
+          fi
+          echo "Preflight OK: project=$GCP_PROJECT region=$GCP_REGION service=$APP_SERVICE"
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure Artifact Registry repo exists
+        run: |
+          gcloud artifacts repositories describe "$AR_REPO" \
+            --project "$GCP_PROJECT" --location "$GCP_REGION" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "$AR_REPO" \
+            --project "$GCP_PROJECT" \
+            --repository-format=docker --location="$GCP_REGION" \
+            --description="SportAI images"
+
+      # Build the image on Cloud Build using the same config the manual script
+      # uses (deploy/gcp/cloudbuild.yaml: -f docker/Dockerfile --target runner,
+      # context dir app, NEXT_PUBLIC_* as build args). Context = repo root so both
+      # app/ and docker/ are available. Tagged :<sha> (this build) and :latest.
+      - name: Build & push image (Cloud Build)
+        run: |
+          SUPABASE_URL="https://${SUPABASE_DOMAIN}"
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${APP_SERVICE}"
+          SUBS="_IMAGE=${IMAGE}:${GITHUB_SHA},_NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+          gcloud builds submit "$GITHUB_WORKSPACE" \
+            --project "$GCP_PROJECT" \
+            --region "$GCP_REGION" \
+            --config "$GITHUB_WORKSPACE/deploy/gcp/cloudbuild.yaml" \
+            --substitutions="$SUBS"
+          # Also tag the freshly built image as :latest for parity with the script.
+          gcloud artifacts docker tags add \
+            "${IMAGE}:${GITHUB_SHA}" "${IMAGE}:latest"
+
+      # Deploy to Cloud Run. Flags mirror 04_deploy_app_cloudrun.sh exactly.
+      # --set-env-vars uses the ^|^ custom delimiter because ALLOWED_EMAILS may
+      # contain commas. Optional vars (ALLOWED_EMAILS, STRAVA_CLIENT_ID) and the
+      # Strava secret are only added when provided.
+      - name: Deploy to Cloud Run
+        run: |
+          SUPABASE_URL="https://${SUPABASE_DOMAIN}"
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${APP_SERVICE}"
+
+          ENV_VARS="NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}|NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}|NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}"
+
+          if [ -n "$ALLOWED_EMAILS" ]; then
+            # Normalise any spaces so only commas separate emails (matches script 04).
+            ALLOWED_EMAILS_CLEAN="${ALLOWED_EMAILS// /}"
+            ENV_VARS="${ENV_VARS}|ALLOWED_EMAILS=${ALLOWED_EMAILS_CLEAN}"
+            echo "allow-list ENABLED"
+          else
+            echo "allow-list DISABLED (ALLOWED_EMAILS unset)"
+          fi
+
+          RUN_SECRETS="OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest"
+          if [ -n "$STRAVA_CLIENT_ID" ]; then
+            # Strava enabled: CLIENT_ID as plain env, CLIENT_SECRET via Secret Manager.
+            ENV_VARS="${ENV_VARS}|STRAVA_CLIENT_ID=${STRAVA_CLIENT_ID}"
+            RUN_SECRETS="${RUN_SECRETS},STRAVA_CLIENT_SECRET=STRAVA_CLIENT_SECRET:latest"
+            echo "Strava import ENABLED"
+          fi
+
+          gcloud run deploy "$APP_SERVICE" \
+            --project "$GCP_PROJECT" \
+            --image "${IMAGE}:${GITHUB_SHA}" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 3000 \
+            --cpu 1 --memory 512Mi \
+            --min-instances 0 --max-instances 4 \
+            --set-env-vars "^|^${ENV_VARS}" \
+            --set-secrets "$RUN_SECRETS"
+
+      - name: Print deployed URL
+        run: |
+          RUN_URL="$(gcloud run services describe "$APP_SERVICE" \
+            --project "$GCP_PROJECT" --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          echo "App deployed: $RUN_URL"
+          echo "Image: ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${APP_SERVICE}:${GITHUB_SHA}"
+          {
+            echo "### Deployed :rocket:"
+            echo "- URL: $RUN_URL"
+            echo "- Image SHA: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

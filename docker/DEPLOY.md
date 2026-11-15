@@ -22,7 +22,7 @@ Scripts live in `deploy/gcp/`. Run them in order from your machine.
 
 - `gcloud` CLI authenticated (`gcloud auth login`) and a billing-enabled project.
 - Local Docker stack up (only needed for the data migration, script 05).
-- Edit `deploy/gcp/config.sh` — set `GCP_PROJECT` and `SSH_SOURCE_RANGE=<your-ip>/32`.
+- Edit `deploy/gcp/.deploy.env` — set `GCP_PROJECT` and `SSH_SOURCE_RANGE=<your-ip>/32`.
 
 ---
 
