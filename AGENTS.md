@@ -24,6 +24,14 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 48. Moved session locked after one move: the guard must accept `modified` (and no completed activity)
+Symptom: after one reschedule the Move button vanished, the coach could not adjust it, a same-day activity did not complete it.
+Cause: the reschedule sets `status='modified'` but the guard and `link-activity` only accepted `status='pending'`.
+Fix: `lib/plan/session-guard.ts` `isEditableUpcoming` / `applyEditableUpcoming` (SQL: `gte scheduled_date`, `in status
+[pending, modified]`, `is completed_activity_id null`) is the ONLY definition; reschedule, `adjustUpcomingSessions`, the
+Move UI and `link-activity` use it. Completed/skipped/past or already-linked sessions stay locked. Move traces and coach
+notes are APPENDED to `ai_notes` (` | `), never overwritten. Moving onto a date that already has a session is allowed.
+
 ### 47. Plan rejected for a 14% week (23.0 vs 20.1 km): repair soft volume violations, don't discard the plan
 Symptom: `POST /api/plan/generate` 422 "did not meet safety checks" after ~22 s; log `Week of 2027-02-15 (23.0 km) jumps more
 than 10% over 20.1 km.` Cause: any guardrail issue rejected the whole plan, though the model only overshot the ramp by a few km.
@@ -35,7 +43,7 @@ Cloud Run's default request timeout is 300 s). Repairs are returned as `adjustme
 and traced in `planned_sessions.ai_notes`. The prompt gives each week `maxRunKm` = min(target x 1.15, previous target x 1.10).
 Tests mock `generateObject`; real-LLM behaviour is unverified. `generateObject` still logs `AISDK_DEP_GENERATE_OBJECT` (deprecated).
 
-### 46. Training plan: one shared future-and-pending guard, skeleton owns the numbers
+### 46. Training plan: one shared future-and-editable guard (`isEditableUpcoming`, see #48), skeleton owns the numbers
 Plan generation (`lib/ai/workflows/generate-plan.ts`) is context → deterministic skeleton (`plan-skeleton.ts`:
 window, Monday weeks, slots from `profiles.training_days`, taper, +10%/wk cap) → ONE `generateObject` → guardrails
 (`plan-guardrails.ts`) → archive old active plan → insert plan → insert sessions (on session failure: delete the
@@ -45,7 +53,7 @@ edits planned sessions on the athlete's behalf (manual reschedule route, `adjust
 `user_settings.timezone` via `getAthleteToday`). Do not re-implement the filter. Single active plan is enforced in
 code only (no partial unique index yet; open decision). Activity auto-link (`lib/plan/link-activity.ts`) runs
 best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Guardrail failures are split HARD
-(structure: window, days, rest day, long run, empty: always reject) vs SOFT (weekly volume/ramp: repaired, see #46). Not
+(structure: window, days, rest day, long run, empty: always reject) vs SOFT (weekly volume/ramp: repaired, see #47). Not
 verified against a live LLM: if repair + the single feedback retry still reject often, loosen `TARGET_TOLERANCE`.
 
 ### 45. Vitest test fails with an error the code already caught: `beforeEach(() => mock.mockReset())`

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { isIsoDate } from './dates'
-import { applyFutureAndPending, isFutureAndPending } from './session-guard'
+import { applyEditableUpcoming, isEditableUpcoming } from './session-guard'
 
 export type RescheduleResult =
   | { ok: true; sessionId: string; from: string; to: string }
@@ -9,7 +9,7 @@ export type RescheduleResult =
 
 /**
  * Move ONE planned session to a new date. Server-side source of truth for
- * Req 2a: owner-scoped, future-and-pending only (shared guard, re-checked in
+ * Req 2a: owner-scoped, future, editable (pending or rescheduled, not completed) only (shared guard, re-checked in
  * the UPDATE itself), new date must be today-or-later and inside the plan.
  * Writes only scheduled_date, status='modified' and an ai_notes trace.
  */
@@ -26,17 +26,17 @@ export async function rescheduleSession(
 
   const { data: session } = await supabase
     .from('planned_sessions')
-    .select('id, plan_id, scheduled_date, status, ai_notes')
+    .select('id, plan_id, scheduled_date, status, completed_activity_id, ai_notes')
     .eq('id', sessionId)
     .eq('user_id', userId)
     .maybeSingle()
   if (!session) return { ok: false, status: 404, error: 'Session not found.' }
 
-  if (!isFutureAndPending(session, today)) {
+  if (!isEditableUpcoming(session, today)) {
     return {
       ok: false,
       status: 409,
-      error: 'Only upcoming sessions that are still pending can be moved.',
+      error: 'Only upcoming sessions that are not completed or skipped can be moved.',
     }
   }
   if (newDate === session.scheduled_date) {
@@ -64,7 +64,7 @@ export async function rescheduleSession(
   const note = session.ai_notes ? `${session.ai_notes} | ${trace}` : trace
 
   // The guard is part of the statement so a concurrent change cannot slip past.
-  const { data: updated, error } = await applyFutureAndPending(
+  const { data: updated, error } = await applyEditableUpcoming(
     supabase
       .from('planned_sessions')
       .update({ scheduled_date: newDate, status: 'modified', ai_notes: note })

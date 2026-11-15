@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { isIsoDate } from './dates'
-import { applyFutureAndPending, isFutureAndPending } from './session-guard'
+import { applyEditableUpcoming, isEditableUpcoming } from './session-guard'
 
 /** Loose, model-facing adjustment (see gotcha #36): everything nullable, validated here. */
 export interface SessionAdjustment {
@@ -27,7 +27,7 @@ const finitePositive = (n: unknown, max: number): number | null =>
   typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.min(Math.round(n), max) : null
 
 /**
- * Edit FUTURE `pending` sessions only (spec Req 3.3), through the same guard the
+ * Edit FUTURE editable sessions only (pending, or moved and not yet completed) (spec Req 3.3), through the same guard the
  * manual reschedule uses. Never throws for a bad item: it is reported in `rejected`.
  */
 export async function adjustUpcomingSessions(
@@ -48,7 +48,7 @@ export async function adjustUpcomingSessions(
 
     const { data: session } = await supabase
       .from('planned_sessions')
-      .select('id, plan_id, scheduled_date, status, ai_notes')
+      .select('id, plan_id, scheduled_date, status, completed_activity_id, ai_notes')
       .eq('id', id)
       .eq('user_id', userId)
       .maybeSingle()
@@ -56,8 +56,8 @@ export async function adjustUpcomingSessions(
       reject('Session not found.')
       continue
     }
-    if (!isFutureAndPending(session, today)) {
-      reject('Only upcoming pending sessions can be changed (this one is past, completed, skipped or already modified).')
+    if (!isEditableUpcoming(session, today)) {
+      reject('Only upcoming sessions that are pending or moved can be changed (this one is past, completed or skipped).')
       continue
     }
 
@@ -98,10 +98,11 @@ export async function adjustUpcomingSessions(
       continue
     }
     if (typeof adj.reason === 'string' && adj.reason.trim()) {
-      update.ai_notes = `Adjusted by coach: ${adj.reason.trim().slice(0, 300)}`
+      const trace = `Adjusted by coach: ${adj.reason.trim().slice(0, 300)}`
+      update.ai_notes = session.ai_notes ? `${session.ai_notes} | ${trace}` : trace
     }
 
-    const { data: updated, error } = await applyFutureAndPending(
+    const { data: updated, error } = await applyEditableUpcoming(
       supabase.from('planned_sessions').update(update).eq('id', id).eq('user_id', userId),
       today
     )

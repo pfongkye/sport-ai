@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
 /**
  * PATCH /api/plan/sessions/[id]/reschedule
  * Body: { date: 'YYYY-MM-DD' }
- * Moves one FUTURE, PENDING planned session owned by the caller. The client's
+ * Moves one FUTURE, editable (pending or already moved, not completed) planned session owned by the caller. The client's
  * own guardrail is never trusted (spec Req 2a.4): the shared predicate is
  * re-checked here and again inside the UPDATE.
  */

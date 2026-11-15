@@ -93,6 +93,10 @@ export function makeFakeSupabase(opts: FakeOptions = {}) {
         filters.push((r) => vs.includes(r[col]))
         return chain
       },
+      is(col: string, v: null) {
+        filters.push((r) => (v === null ? r[col] == null : r[col] === v))
+        return chain
+      },
       gte(col: string, v: string) {
         filters.push((r) => String(r[col]) >= v)
         return chain

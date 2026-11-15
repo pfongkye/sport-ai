@@ -3,7 +3,7 @@
 import { useId, useState } from 'react'
 import Link from 'next/link'
 import { http } from '@/lib/http'
-import { isFutureAndPending } from '@/lib/plan/session-guard'
+import { isEditableUpcoming } from '@/lib/plan/session-guard'
 import type { PlanSessionRow } from '@/lib/plan/load-plan'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,9 +31,9 @@ interface Props {
 }
 
 /**
- * One planned session. Future + pending sessions get a visible "Move" button
+ * One planned session. Future, editable sessions (pending or moved) get a visible "Move" button
  * (44px target, never hover-only: gotcha #23) that opens an inline date picker.
- * Past/completed/skipped/modified sessions show no control. The server re-checks
+ * Past/completed/skipped sessions show no control. The server re-checks
  * the guard on PATCH (Req 2a.4); this check only decides whether to show the UI.
  */
 export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props) {
@@ -44,7 +44,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const canMove = isFutureAndPending(session, today)
+  const canMove = isEditableUpcoming(session, today)
   const badge = STATUS_BADGE[session.status]
   const typeLabel =
     SESSION_TYPE_LABELS[(session.session_type ?? '').toLowerCase()] ??

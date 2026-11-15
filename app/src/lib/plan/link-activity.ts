@@ -1,10 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { localDateInTz } from './dates'
+import { EDITABLE_STATUSES } from './session-guard'
 
 /**
- * After an activity is saved, link it to a same-day, same-sport `pending`
- * planned session of the ACTIVE plan and mark that session `completed`
+ * After an activity is saved, link it to a same-day, same-sport editable (`pending`
+ * or rescheduled `modified`, no completed activity yet) planned session of the
+ * ACTIVE plan and mark that session `completed`
  * (spec Req 3.4). "Same day" is the athlete's local calendar day.
  *
  * Best-effort and NON-FATAL: never throws, returns the linked session id or
@@ -43,7 +45,8 @@ export async function linkActivityToPlannedSession(
       .eq('plan_id', plan.id)
       .eq('scheduled_date', day)
       .eq('sport_type', activity.sportType as Database['public']['Tables']['planned_sessions']['Row']['sport_type'])
-      .eq('status', 'pending')
+      .in('status', EDITABLE_STATUSES)
+      .is('completed_activity_id', null)
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle()
@@ -54,7 +57,8 @@ export async function linkActivityToPlannedSession(
       .update({ status: 'completed', completed_activity_id: activity.id })
       .eq('id', match.id)
       .eq('user_id', userId)
-      .eq('status', 'pending')
+      .in('status', EDITABLE_STATUSES)
+      .is('completed_activity_id', null)
       .select('id')
       .maybeSingle()
     return updated?.id ?? null

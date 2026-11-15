@@ -624,8 +624,8 @@ export function buildCoachTools(
   const adjustUpcomingSessions = createTool({
     id: 'adjustUpcomingSessions',
     description:
-      'Change FUTURE planned sessions that are still pending (e.g. after a missed week, low readiness or an injury): ' +
-      'move a date, or change type, description, distance, duration or HR zone. Past, completed, skipped or already-modified sessions are refused. ' +
+      'Change FUTURE planned sessions that are still editable, i.e. pending or moved and not yet completed (e.g. after a missed week, low readiness or an injury): ' +
+      'move a date, or change type, description, distance, duration or HR zone. Past, completed or skipped sessions are refused. ' +
       'Get real session ids from getPlannedSessions first. Tell the athlete what you changed and why; to mark a session done or skipped use updateSessionStatus instead.',
     inputSchema: z.object({
       adjustments: z

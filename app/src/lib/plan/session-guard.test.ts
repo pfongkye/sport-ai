@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isFutureAndPending, applyFutureAndPending, getAthleteToday } from './session-guard'
+import { isEditableUpcoming, applyEditableUpcoming, getAthleteToday } from './session-guard'
 import { localDateInTz, isIsoDate, addDays, mondayOf, weekdayIndex } from './dates'
 import { makeFakeSupabase } from './__fixtures__/fake-supabase'
 
@@ -20,28 +20,40 @@ describe('dates', () => {
   })
 })
 
-describe('isFutureAndPending (shared guard)', () => {
+describe('isEditableUpcoming (shared guard)', () => {
   const today = '2026-10-12'
   it('accepts a future pending session and one scheduled today', () => {
-    expect(isFutureAndPending({ scheduled_date: '2026-10-13', status: 'pending' }, today)).toBe(true)
-    expect(isFutureAndPending({ scheduled_date: today, status: 'pending' }, today)).toBe(true)
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-13', status: 'pending' }, today)).toBe(true)
+    expect(isEditableUpcoming({ scheduled_date: today, status: 'pending' }, today)).toBe(true)
   })
   it('rejects past sessions', () => {
-    expect(isFutureAndPending({ scheduled_date: '2026-10-11', status: 'pending' }, today)).toBe(false)
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-11', status: 'pending' }, today)).toBe(false)
   })
-  it.each(['completed', 'skipped', 'modified'])('rejects a future %s session', (status) => {
-    expect(isFutureAndPending({ scheduled_date: '2026-10-20', status }, today)).toBe(false)
+  it.each(['completed', 'skipped'])('rejects a future %s session', (status) => {
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-20', status }, today)).toBe(false)
+  })
+  it('accepts a future or today modified (moved) session without an activity', () => {
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-20', status: 'modified' }, today)).toBe(true)
+    expect(isEditableUpcoming({ scheduled_date: today, status: 'modified', completed_activity_id: null }, today)).toBe(true)
+  })
+  it('rejects a past modified session', () => {
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-11', status: 'modified' }, today)).toBe(false)
+  })
+  it.each(['pending', 'modified', 'completed'])('rejects a %s session that has a completed activity', (status) => {
+    expect(isEditableUpcoming({ scheduled_date: '2026-10-20', status, completed_activity_id: 'act-1' }, today)).toBe(false)
   })
   it('applies the same predicate as a query filter', () => {
-    const calls: [string, string, string][] = []
+    const calls: [string, string, unknown][] = []
     const q = {
       gte(c: string, v: string) { calls.push(['gte', c, v]); return q },
-      eq(c: string, v: string) { calls.push(['eq', c, v]); return q },
+      in(c: string, v: readonly string[]) { calls.push(['in', c, [...v]]); return q },
+      is(c: string, v: null) { calls.push(['is', c, v]); return q },
     }
-    applyFutureAndPending(q, today)
+    applyEditableUpcoming(q, today)
     expect(calls).toEqual([
       ['gte', 'scheduled_date', today],
-      ['eq', 'status', 'pending'],
+      ['in', 'status', ['pending', 'modified']],
+      ['is', 'completed_activity_id', null],
     ])
   })
   it('timezone boundary: the same instant is "today" on different dates per athlete tz', () => {
@@ -52,8 +64,8 @@ describe('isFutureAndPending (shared guard)', () => {
     expect(paris).toBe('2026-10-13')
     expect(ny).toBe('2026-10-12')
     const session = { scheduled_date: '2026-10-12', status: 'pending' }
-    expect(isFutureAndPending(session, paris)).toBe(false) // already past for Paris
-    expect(isFutureAndPending(session, ny)).toBe(true) // still today for New York
+    expect(isEditableUpcoming(session, paris)).toBe(false) // already past for Paris
+    expect(isEditableUpcoming(session, ny)).toBe(true) // still today for New York
   })
   it('getAthleteToday reads user_settings.timezone', async () => {
     const { client } = makeFakeSupabase({

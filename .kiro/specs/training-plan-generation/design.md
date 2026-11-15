@@ -104,7 +104,7 @@ Maps 1:1 to the insert columns (`targetDistanceM`→`target_distance_m`, etc.).
    week grid on larger screens; no horizontal scroll or clipped day cells; verify on a narrow
    viewport.
 
-   **Manual reschedule (Req 2a)** — each FUTURE `pending` session card carries a keyboard-accessible
+   **Manual reschedule (Req 2a)** — each FUTURE, editable (pending or rescheduled-and-not-yet-completed) session card carries a keyboard-accessible
    "reschedule to date" control (a date picker / "move to…" affordance, NOT drag-and-drop in v1).
    Touch-friendly, no hover-only affordance (gotcha #23). Changing the date calls
    `PATCH /api/plan/sessions/[id]/reschedule` and refreshes. Past/completed sessions show no
@@ -112,20 +112,20 @@ Maps 1:1 to the insert columns (`targetDistanceM`→`target_distance_m`, etc.).
 
 6. **`PATCH /api/plan/sessions/[id]/reschedule`** (Req 2a.4) — auth → load the session (RLS, owner)
    → re-validate server-side that it is FUTURE (`scheduled_date >= today` in the athlete's timezone)
-   AND `status='pending'` → update only `scheduled_date` (and set `status='modified'` + an `ai_notes`
+   AND `status IN ('pending','modified')` AND `completed_activity_id IS NULL` → update only `scheduled_date` (and set `status='modified'` + an `ai_notes`
    trace that it was manually moved, Req 2a.3); reject past/completed/non-owned with a clear error.
-   Never trust the client's guardrail (Req 2a.4). Shares the future-and-pending predicate with
+   Never trust the client's guardrail (Req 2a.4). Shares the future-and-editable predicate (`isEditableUpcoming`) with
    `adjustUpcomingSessions` (factor it into one helper so AI and manual paths can't diverge).
 
 7. **Chat tools** in `buildCoachTools`:
    - `generatePlan` — confirm intent, call the SAME workflow, return a short summary (not every
      session). Two-step confirm like `addActivity` (Req 4.2).
    - **Adaptation** reuses `updateSessionStatus` (exists) plus a new `adjustUpcomingSessions` tool
-     that only edits FUTURE `pending` sessions (Req 3.3). Shares the future-and-pending predicate
+     that only edits FUTURE, editable sessions (Req 3.3). Shares the future-and-editable predicate (`isEditableUpcoming`)
      helper with the reschedule endpoint (component 6).
 
 8. **Activity auto-link (Req 3.4)** — in the shared `insertManualActivity` path (and, later, file
-   upload), after inserting an activity, look for a same-day + same-sport `pending` planned session
+   upload), after inserting an activity, look for a same-day + same-sport editable (pending or modified, no activity yet) planned session
    and set it `completed` + `completed_activity_id`. Best-effort, non-fatal.
 
 ---
@@ -181,7 +181,7 @@ data-stream work.
    days, or >~10%/week volume jumps — don't trust the LLM to self-limit.
 5. **Adaptation scope (Req 3.3) + manual reschedule (Req 2a.2).** BOTH the `adjustUpcomingSessions`
    tool and the `PATCH …/reschedule` endpoint must filter `scheduled_date >= today AND
-   status='pending'` and never touch completed/past rows. Factor the predicate into ONE shared
+   status IN ('pending','modified')` and never touch completed/past rows. Factor the predicate into ONE shared
    helper so the AI path and the manual UI path cannot diverge, and re-check it server-side on the
    reschedule endpoint (never trust the client, Req 2a.4). Compute "today" in the athlete's timezone
    (`user_settings.timezone`), consistent with point 3.

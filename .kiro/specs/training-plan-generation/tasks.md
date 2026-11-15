@@ -37,10 +37,10 @@
 
 ### Task 2.3 — Reschedule endpoint (Req 2a.4)
 - [x] `PATCH /api/plan/sessions/[id]/reschedule` (`runtime='nodejs'`): auth → load session (RLS,
-      owner) → re-validate FUTURE (`scheduled_date >= today` in athlete tz) AND `status='pending'`
+      owner) → re-validate FUTURE (`scheduled_date >= today` in athlete tz) AND `status IN ('pending','modified')` AND `completed_activity_id IS NULL`
       server-side → update only `scheduled_date` (set `status='modified'` + `ai_notes` manual-move
       trace, Req 2a.3). Reject past/completed/non-owned with a clear error. Use the SHARED
-      future-and-pending predicate helper (see Task 4.2) — don't duplicate the filter.
+      future-and-editable predicate (`isEditableUpcoming`) helper (see Task 4.2) — don't duplicate the filter.
 
 ---
 
@@ -57,7 +57,7 @@
 - [x] Keyboard-navigable + ARIA labelled.
 
 ### Task 3.2 — Manual reschedule control (Req 2a)
-- [x] On each FUTURE `pending` session card, add a keyboard-accessible "reschedule to date" control
+- [x] On each FUTURE, editable (pending or rescheduled-and-not-yet-completed) session card, add a keyboard-accessible "reschedule to date" control
       (date picker / "move to…" affordance — NOT drag-and-drop in v1). Touch-friendly, no hover-only
       affordance (gotcha #23). Past/completed sessions show no control.
 - [x] On change, call `PATCH /api/plan/sessions/[id]/reschedule` and refresh the view. Surface a
@@ -72,15 +72,15 @@
 - [x] Enforce one active plan in the workflow (archive others). Consider a partial unique index later.
 
 ### Task 4.2 — Adaptation tool + shared guardrail helper
-- [x] Factor the future-and-pending predicate into ONE shared helper (`scheduled_date >= today` in
-      athlete tz AND `status='pending'`) used by BOTH the reschedule endpoint (Task 2.3) and
+- [x] Factor the future-and-editable predicate (`isEditableUpcoming`) into ONE shared helper (`scheduled_date >= today` in
+      athlete tz AND `status IN ('pending','modified')` AND `completed_activity_id IS NULL`) used by BOTH the reschedule endpoint (Task 2.3) and
       `adjustUpcomingSessions` — so the AI and manual paths can't diverge (design careful-point #5).
 - [x] Add `adjustUpcomingSessions` to `buildCoachTools` — edits ONLY future `pending` sessions via
       that helper. Keep `updateSessionStatus` working.
 
 ### Task 4.3 — Activity → session auto-link
 - [x] In `insertManualActivity` (and later upload), best-effort link a new activity to a same-day +
-      same-sport `pending` session: set it `completed` + `completed_activity_id`. Non-fatal.
+      same-sport editable (pending or modified, no activity) session: set it `completed` + `completed_activity_id`. Non-fatal.
 
 ---
 
@@ -101,8 +101,8 @@
 ### Task 6.1 — Tests
 - [x] Unit: skeleton math + guardrail validators (out-of-window dates, unsafe ramp, rest days).
 - [x] Unit: `planToRows` mapping.
-- [x] Unit: the shared future-and-pending predicate helper (Task 4.2) — accepts future pending,
-      rejects past and non-pending; timezone boundary at "today".
+- [x] Unit: the shared future-and-editable predicate (`isEditableUpcoming`) helper (Task 4.2) — accepts future pending,
+      rejects past, completed and skipped; accepts moved (modified); timezone boundary at "today".
 - [x] Integration: mocked `generateObject` → archive+insert plan+sessions; cleanup on session-insert
       failure; activity auto-link.
 - [x] Integration: reschedule endpoint moves a future pending session's date (status→modified) and

@@ -36,6 +36,23 @@ describe('linkActivityToPlannedSession', () => {
     expect(id).toBeNull()
     expect(tables.planned_sessions.every((s) => s.completed_activity_id === undefined)).toBe(true)
   })
+  it('completes a moved (modified) session that has no activity yet', async () => {
+    const { client, tables } = setup([sess({ status: 'modified' })])
+    const id = await linkActivityToPlannedSession(client, 'u1', { id: 'act-1', sportType: 'run', startedAt: '2026-10-12T07:00:00Z' })
+    expect(id).toBe('s1')
+    expect(tables.planned_sessions[0]).toMatchObject({ status: 'completed', completed_activity_id: 'act-1' })
+  })
+  it('does not relink a session that already has an activity, and prefers the earliest match', async () => {
+    const { client, tables } = setup([
+      sess({ id: 'x', status: 'modified', completed_activity_id: 'old', created_at: '0' }),
+      sess({ id: 'late', status: 'modified', created_at: '5' }),
+      sess({ id: 'early', created_at: '2' }),
+    ])
+    const id = await linkActivityToPlannedSession(client, 'u1', { id: 'act-1', sportType: 'run', startedAt: '2026-10-12T07:00:00Z' })
+    expect(id).toBe('early')
+    expect(tables.planned_sessions.find((s) => s.id === 'x')?.completed_activity_id).toBe('old')
+    expect(tables.planned_sessions.find((s) => s.id === 'late')?.status).toBe('modified')
+  })
   it('uses the athlete\'s local day (late-evening run in Paris is the next UTC-day-ahead)', async () => {
     const { client } = setup([sess({ scheduled_date: '2026-10-13' })], 'Europe/Paris')
     const id = await linkActivityToPlannedSession(client, 'u1', { id: 'act-1', sportType: 'run', startedAt: '2026-10-12T22:30:00Z' })

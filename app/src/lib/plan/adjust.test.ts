@@ -43,6 +43,25 @@ describe('adjustUpcomingSessions', () => {
     expect(tables.planned_sessions[2].target_distance_m).toBe(10000)
   })
 
+  it('adjusts a moved (modified) session and keeps its move trace', async () => {
+    const { client, tables } = setup()
+    tables.planned_sessions[0].status = 'modified'
+    tables.planned_sessions[0].ai_notes = 'Moved manually from 2026-10-14 to 2026-10-15.'
+    const out = await adjustUpcomingSessions(client, 'u1', [{ sessionId: A, targetDistanceM: 7000, reason: 'tired' }], TODAY)
+    expect(out.adjusted).toHaveLength(1)
+    expect(tables.planned_sessions[0].status).toBe('modified')
+    expect(tables.planned_sessions[0].ai_notes).toBe('Moved manually from 2026-10-14 to 2026-10-15. | Adjusted by coach: tired')
+  })
+  it('refuses skipped, past-modified and modified-with-activity sessions', async () => {
+    const { client, tables } = setup()
+    tables.planned_sessions[0].status = 'skipped'
+    tables.planned_sessions[1].status = 'modified' // past (2026-10-08)
+    tables.planned_sessions[2].status = 'modified'
+    tables.planned_sessions[2].completed_activity_id = 'act-1'
+    const out = await adjustUpcomingSessions(client, 'u1', [A, B, C].map((sessionId) => ({ sessionId, targetDistanceM: 1 })), TODAY)
+    expect(out.adjusted).toEqual([])
+    expect(out.rejected).toHaveLength(3)
+  })
   it('returns a graceful rejection (no throw) for a non-UUID id or another user\'s session', async () => {
     const { client } = setup()
     const out = await adjustUpcomingSessions(client, 'someone-else', [{ sessionId: 'latest' }, { sessionId: A, targetDistanceM: 5000 }], TODAY)

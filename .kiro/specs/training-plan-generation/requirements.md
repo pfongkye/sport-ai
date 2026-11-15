@@ -61,13 +61,13 @@ agent for flexible ops") supports this.
 - **2a.1** MUST let the athlete **move a planned session to a different date** directly in the UI to
   accommodate real-life adjustments during the week, via a keyboard-accessible "reschedule to date"
   control (v1 baseline). Drag-and-drop is a later enhancement, NOT required for v1.
-- **2a.2** Rescheduling MUST only be allowed for **future `pending`** sessions (same guardrail as
+- **2a.2** Rescheduling MUST only be allowed for **future, editable (pending or rescheduled-and-not-yet-completed)** sessions (same guardrail as
   AI adaptation, Req 3.3) — the athlete MUST NOT be able to move past or completed sessions.
 - **2a.3** Rescheduling MUST write only the session's `scheduled_date` (and, where appropriate, set
   `status='modified'` / an `ai_notes` trace that it was manually moved); it MUST NOT alter the
   session's training targets.
 - **2a.4** Rescheduling MUST be `user_id`/RLS-scoped and go through an API route (or server action)
-  that re-validates the future-and-pending guardrail server-side — never trust the client alone.
+  that re-validates the future-and-editable guardrail server-side — never trust the client alone.
 - **2a.5** The reschedule control MUST be accessible AND **mobile-first**: operable by keyboard with
   clear labels and a screen-reader confirmation of the new date, AND touch-friendly on a phone
   (adequate hit targets, no hover-only affordance per gotcha #23). The lightweight date control is
@@ -79,7 +79,7 @@ agent for flexible ops") supports this.
 - **3.1** MUST support a single active plan per user (others `archived`/`completed`).
 - **3.2** SHOULD adapt the plan when reality diverges: missed sessions, low readiness, or a new
   activity that completes/replaces a planned session.
-- **3.3** Adaptation MUST only modify FUTURE `pending` sessions — never rewrite past/completed ones.
+- **3.3** Adaptation MUST only modify FUTURE, editable (`pending` or rescheduled `modified`, no completed activity) sessions — never rewrite past/completed ones.
 - **3.4** SHOULD auto-link a logged activity to a matching planned session (same day + sport) and
   set that session `completed` (this is the natural tie-in with the manual/voice activity feature).
 - **3.5** MUST keep the existing `updateSessionStatus` tool working (the coach marks sessions
