@@ -13,6 +13,10 @@ import {
 } from '@/lib/integrations/strava/sync'
 import { formatDistance, formatDuration } from '@/lib/utils'
 import { ORS_LOOP_TOO_FAR } from '@/lib/integrations/ors/client'
+import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/generate-plan'
+import { adjustUpcomingSessions as adjustUpcomingSessionsSvc } from '@/lib/plan/adjust'
+import { getAthleteToday } from '@/lib/plan/session-guard'
+import { isIsoDate } from '@/lib/plan/dates'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -538,6 +542,118 @@ export function buildCoachTools(
     },
   })
 
+  // ─── generatePlan ───────────────────────────────────────────────────────
+  const generatePlan = createTool({
+    id: 'generatePlan',
+    description:
+      'Build a periodized multi-week training plan toward the athlete\'s goal and save it (it appears on the Plan page). ' +
+      'TWO-STEP CONFIRMATION: first call with confirmed=false to get what would be created (goal, goal date, whether it replaces an existing plan), ' +
+      'read that back and ask the athlete to confirm. Only after they say yes, call again with confirmed=true. Generation takes up to a minute. ' +
+      'Pass goalDate as YYYY-MM-DD when the athlete gave a target date or race (resolve "November" etc. against today\'s date, and confirm it); null if none. ' +
+      'After it succeeds, summarise briefly (title, dates, number of weeks and sessions). Do NOT list every session; point them to the Plan page.',
+    // gotcha #36: nullable+default(null), never bare .optional(); no refinements.
+    inputSchema: z.object({
+      confirmed: z.boolean().default(false).describe('false = preview for confirmation; true = generate and save'),
+      goal: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe('Goal in the athlete\'s words (e.g. "marathon in 3h30"); null = use the saved profile goal.'),
+      goalDate: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe('Goal/race date as YYYY-MM-DD; null = a general 12-week block.'),
+    }),
+    execute: async (inputData) => {
+      const goal =
+        typeof inputData.goal === 'string' && inputData.goal.trim() ? inputData.goal.trim() : null
+      const goalDate =
+        typeof inputData.goalDate === 'string' && inputData.goalDate.trim()
+          ? inputData.goalDate.trim()
+          : null
+      if (goalDate && !isIsoDate(goalDate)) {
+        return { created: false, error: 'goalDate must be a real date formatted YYYY-MM-DD. Ask the athlete for the date.' }
+      }
+
+      if (!inputData.confirmed) {
+        const { data: existing } = await supabase
+          .from('training_plans')
+          .select('title, end_date')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .limit(1)
+          .maybeSingle()
+        return {
+          created: false,
+          needsConfirmation: true,
+          willCreate: { goal: goal ?? 'the goal saved on the athlete profile', goalDate: goalDate ?? 'none (general 12-week block)' },
+          replacesActivePlan: existing ? { title: existing.title, endDate: existing.end_date } : null,
+          message:
+            'Read this back to the athlete and ask them to confirm. Mention that an existing active plan would be archived. Then call again with confirmed=true.',
+        }
+      }
+
+      try {
+        const r = await generateTrainingPlan(supabase, userId, { goal, goalDate })
+        return {
+          created: true,
+          planId: r.planId,
+          title: r.title,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          weeks: r.weeks,
+          sessionCount: r.sessionCount,
+          replacedPreviousPlan: r.archivedPlanIds.length > 0,
+          message: 'Plan saved. Summarise briefly and point the athlete to the Plan page.',
+        }
+      } catch (err) {
+        if (err instanceof PlanGenerationError) {
+          return { created: false, error: err.message, code: err.code }
+        }
+        return { created: false, error: 'I could not generate a plan right now. Try again shortly.' }
+      }
+    },
+  })
+
+  // ─── adjustUpcomingSessions ─────────────────────────────────────────────
+  const adjustUpcomingSessions = createTool({
+    id: 'adjustUpcomingSessions',
+    description:
+      'Change FUTURE planned sessions that are still pending (e.g. after a missed week, low readiness or an injury): ' +
+      'move a date, or change type, description, distance, duration or HR zone. Past, completed, skipped or already-modified sessions are refused. ' +
+      'Get real session ids from getPlannedSessions first. Tell the athlete what you changed and why; to mark a session done or skipped use updateSessionStatus instead.',
+    inputSchema: z.object({
+      adjustments: z
+        .array(
+          z.object({
+            sessionId: z.string().describe('Planned session UUID from getPlannedSessions'),
+            scheduledDate: z.string().nullable().default(null).describe('New date YYYY-MM-DD; null to keep'),
+            sessionType: z.string().nullable().default(null),
+            description: z.string().nullable().default(null),
+            targetDistanceM: z.number().nullable().default(null).describe('Metres; null to keep'),
+            targetDurationS: z.number().nullable().default(null).describe('Seconds; null to keep'),
+            targetHrZone: z.number().nullable().default(null).describe('1-5; null to keep'),
+            reason: z.string().nullable().default(null).describe('Short reason, saved as a note'),
+          })
+        )
+        .default([]),
+    }),
+    execute: async (inputData) => {
+      const adjustments = Array.isArray(inputData.adjustments) ? inputData.adjustments : []
+      if (!adjustments.length) {
+        return { adjusted: [], rejected: [], message: 'No adjustments were provided.' }
+      }
+      try {
+        const today = await getAthleteToday(supabase, userId)
+        const outcome = await adjustUpcomingSessionsSvc(supabase, userId, adjustments, today)
+        return { ...outcome, today }
+      } catch {
+        return { adjusted: [], rejected: [], error: 'Failed to adjust sessions. Try again shortly.' }
+      }
+    },
+  })
+
   return {
     getRecentActivities,
     getTrainingLoad,
@@ -549,6 +665,8 @@ export function buildCoachTools(
     listStravaActivities,
     importFromStrava,
     suggestRoute,
+    generatePlan,
+    adjustUpcomingSessions,
   }
 }
 
