@@ -50,7 +50,7 @@ jobs:
 
   deploy:
     needs: checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     # Required for google-github-actions/auth with Workload Identity Federation:
     # the job needs permission to mint the OIDC token GitHub exchanges for GCP creds.
