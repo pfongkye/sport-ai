@@ -24,6 +24,21 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 40. Auth redirects dropped the port (http://localhost/login) — build origins with lib/public-origin.ts
+Symptom: `curl -D- http://localhost:3000/dashboard` → `307 Location: http://localhost/login?...`;
+browser can't reach the app locally.
+Cause: `lib/supabase/middleware.ts` cloned `request.nextUrl` (which reports host WITHOUT the port
+in the dev container; reproduced with no forwarded headers and with `Host: localhost:3000`) and
+only fixed it when x-forwarded-host was present, and then did `url.host = fwd; url.port = ''`,
+which also strips a port that is part of the forwarded host.
+Fix: one shared helper `resolvePublicOrigin(headers, fallbackUrl)` in `lib/public-origin.ts`:
+x-forwarded-host(+proto; default https, http for localhost) → Host header (keeps port) →
+NEXT_PUBLIC_APP_URL → request URL. Used by the proxy/middleware, the auth callback and Strava.
+Do not re-implement it inline. Note: `next dev` may emit a RELATIVE `Location: /login?...` for
+same-origin redirects; that is fine (browser keeps host:port). Turbopack caches a failed
+resolve of a NEW file imported while the file did not yet exist: if you see "Can't resolve" for
+a file that exists, `docker restart sportai-app` (no volume changes).
+
 ### 39. MapLibre v6 route line never renders: worker URL is wrong under the bundler
 Symptom: /routes shows the OSM tiles and the result card, but no route line and no fit to the
 loop. Raster tiles work because they load on the main thread; GeoJSON sources need the worker.
