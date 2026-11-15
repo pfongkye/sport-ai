@@ -1,6 +1,5 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import { useState } from 'react'
 import { http } from '@/lib/http'
 import { fromGeolocation } from '@/lib/integrations/ors/geo'
@@ -10,15 +9,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { ElevationProfile } from './elevation-profile'
+import { RouteMapFrame } from './route-map-frame'
 import { RouteSummary } from './route-summary'
-
-// MapLibre touches window / WebGL — load client-only, no SSR.
-const RouteMap = dynamic(() => import('./route-map'), {
-  ssr: false,
-  loading: () => (
-    <div className="h-[320px] w-full rounded-lg bg-[var(--muted)] animate-pulse" />
-  ),
-})
 
 /** RouteResult shape returned by POST /api/routes/suggest (lng-first). */
 interface RouteResult {
@@ -236,7 +228,18 @@ export function RouteSuggester({ hasHome }: { hasHome: boolean }) {
               terrain={route.terrain}
               startLabel={route.start.label}
             />
-            <RouteMap geometry={route.geometry} bbox={route.bbox} />
+            <RouteMapFrame
+              geometry={route.geometry}
+              bbox={route.bbox}
+              summary={{
+                requestedDistanceM: route.requestedDistanceM,
+                distanceM: route.distanceM,
+                ascentM: route.ascentM,
+                descentM: route.descentM,
+                terrain: route.terrain,
+                startLabel: route.start.label,
+              }}
+            />
             <ElevationProfile profile={route.elevationProfile} />
           </CardContent>
         </Card>

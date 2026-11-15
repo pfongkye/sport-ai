@@ -114,3 +114,21 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
+
+/* Full-screen route map overlay: short fade-in, none when reduced motion is set. */
+@keyframes map-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.map-overlay-in {
+  animation: map-overlay-in 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-overlay-in {
+    animation: none;
+  }
+}

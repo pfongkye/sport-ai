@@ -43,10 +43,18 @@ interface RouteMapProps {
   geometry: RouteLine
   /** [minLng, minLat, maxLng, maxLat]. */
   bbox: [number, number, number, number]
+  /** True while the map fills the screen: larger fit padding to clear the overlay chrome. */
+  fullscreen?: boolean
+  /** Increment to refit the route (used by the "fit route" button). */
+  fitSignal?: number
+  /** Container classes. The default is the inline card size. */
+  className?: string
 }
 
 const SOURCE_ID = 'route'
 const FIT_PADDING = 40
+// Fullscreen: clear the top bar (close button + summary strip) and the bottom controls.
+const FIT_PADDING_FULLSCREEN = { top: 96, bottom: 80, left: 32, right: 32 }
 const ARROW_IMAGE_ID = 'route-arrow'
 
 /** White right-pointing chevron with a dark outline, so it reads on the red line. */
@@ -93,10 +101,18 @@ function createKmElement(km: number): HTMLDivElement {
  * The container has an explicit bounded height or MapLibre renders 0px.
  * The map is created once; later route changes replace the source data.
  */
-export default function RouteMap({ geometry, bbox }: RouteMapProps) {
+export default function RouteMap({
+  geometry,
+  bbox,
+  fullscreen = false,
+  fitSignal = 0,
+  className = 'h-[320px] w-full rounded-lg overflow-hidden',
+}: RouteMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const markerRef = useRef<maplibregl.Marker | null>(null)
+  const fitRef = useRef<(() => void) | null>(null)
+  const fullscreenRef = useRef(fullscreen)
   const kmMarkersRef = useRef<{ km: number; marker: maplibregl.Marker; el: HTMLElement }[]>([])
 
   useEffect(() => {
@@ -188,7 +204,15 @@ export default function RouteMap({ geometry, bbox }: RouteMapProps) {
         const marker = new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map)
         return { km: p.km, marker, el }
       })
-      map.fitBounds(routeBounds(feature, bbox), { padding: FIT_PADDING, animate: false, maxZoom: 17 })
+      fitRef.current = () => {
+        map.resize()
+        map.fitBounds(routeBounds(feature, bbox), {
+          padding: fullscreenRef.current ? FIT_PADDING_FULLSCREEN : FIT_PADDING,
+          animate: false,
+          maxZoom: 17,
+        })
+      }
+      fitRef.current()
       updateKmVisibility()
     }
 
@@ -206,15 +230,22 @@ export default function RouteMap({ geometry, bbox }: RouteMapProps) {
     return () => {
       map.off('load', apply)
       map.off('zoom', updateKmVisibility)
+      fitRef.current = null
       kmMarkersRef.current.forEach((k) => k.marker.remove())
       kmMarkersRef.current = []
     }
   }, [geometry, bbox])
+  // Entering/leaving fullscreen changes the container size: resize + refit.
+  // The "fit route" button bumps fitSignal to do the same.
+  useEffect(() => {
+    fullscreenRef.current = fullscreen
+    fitRef.current?.()
+  }, [fullscreen, fitSignal])
 
   return (
     <div
       ref={containerRef}
-      className="h-[320px] w-full rounded-lg overflow-hidden"
+      className={className}
       role="img"
       aria-label="Map of the suggested running route"
     />
