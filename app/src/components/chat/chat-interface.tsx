@@ -61,6 +61,9 @@ export function ChatInterface() {
 
   // Restore read-aloud preference
   useEffect(() => {
+    // Must run after mount: localStorage is unavailable during SSR, and reading it in the
+    // initial state would cause a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSpeakEnabled(localStorage.getItem('coach:speak') === '1')
   }, [])
   useEffect(() => {
