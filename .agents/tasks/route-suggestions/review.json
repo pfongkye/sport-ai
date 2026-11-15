@@ -1,5 +1,0 @@
-{
-  "verdict": "APPROVED",
-  "summary": "The route-suggestions feature is correct and faithful to the spec and repo conventions. Build passes and all 66 tests pass independently; migration 014 is authored-not-run, the suggestRoute tool follows gotcha #36 exactly, the ORS key stays server-only, the pipeline is lng-first, the UI is mobile-first with no hover-only controls, client fetches use http(), and Phase 6 is skipped except the documented reusable-component hook.",
-  "findings": []
-}

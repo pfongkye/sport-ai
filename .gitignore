@@ -73,3 +73,7 @@ app/CLAUDE.md
 *.pem
 coverage/
 secrets/
+
+# ── Agent/workflow scratch state (plans, reviews, reports, worktrees) ─────
+.agents/
+.worktrees/

@@ -1,7 +1,0 @@
-{
-  "task_id": "task-route-suggestions",
-  "task_description": "Implement the route-suggestions feature: ORS round-trip routing -> suggestRoute service -> cached suggested_routes, surfaced via a standalone /routes UI, a suggestRoute coach tool, and a reusable map/summary component with a documented export hook for later plan integration. Covers spec Phases 1-5, 7 (env/docs), 8 (tests). Phase 6 is skipped except the reusable component + export hook (plan view is a stub). Migration authored but not run; mobile-first; typed tool only (no MCP); gotcha #36 tool-schema rules.",
-  "status": "completed",
-  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
-  "blocked_reason": null
-}
