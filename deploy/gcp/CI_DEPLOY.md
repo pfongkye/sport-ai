@@ -35,8 +35,8 @@ CI **assumes** the following already exist from your first-time manual deploy
 
 - The VM + Supabase stack is up (Caddy TLS on your `nip.io` host).
 - The GCP Secret Manager secrets `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY`
-  (and optionally `STRAVA_CLIENT_SECRET`) exist **and have values**, and the Cloud
-  Run runtime service account can read them.
+  and `ORS_API_KEY` (and optionally `STRAVA_CLIENT_SECRET`) exist **and have values**,
+  and the Cloud Run runtime service account can read them.
 
 CI only **references** those secrets with `--set-secrets` — it does not create or
 populate them. If they are missing, the Cloud Run revision will fail to start. To
@@ -47,6 +47,20 @@ printf '%s' 'sk-...' | gcloud secrets create OPENAI_API_KEY --data-file=- --repl
 # or add a new version to an existing secret:
 printf '%s' 'sk-...' | gcloud secrets versions add OPENAI_API_KEY --data-file=-
 ```
+
+`ORS_API_KEY` (OpenRouteService, read server-side at runtime) is a Secret Manager
+runtime secret, **not** a GitHub secret. Create it and grant the runtime SA read
+access **before merging** (otherwise the new revision fails to start):
+
+```bash
+printf '%s' "$ORS_KEY" | gcloud secrets create ORS_API_KEY --data-file=- --replication-policy=automatic
+gcloud secrets add-iam-policy-binding ORS_API_KEY \
+  --member=serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com \
+  --role=roles/secretmanager.secretAccessor
+```
+
+`--set-secrets` replaces the full set on each deploy, so any new runtime secret must
+be added to `RUN_SECRETS` in both `deploy.yml` and script 04 (AGENTS.md #38).
 
 ---
 
@@ -229,7 +243,7 @@ On github.com, open the repo **`pfongkye/sport-ai`** →
 | `GCP_DEPLOY_SA` | `sportai-deployer@your-project.iam.gserviceaccount.com` | Deploy service-account email the workflow impersonates. |
 
 > **Do NOT put app runtime secrets in GitHub.** `OPENAI_API_KEY`,
-> `SUPABASE_SERVICE_ROLE_KEY`, and `STRAVA_CLIENT_SECRET` live **only in GCP Secret
+> `SUPABASE_SERVICE_ROLE_KEY`, `ORS_API_KEY`, and `STRAVA_CLIENT_SECRET` live **only in GCP Secret
 > Manager** and are mounted into Cloud Run at deploy time via `--set-secrets`.
 > Duplicating them in GitHub would be redundant and a bigger leak surface.
 
@@ -295,7 +309,7 @@ Everything the workflow passes to gcloud is kept identical to
 | Build | Cloud Build, `-f docker/Dockerfile --target runner`, context `app/`, `NEXT_PUBLIC_*` as build args |
 | Deploy flags | `--allow-unauthenticated --port 3000 --cpu 1 --memory 512Mi --min-instances 0 --max-instances 4` |
 | Runtime env | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_APP_URL`, (+`ALLOWED_EMAILS`, +`STRAVA_CLIENT_ID` when set) via `^|^` delimiter |
-| Secrets | `OPENAI_API_KEY:latest`, `SUPABASE_SERVICE_ROLE_KEY:latest` (+`STRAVA_CLIENT_SECRET:latest` when Strava enabled) |
+| Secrets | `OPENAI_API_KEY:latest`, `SUPABASE_SERVICE_ROLE_KEY:latest`, `ORS_API_KEY:latest` (+`STRAVA_CLIENT_SECRET:latest` when Strava enabled) |
 | `SUPABASE_INTERNAL_URL` | intentionally unset |
 
 The one intentional CI improvement: the script uses only `:latest`; CI tags and deploys

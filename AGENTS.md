@@ -24,6 +24,22 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 38. New Cloud Run runtime secret: add to RUN_SECRETS in BOTH deploy paths, create it BEFORE merge
+Symptom: after adding a feature that reads a new `process.env.<KEY>`, prod loses the key on the
+next deploy (feature reports "not configured"), or the new revision fails to start.
+Cause: `gcloud run deploy --set-secrets` (and `--set-env-vars`) REPLACE the full set, so a
+secret missing from the list is dropped. There are TWO deploy paths with their own list:
+`RUN_SECRETS` in `.github/workflows/deploy.yml` AND in `deploy/gcp/04_deploy_app_cloudrun.sh`.
+Also, referencing a Secret Manager secret that doesn't exist (or that the runtime SA can't read)
+makes the new revision fail to start.
+Fix: add `KEY=KEY:latest` to `RUN_SECRETS` in both files (+ `ensure_secret KEY` in script 04),
+and create the secret + grant `roles/secretmanager.secretAccessor` to
+`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` BEFORE merging to main (see
+`deploy/gcp/CI_DEPLOY.md`). Runtime secrets are not GitHub secrets and not `cloudbuild.yaml`
+substitutions (only `NEXT_PUBLIC_*` are build args, #37). Example: `ORS_API_KEY`.
+CI also never runs DB migrations (e.g. `014`): apply them manually on the VM (see #34) before or
+with the deploy that needs them.
+
 ### 37. GitHub Actions → Cloud Run: WIF repo-condition + NEXT_PUBLIC must be Cloud BUILD args
 CI deploy lives in `.github/workflows/deploy.yml` (setup/runbook: `deploy/gcp/CI_DEPLOY.md`).
 It automates ONLY script 04 (app build+deploy) — never the VM/Supabase/migrations/data.

@@ -146,7 +146,7 @@ jobs:
             echo "allow-list DISABLED (ALLOWED_EMAILS unset)"
           fi
 
-          RUN_SECRETS="OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest"
+          RUN_SECRETS="OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,ORS_API_KEY=ORS_API_KEY:latest"
           if [ -n "$STRAVA_CLIENT_ID" ]; then
             # Strava enabled: CLIENT_ID as plain env, CLIENT_SECRET via Secret Manager.
             ENV_VARS="${ENV_VARS}|STRAVA_CLIENT_ID=${STRAVA_CLIENT_ID}"
