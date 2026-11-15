@@ -1,17 +1,23 @@
 import { generateObject } from 'ai'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
+import type { Database, Json } from '@/types/database'
 import { resolveUserAISettings, resolveModel } from '../provider'
 import { computeReadiness } from '../readiness'
-import { localDateInTz } from '@/lib/plan/dates'
+import { addDays, localDateInTz, mondayOf } from '@/lib/plan/dates'
 import { planSchema, planToRows, type PlanDraft } from './plan-schema'
 import {
   buildSkeleton,
   RAMP_RATE,
-  computeBaselineWeeklyKm,
   SkeletonError,
   type Skeleton,
 } from './plan-skeleton'
+import { applyRecapTargets } from './plan-recap-targets'
+import {
+  computeTrainingRecap,
+  RECAP_WEEKS,
+  type TrainingRecap,
+} from './training-recap'
+import { formatPace } from '@/lib/utils'
 import { repairPlan, sanitizePlan, TARGET_TOLERANCE, validatePlanDetailed } from './plan-guardrails'
 
 /** Bounded generation time (spec Req 5.1). A multi-month plan is a large output. */
@@ -62,6 +68,8 @@ export interface GeneratePlanResult {
   archivedPlanIds: string[]
   /** Weeks the guardrails scaled down automatically; empty when the plan was used as generated. */
   adjustments: string[]
+  /** The deterministic recap the plan was built from (also stored with the plan). */
+  recap: TrainingRecap
 }
 
 /**
@@ -83,17 +91,28 @@ export async function generateTrainingPlan(
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('primary_goal, training_days, sport_prefs')
+    .select('primary_goal, training_days, sport_prefs, date_of_birth')
     .eq('id', userId)
     .maybeSingle()
 
-  const since = new Date(now.getTime() - 28 * 86400000).toISOString()
+  // The recap window is RECAP_WEEKS complete Monday-based weeks; one extra day each side covers timezone offsets.
+  const since = new Date(
+    Date.parse(`${addDays(mondayOf(today), -RECAP_WEEKS * 7 - 1)}T00:00:00Z`)
+  ).toISOString()
   const { data: recent } = await supabase
     .from('activities')
-    .select('sport_type, started_at, distance_m, duration_s')
+    .select('sport_type, started_at, distance_m, duration_s, avg_hr_bpm, max_hr_bpm, avg_pace_s_per_km, training_load')
     .eq('user_id', userId)
     .gte('started_at', since)
-  const recentActivities = recent ?? []
+  const recap = computeTrainingRecap(
+    recent ?? [],
+    {
+      dateOfBirth: profile?.date_of_birth,
+      trainingDays: profile?.training_days,
+      timezone: settings?.timezone,
+    },
+    today
+  )
   const readiness = await computeReadiness(supabase, userId)
 
   // ── 2. Skeleton (deterministic) ───────────────────────────────────────────
@@ -103,7 +122,7 @@ export async function generateTrainingPlan(
       today,
       goalDate: opts.goalDate ?? null,
       trainingDays: profile?.training_days,
-      baselineWeeklyKm: computeBaselineWeeklyKm(recentActivities, now),
+      baselineWeeklyKm: recap.baseline.weeklyKm,
     })
   } catch (err) {
     if (err instanceof SkeletonError) throw new PlanGenerationError(err.code, err.message)
@@ -131,7 +150,7 @@ export async function generateTrainingPlan(
     skeleton,
     sportPrefs: profile?.sport_prefs ?? ['run'],
     readiness,
-    recent: summariseRecent(recentActivities),
+    recap,
   }
   const callModel = async (feedback: string[] | null): Promise<PlanDraft> => {
     const remaining = PLAN_TOTAL_BUDGET_MS - (Date.now() - startedAt)
@@ -188,14 +207,15 @@ export async function generateTrainingPlan(
     outcome = check(await callModel(outcome.issues))
     if (!outcome.ok) throw rejected(outcome.issues, true)
   }
-  const clean = outcome.plan
+  // Durations from the athlete's pace and bpm ranges from max HR, after the volumes are final.
+  const clean = applyRecapTargets(outcome.plan, recap)
   if (outcome.adjustments.length) console.info('[plan/generate] repaired weeks', outcome.adjustments)
 
   // The window is ours, not the model's.
   const plan: PlanDraft = { ...clean, startDate: skeleton.startDate, endDate: skeleton.endDate }
 
   // ── 5. Persist: archive old → insert plan → insert sessions ───────────────
-  const archived = await persistPlan(supabase, userId, plan, goal, outcome.notes)
+  const archived = await persistPlan(supabase, userId, plan, goal, outcome.notes, recap)
 
   return {
     planId: archived.planId,
@@ -206,6 +226,7 @@ export async function generateTrainingPlan(
     weeks: skeleton.totalWeeks,
     archivedPlanIds: archived.archivedPlanIds,
     adjustments: outcome.adjustments,
+    recap,
   }
 }
 
@@ -220,7 +241,8 @@ export async function persistPlan(
   userId: string,
   plan: PlanDraft,
   goal: string,
-  aiNotes: (string | null)[] = []
+  aiNotes: (string | null)[] = [],
+  recap: TrainingRecap | null = null
 ): Promise<{ planId: string; archivedPlanIds: string[] }> {
   const { data: active, error: activeErr } = await supabase
     .from('training_plans')
@@ -257,6 +279,7 @@ export async function persistPlan(
       start_date: plan.startDate,
       end_date: plan.endDate,
       status: 'active',
+      recap: recap as unknown as Json | null,
     })
     .select('id')
     .single()
@@ -280,21 +303,55 @@ export async function persistPlan(
 
 // ── Prompt construction ─────────────────────────────────────────────────────
 
-function summariseRecent(
-  acts: { sport_type: string; started_at: string; distance_m: number | null; duration_s: number | null }[]
-): string {
-  if (!acts.length) return 'No activities logged in the last 4 weeks.'
-  const bySport = new Map<string, { n: number; km: number; h: number }>()
-  for (const a of acts) {
-    const e = bySport.get(a.sport_type) ?? { n: 0, km: 0, h: 0 }
-    e.n += 1
-    e.km += (a.distance_m ?? 0) / 1000
-    e.h += (a.duration_s ?? 0) / 3600
-    bySport.set(a.sport_type, e)
+const pace = (s: number | null) => (s == null ? 'unknown' : formatPace(s))
+
+/**
+ * Compact, delimited recap for the user prompt (replaces the old per-sport line).
+ * Everything here was computed from logged data; null values are stated as unknown.
+ */
+export function buildRecapBlock(recap: TrainingRecap): string {
+  const used = recap.weeks.filter((w) => w.qualifies)
+  const lines = [
+    '=== ATHLETE TRAINING RECAP (computed from logged data; treat as facts) ===',
+    `Window: ${recap.window.start} to ${recap.window.end} (${recap.weeks.length} Monday-based weeks). Weeks used: ${recap.qualifyingWeeks} of ${recap.weeks.length} (a week counts with 2+ activities).`,
+  ]
+  if (recap.excludedWeeks.length) {
+    lines.push(`Excluded weeks: ${recap.excludedWeeks.map((w) => `${w.weekStart} (${w.reason})`).join(', ')}`)
   }
-  return [...bySport.entries()]
-    .map(([s, e]) => `${s}: ${e.n} sessions, ${e.km.toFixed(1)} km, ${e.h.toFixed(1)} h`)
-    .join('; ')
+  if (used.length) {
+    lines.push(
+      `Weekly run km, oldest to newest, used weeks only: ${used.map((w) => w.runKm).join(', ')}`,
+      `Weekly longest run km: ${used.map((w) => w.longestRunKm ?? 'n/a').join(', ')}`
+    )
+  }
+  const t = recap.typical
+  lines.push(
+    `Baseline weekly run km used for week 1 of the skeleton: ${recap.baseline.weeklyKm} (${recap.baseline.source === 'history' ? 'recency-weighted history' : 'fallback scaled by training days'})`,
+    `Runs per week: ${t.runsPerWeek ?? 'unknown'}`,
+    `Easy pace: ${pace(t.easyPaceSPerKm)}. Tempo/hard pace: ${pace(t.tempoPaceSPerKm)}.`,
+    `Typical long run: ${t.longRunKm != null ? `${t.longRunKm} km at ${pace(t.longRunPaceSPerKm)}` : 'unknown'}`,
+    `Max HR: ${recap.maxHr ? `${recap.maxHr.bpm} bpm (${recap.maxHr.source === 'data' ? 'from data' : '220 minus age'})` : 'unknown'}`,
+    `Intensity split (runs with HR, easy/moderate/hard): ${
+      recap.intensity
+        ? `${Math.round(recap.intensity.easy * 100)}% / ${Math.round(recap.intensity.moderate * 100)}% / ${Math.round(recap.intensity.hard * 100)}% (${recap.intensity.runsWithHr} runs)`
+        : 'unknown'
+    }`,
+    `Trend (recent 4 weeks vs older 2): ${recap.trend ? `${recap.trend.direction} (${recap.trend.changePct}%)` : 'unknown'}`,
+    `Layoff: ${recap.layoff.zeroActivityWeeks} week(s) with no activity, longest gap ${recap.layoff.longestGapWeeks} week(s)`,
+    `Other sports (used weeks): ${
+      recap.otherSports.length
+        ? recap.otherSports.map((o) => `${o.sport}: ${o.sessions} sessions, ${o.hours} h`).join('; ')
+        : 'none'
+    }`
+  )
+  if (recap.dataQuality.notes.length) lines.push(`Data quality: ${recap.dataQuality.notes.join('; ')}`)
+  if (recap.sparse) {
+    lines.push(
+      'HISTORY IS SPARSE: there are too few qualifying weeks to be reliable. Stay conservative: mostly easy running, no hard intervals early, and do not assume a fitness level.'
+    )
+  }
+  lines.push('=== END RECAP ===')
+  return lines.join('\n')
 }
 
 export function buildSystemPrompt(): string {
@@ -310,7 +367,7 @@ export function buildSystemPrompt(): string {
     '- Distances are in METRES (targetDistanceM), durations in SECONDS (targetDurationS), HR zone is an integer 1-5 or null.',
     'PERIODIZATION: progressive overload through base and build, a lighter recovery week as marked, a taper (reduced volume, keep a little intensity) before the goal date. Most running is easy (zone 2); add tempo or intervals once or twice a week in build/peak phases only.',
     'Use other sports (gym, cycle, football) only if they are in the athlete\'s sport preferences, and keep them short and supportive.',
-    'If the athlete has little history or readiness is low, keep intensity conservative. Do not invent medical advice.',
+    'Use the ATHLETE TRAINING RECAP block as facts about the athlete (paces, long run, intensity mix). If it says history is sparse, or readiness is low, keep intensity conservative. Do not invent medical advice.',
     'Output title and goal as short plain text. Set startDate and endDate to the window given.',
   ].join('\n')
 }
@@ -321,7 +378,7 @@ export function buildPrompt(args: {
   skeleton: Skeleton
   sportPrefs: string[]
   readiness: { score: number; label: string; ctl: number; atl: number; tsb: number; message: string } | null
-  recent: string
+  recap: TrainingRecap
   /** Concrete guardrail violations from the previous attempt (retry only). */
   feedback?: string[] | null
 }): string {
@@ -351,7 +408,7 @@ export function buildPrompt(args: {
         ? `${args.readiness.score}/100 ${args.readiness.label} (CTL ${args.readiness.ctl}, ATL ${args.readiness.atl}, TSB ${args.readiness.tsb}). ${args.readiness.message}`
         : 'no history, treat as fresh'
     }`,
-    `Recent 4 weeks: ${args.recent}`,
+    buildRecapBlock(args.recap),
     `Weekly skeleton (JSON):`,
     JSON.stringify(weeks),
     'For every week, the sum of the run session distances (targetDistanceM / 1000) must not exceed that week\'s maxRunKm. Check each week\'s sum before answering.',

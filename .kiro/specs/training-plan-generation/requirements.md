@@ -102,6 +102,41 @@ agent for flexible ops") supports this.
   **mobile-first** — the plan/calendar is designed for a phone screen first and scales up; verify on
   a mobile viewport before considering a UI task done.
 
+### 6. Training recap (deterministic history analysis)
+- **6.1** MUST compute a deterministic recap of the athlete's last 6 complete Monday-based weeks
+  (athlete timezone; the current partial week is not counted) with a pure function
+  `computeTrainingRecap(activities, profile, today)`: same inputs give the same output, no LLM, no
+  randomness, no clock reads inside.
+- **6.2** A week is a *qualifying week* only with at least `MIN_ACTIVITIES_PER_WEEK` (2) activities
+  of any sport. Other weeks MUST be listed as excluded with the reason (e.g. "1 activity", "no
+  activity"). The 4 most recent weeks weigh `RECENT_WEIGHT` and the 2 older ones `OLDER_WEIGHT`.
+- **6.3** The recap MUST report, per qualifying week: run count, run km, longest run, distance-weighted
+  average pace, average HR, total training load, and non-run sport sessions/hours. Overall: typical
+  easy pace, typical long run (distance, pace), intensity split (easy/moderate/hard as a share of max
+  HR; max HR from the data, else 220 minus age, else unknown), a per-run label (long / easy / tempo /
+  hard, from the athlete's own distribution), runs per week, layoff gaps and a recent-vs-older trend.
+  Missing data stays `null` and is reported in a `dataQuality` section (missing HR share, missing
+  pace share, no-distance share). Nothing is guessed. Intervals are not detected from streams.
+- **6.4** The skeleton baseline MUST come from the qualifying weeks (weighted mean, with a week capped
+  at `OUTLIER_CAP_FACTOR` x the median week when there are enough weeks). With fewer than
+  `MIN_QUALIFYING_WEEKS` qualifying weeks the baseline falls back to a value scaled by the athlete's
+  training days (`KM_PER_TRAINING_DAY`, clamped), never above the observed weekly average, and the
+  recap tells the model history is sparse so it stays conservative. The flat 15 km floor is gone.
+- **6.5** The recap MUST reach the model as one delimited block in the user prompt (replacing the
+  per-sport total line). Hard rules, guardrails, repair and the single retry are unchanged.
+- **6.6** After validation, run sessions with a distance MUST get `targetDurationS` from distance x the
+  athlete's easy / long / tempo pace when that pace is known (else the model's value stays), and sessions
+  with an HR zone MUST get the bpm range from max HR (appended to the description) when max HR is known.
+- **6.7** The plan page MUST show a compact, mobile-first "What your plan is based on" section (weeks
+  included/excluded with reasons, weekly km, easy pace, long run, intensity split, data-quality
+  notes), collapsed by default on phones with an accessible expand control; English, metric.
+- **6.8** A snapshot of the recap (with `schemaVersion`) MUST be stored in the nullable
+  `training_plans.recap` jsonb column (migration 016) in the same insert as the plan, and returned by
+  `GET /api/plan` and `loadActivePlan`. Plans created earlier have `recap = null` and show "not available".
+- **6.9** The `generatePlan` coach tool result SHOULD mention the key recap facts briefly.
+- **6.10** Every tunable constant (weights, thresholds, fallback formula, outlier cap) MUST be a named,
+  exported, documented constant covered by tests.
+
 ---
 
 ## Out of Scope (v1)

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildSkeleton,
-  computeBaselineWeeklyKm,
   computeWindow,
   normalizeTrainingDays,
   taperWeeksFor,
@@ -50,21 +49,7 @@ describe('taper + training days + baseline', () => {
     expect(normalizeTrainingDays([])).toEqual([0, 2, 4, 5])
     expect(normalizeTrainingDays(['bogus'])).toEqual([0, 2, 4, 5])
   })
-  it('averages the last 4 weeks of run km only', () => {
-    const now = new Date('2026-10-12T00:00:00Z')
-    const km = computeBaselineWeeklyKm(
-      [
-        { sport_type: 'run', started_at: '2026-10-05T08:00:00Z', distance_m: 20000 },
-        { sport_type: 'run', started_at: '2026-09-20T08:00:00Z', distance_m: 20000 },
-        { sport_type: 'gym', started_at: '2026-10-06T08:00:00Z', distance_m: 99999 },
-        { sport_type: 'run', started_at: '2026-06-01T08:00:00Z', distance_m: 99999 },
-      ],
-      now
-    )
-    expect(km).toBe(10)
-  })
 })
-
 describe('buildSkeleton', () => {
   const sk = buildSkeleton({
     today: '2026-10-12', // Monday
@@ -110,10 +95,13 @@ describe('buildSkeleton', () => {
     expect(sk.weeks[sk.totalWeeks - sk.taperWeeks - 1].phase).toBe('peak')
   })
 
-  it('starts from the baseline, floored at MIN_START_KM', () => {
+  it('starts from the baseline, floored only at the small MIN_START_KM sanity floor', () => {
     expect(sk.weeks[0].targetKm).toBe(30)
     const low = buildSkeleton({ today: '2026-10-12', goalDate: null, trainingDays: DAYS, baselineWeeklyKm: 0 })
     expect(low.weeks[0].targetKm).toBe(MIN_START_KM)
+    expect(MIN_START_KM).toBeLessThan(15)
+    const small = buildSkeleton({ today: '2026-10-12', goalDate: null, trainingDays: DAYS, baselineWeeklyKm: 9 })
+    expect(small.weeks[0].targetKm).toBe(9) // no more flat 15 km floor
   })
 
   it('scales a partial first week and marks it not full', () => {

@@ -114,3 +114,16 @@
 - [ ] Manual: generate marathon plan → view the **week calendar on a phone viewport** → complete a
       session via logged activity → **reschedule a future session to another day** (confirm a
       past/completed one offers no control) → adapt after a missed week.
+---
+## Phase 7 — Training recap (Req 6)
+### Task 7.1 — Spec + migration
+- [x] Update requirements/design/tasks; author `supabase/migrations/016_training_plan_recap.sql` (idempotent, applied by hand, BEFORE deploying code that writes the column).
+### Task 7.2 — Recap module + skeleton baseline
+- [x] `training-recap.ts` (pure, named constants) + tests; `buildSkeleton` takes the recap baseline, 15 km floor removed.
+### Task 7.3 — Workflow, prompt, targets, persistence
+- [x] Query 6 weeks of activities + profile DOB; recap block in the prompt; `applyRecapTargets`; `persistPlan` stores the snapshot; tool summary mentions recap.
+### Task 7.4 — API + UI
+- [x] `loadActivePlan`/`GET /api/plan` return `recap`; "What your plan is based on" section (`plan-recap.tsx`) + view-model tests.
+### Task 7.5 — Verification
+- [x] `npm run build`, `npm run lint`, `npm run test`.
+- [ ] Manual: view the recap on a phone viewport (portrait and short landscape); regenerate with a live LLM and check durations/zones.

@@ -15,7 +15,7 @@ re-learn them the hard way. Read this before touching Docker, Supabase, auth, or
 
 - `app/` — Next.js 16 (App Router, TypeScript, Tailwind 4). All application code.
 - `docker/` — Supabase self-hosted stack + the `app` service. Run compose from here.
-- `supabase/migrations/` — ordered SQL (`001`–`008`). Applied manually, NOT auto-run.
+- `supabase/migrations/` — ordered SQL (`001`–`016`). Applied manually, NOT auto-run.
 - `.kiro/specs/sportai-coaching-app/` — requirements, design, tasks (source of truth for scope).
 
 Run everything with an explicit env file: `docker compose --env-file .env <cmd>` from `docker/`.
@@ -23,6 +23,24 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 ---
 
 ## Critical gotchas (in priority order)
+
+### 50. Plan baseline and prompt come from the training recap, not a flat mean or the 15 km floor
+`lib/ai/workflows/training-recap.ts` `computeTrainingRecap(activities, profile, today)` is the ONLY source of the plan's starting
+volume, the prompt's history block and the stored snapshot (pure, no clock; `today` is the athlete's local date, activities are
+bucketed by local date in the profile timezone). It looks at the last 6 COMPLETE Monday weeks (the current partial week is ignored),
+a week qualifies with >= 2 activities, recent 4 weeks weigh 2x the older 2, and a week above 1.5x the median week is capped for the
+baseline. Under 3 qualifying weeks it is SPARSE: baseline = min(history, clamp(training days x 3 km, 6, 20)) and the prompt says so.
+`MIN_START_KM` in the skeleton is now only a 5 km sanity floor. All tunables are exported constants at the top of the module. Durations
+and bpm ranges are filled AFTER guardrails by `plan-recap-targets.ts` (only when pace / max HR are known), so repaired distances and
+durations stay consistent. Tests that build a skeleton by hand must pass the SAME baseline the recap yields (12 km for the default
+4 training days with no history), otherwise the guardrails see a different skeleton. Not verified against a live LLM.
+
+### 49. `training_plans.recap` needs migration 016 applied BEFORE deploying: `persistPlan` writes it
+Symptom (if forgotten): `POST /api/plan/generate` returns PERSIST_FAILED and `GET /api/plan` fails to load ("column recap does not exist").
+Cause: `016_training_plan_recap.sql` is applied MANUALLY (#4, #34); CI never runs migrations, and both the plan insert and `loadActivePlan` now
+name the column. (The brief assumed 015; 015 is `suggested_routes_retention`, so the recap migration is 016.)
+Fix: local `docker exec -i sportai-db psql -U postgres -d postgres < supabase/migrations/016_training_plan_recap.sql` (it also runs
+`notify pgrst, 'reload schema'`), prod: same over `gcloud compute ssh` as in #34, then deploy. Old plans have `recap = null` and the UI shows "not available".
 
 ### 48. Moved session locked after one move: the guard must accept `modified` (and no completed activity)
 Symptom: after one reschedule the Move button vanished, the coach could not adjust it, a same-day activity did not complete it.

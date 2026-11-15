@@ -606,10 +606,19 @@ export function buildCoachTools(
           sessionCount: r.sessionCount,
           replacedPreviousPlan: r.archivedPlanIds.length > 0,
           adjustments: r.adjustments,
+          basedOn: {
+            weeksUsed: r.recap.qualifyingWeeks,
+            weeksAnalysed: r.recap.weeks.length,
+            startingWeeklyKm: r.recap.baseline.weeklyKm,
+            historySparse: r.recap.sparse,
+          },
           message:
             (r.adjustments.length
               ? `Adjusted ${r.adjustments.length} ${r.adjustments.length === 1 ? 'week' : 'weeks'} to keep weekly increases under 10%; mention this briefly. `
-              : '') + 'Plan saved. Summarise briefly and point the athlete to the Plan page.',
+              : '') + (r.recap.sparse
+                ? 'History was sparse, so the plan starts conservatively; say so. '
+                : `Based on ${r.recap.qualifyingWeeks} of ${r.recap.weeks.length} recent weeks, starting near ${r.recap.baseline.weeklyKm} km/week; mention this. `) +
+              'Plan saved. Summarise briefly and point the athlete to the Plan page.',
         }
       } catch (err) {
         if (err instanceof PlanGenerationError) {

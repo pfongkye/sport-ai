@@ -8,6 +8,7 @@ import { addDays } from '@/lib/plan/dates'
 import { currentWeekIndex, groupByWeek } from '@/lib/plan/group-weeks'
 import type { ActivePlan } from '@/lib/plan/load-plan'
 import { GeneratePlanForm } from './generate-plan-form'
+import { PlanRecap } from './plan-recap'
 import { SessionCard } from './session-card'
 import { dayLabel, weekLabel } from './plan-format'
 
@@ -108,6 +109,7 @@ export function PlanView({ active, defaultGoal }: Props) {
       </p>
       {note && <p className="text-xs text-[var(--muted-foreground)]">{note}</p>}
 
+      <PlanRecap recap={plan.recap} />
       {week && (
         <section aria-label="Plan calendar" className="space-y-3">
           <div className="flex items-center justify-between gap-2">

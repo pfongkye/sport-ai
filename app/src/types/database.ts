@@ -207,6 +207,8 @@ export type _Database = {
           start_date: string
           end_date: string
           status: PlanStatus
+          /** Training recap snapshot (migration 016); null for older plans. */
+          recap: Json | null
           created_at: string
         }
         Insert: {
@@ -217,6 +219,7 @@ export type _Database = {
           start_date: string
           end_date: string
           status?: PlanStatus
+          recap?: Json | null
           created_at?: string
         }
         Update: {
@@ -224,6 +227,7 @@ export type _Database = {
           goal?: string | null
           end_date?: string
           status?: PlanStatus
+          recap?: Json | null
         }
       }
       planned_sessions: {
@@ -474,6 +478,8 @@ export interface TrainingPlan {
   start_date: string
   end_date: string
   status: PlanStatus
+  /** Training recap snapshot (migration 016); null for plans created before it. */
+  recap: Json | null
   created_at: string
 }
 

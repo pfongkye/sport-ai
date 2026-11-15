@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, TrainingPlan } from '@/types/database'
 import { getAthleteTimezone } from './session-guard'
 import { localDateInTz } from './dates'
+import { asRecap, type TrainingRecap } from '@/lib/ai/workflows/training-recap'
 
 export interface PlanSessionRow {
   id: string
@@ -18,7 +19,10 @@ export interface PlanSessionRow {
 }
 
 export interface ActivePlan {
-  plan: Pick<TrainingPlan, 'id' | 'title' | 'goal' | 'start_date' | 'end_date' | 'status'>
+  plan: Pick<TrainingPlan, 'id' | 'title' | 'goal' | 'start_date' | 'end_date' | 'status'> & {
+    /** Recap snapshot the plan was built from; null for plans created before recaps were stored. */
+    recap: TrainingRecap | null
+  }
   sessions: PlanSessionRow[]
   /** Today's date in the athlete's timezone. */
   today: string
@@ -39,7 +43,7 @@ export async function loadActivePlan(
 ): Promise<ActivePlan | null> {
   const { data: plan, error } = await supabase
     .from('training_plans')
-    .select('id, title, goal, start_date, end_date, status')
+    .select('id, title, goal, start_date, end_date, status, recap')
     .eq('user_id', userId)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
@@ -58,7 +62,7 @@ export async function loadActivePlan(
 
   const timezone = await getAthleteTimezone(supabase, userId)
   return {
-    plan,
+    plan: { ...plan, recap: asRecap(plan.recap) },
     sessions: (sessions ?? []) as PlanSessionRow[],
     today: localDateInTz(now, timezone),
     timezone,

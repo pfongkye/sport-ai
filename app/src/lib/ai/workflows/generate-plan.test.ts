@@ -43,7 +43,7 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
   })
 
   it('inserts the plan then its sessions, scoped to the user, window set by the skeleton', async () => {
-    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 0 })
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
     generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
     const { client, tables, calls } = seed()
 
@@ -65,7 +65,7 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
   })
 
   it('archives the previous active plan', async () => {
-    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 0 })
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
     generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
     const { client, tables } = seed({
       training_plans: [{ id: 'old', user_id: USER, status: 'active' }],
@@ -77,7 +77,7 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
   })
 
   it('on session-insert failure deletes the new plan and reactivates the old one (no empty plan)', async () => {
-    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 0 })
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
     generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
     const { client, tables } = seed(
       { training_plans: [{ id: 'old', user_id: USER, status: 'active' }] },
@@ -92,7 +92,7 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
   })
 
   it('writes nothing when the model plan breaks a guardrail', async () => {
-    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 0 })
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
     const bad = validPlanFor(sk)
     bad.sessions.push({ ...bad.sessions[0], scheduledDate: '2027-03-01' })
     generateObjectMock.mockResolvedValue({ object: bad })
@@ -126,7 +126,18 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
     const sk = () => makeSkeleton({ goalDate: GOAL_DATE, baseline: 30 })
     // TODAY 2026-10-12, baseline 30: weekly caps 30/33/36.3/...; week 3 jumps 20.1 -> 23.0.
     const NEAR_MISS = [20.1, 20.1, 23.0, 22.0, 22.5, 23, 24, 15]
-    const ACTS = { activities: [{ user_id: USER, sport_type: 'run', started_at: '2026-10-05T07:00:00Z', distance_m: 120000, duration_s: 36000 }] }
+    // 4 qualifying weeks of 2 x 15 km = 30 km/week, so the recap baseline is 30.
+    const ACTS = {
+      activities: ['2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'].flatMap((monday) =>
+        ['T07:00:00Z', 'T17:00:00Z'].map((t) => ({
+          user_id: USER,
+          sport_type: 'run',
+          started_at: `${monday}${t}`,
+          distance_m: 15000,
+          duration_s: 5400,
+        }))
+      ),
+    }
     const HOPELESS = [20.1, 20.1, 40, 22, 22.5, 23, 24, 15]
 
     it('repairs a 14% jump, persists the plan and returns the adjustment', async () => {
@@ -190,5 +201,56 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
       expect(prompt).toMatch(/sum of the run session distances/)
       expect(system).toMatch(/maxRunKm/)
     })
+  })
+})
+
+describe('training recap in the workflow', () => {
+  // 4 qualifying weeks, 2 easy runs each (pace 6:00/km, HR 140, max HR 190) + a long run.
+  const acts = ['2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'].flatMap((m) => [
+    { user_id: USER, sport_type: 'run', started_at: `${m}T07:00:00Z`, distance_m: 8000, duration_s: 2880, avg_hr_bpm: 140, max_hr_bpm: 190 },
+    { user_id: USER, sport_type: 'run', started_at: `${m}T17:00:00Z`, distance_m: 8000, duration_s: 2880, avg_hr_bpm: 140, max_hr_bpm: 190 },
+    { user_id: USER, sport_type: 'run', started_at: `${m}T19:00:00Z`, distance_m: 16000, duration_s: 6000, avg_hr_bpm: 142, max_hr_bpm: 190 },
+  ])
+  beforeEach(() => {
+    generateObjectMock.mockReset()
+  })
+
+  it('puts the recap block in the prompt instead of the per-sport line, and stores the snapshot', async () => {
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 32 })
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
+    const { client, tables } = seed({ activities: acts })
+    const r = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+    const { prompt, system } = generateObjectMock.mock.calls[0][0] as { prompt: string; system: string }
+    expect(prompt).toMatch(/=== ATHLETE TRAINING RECAP/)
+    expect(prompt).toMatch(/=== END RECAP ===/)
+    expect(prompt).toMatch(/Weeks used: 4 of 6/)
+    expect(prompt).toMatch(/Easy pace: 6:00 \/km/)
+    expect(prompt).not.toMatch(/Recent 4 weeks/)
+    expect(prompt).not.toMatch(/HISTORY IS SPARSE/)
+    expect(system).toMatch(/ATHLETE TRAINING RECAP/)
+    expect(r.recap.baseline.weeklyKm).toBe(32)
+    const stored = tables.training_plans[0].recap as { schemaVersion: number; qualifyingWeeks: number; baseline: { weeklyKm: number } }
+    expect(stored).toMatchObject({ schemaVersion: 1, qualifyingWeeks: 4, baseline: { weeklyKm: 32 } })
+  })
+
+  it('derives durations from the easy pace and adds the bpm range to descriptions', async () => {
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 32 })
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
+    const { client, tables } = seed({ activities: acts })
+    await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+    const easy = tables.planned_sessions.find((s) => s.session_type === 'easy')!
+    expect(easy.target_duration_s).toBe(Math.round(((easy.target_distance_m as number) / 1000) * 360))
+    expect(easy.description).toMatch(/Target HR 114-133 bpm \(zone 2, from max HR 190\)\./)
+  })
+
+  it('tells the model history is sparse and starts at the training-day fallback', async () => {
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
+    const { client, tables } = seed()
+    const r = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+    const { prompt } = generateObjectMock.mock.calls[0][0] as { prompt: string }
+    expect(prompt).toMatch(/HISTORY IS SPARSE/)
+    expect(r.recap.baseline).toMatchObject({ weeklyKm: 12, source: 'fallback' })
+    expect((tables.training_plans[0].recap as { sparse: boolean }).sparse).toBe(true)
   })
 })

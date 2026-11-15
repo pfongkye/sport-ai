@@ -167,6 +167,29 @@ data-stream work.
 
 ---
 
+## Training recap (Req 6)
+New pure module `app/src/lib/ai/workflows/training-recap.ts`; `computeTrainingRecap(activities, profile, today)`
+(`profile = { dateOfBirth, trainingDays, timezone }`, `today` is the athlete's local YYYY-MM-DD).
+- **Window**: the 6 complete Monday-based weeks before `mondayOf(today)`; activities are assigned to a week by
+  their local date (`localDateInTz`). Index 0 = oldest, 4 most recent weigh `RECENT_WEIGHT`.
+- **Qualifying** = `MIN_ACTIVITIES_PER_WEEK` activities of any sport. Excluded weeks keep their counts plus a `reason`.
+- **Run labels**: `long` (longest run of its week and >= `LONG_RUN_MEDIAN_RATIO` x median run distance), else by
+  HR share of max HR (`EASY_HR_MAX_PCT`, `HARD_HR_MIN_PCT`), else by pace relative to the median pace
+  (`TEMPO_PACE_RATIO`, `HARD_PACE_RATIO`); no HR and no pace gives `null`.
+- **Baseline**: weighted mean of week run km, each week capped at `OUTLIER_CAP_FACTOR` x the median when there are
+  at least `OUTLIER_MIN_WEEKS` qualifying weeks. Sparse (`< MIN_QUALIFYING_WEEKS`): `min(history, fallback)` where
+  `fallback = clamp(trainingDays x KM_PER_TRAINING_DAY, MIN_FALLBACK_KM, MAX_FALLBACK_KM)`; with no run history the fallback itself.
+  `MIN_START_KM` in the skeleton drops from 15 to a 5 km sanity floor.
+- **Recap shape** (`schemaVersion: 1`): `window`, `weeks[]`, `qualifyingWeeks`, `excludedWeeks`, `baseline`,
+  `typical { easyPace, tempoPace, long{distanceKm, pace}, runsPerWeek }`, `intensity`, `maxHr`, `trend`, `layoff`,
+  `otherSports`, `dataQuality`, `sparse`.
+- **Prompt**: `buildRecapBlock(recap)` in `generate-plan.ts`, delimited by `=== ATHLETE TRAINING RECAP ... ===` lines.
+- **Targets**: `plan-recap-targets.ts` `applyRecapTargets(plan, recap)` runs after guardrails/repair so durations follow the final
+  distances; it only fills `targetDurationS` (pace known) and appends the bpm range to the description (max HR known).
+- **Storage**: `training_plans.recap jsonb` (migration 016, applied by hand), written in the plan insert in `persistPlan`;
+  `loadActivePlan` returns it through `asRecap()` (null unless `schemaVersion` matches).
+- **UI**: `components/plan/plan-recap.tsx` (collapse state only) over the pure view model `recap-format.ts`.
+
 ## Things to be careful of
 
 1. **Empty-plan integrity (Req 5.2).** Never leave a `training_plans` row with zero sessions.
@@ -194,6 +217,7 @@ data-stream work.
 ---
 
 ## Testing strategy
+- Unit (Req 6): `computeTrainingRecap` on fixed fixtures (normal, 1-activity week, missing HR/pace, layoff, outlier, empty, fallback), skeleton baseline, prompt block, `applyRecapTargets`, `persistPlan` writes the recap, `loadActivePlan` returns it, recap view model.
 
 - Unit: skeleton math (weeks-to-goal, taper window, weekly volume caps) — pure, deterministic.
 - Unit: `planToRows` mapping + guardrail validators (reject out-of-window dates, unsafe ramp).

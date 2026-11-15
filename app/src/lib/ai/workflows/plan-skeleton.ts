@@ -20,7 +20,8 @@ export const MAX_PLAN_WEEKS = 24
 export const DEFAULT_PLAN_WEEKS = 12
 /** Max week-over-week volume increase (spec Req 1.6). */
 export const RAMP_RATE = 0.1
-export const MIN_START_KM = 15
+/** Sanity floor only. The real baseline (history or training-day fallback) comes from the training recap. */
+export const MIN_START_KM = 5
 export const MAX_WEEKLY_KM = 110
 const RECOVERY_FACTOR = 0.8
 const DEFAULT_TRAINING_DAYS = ['monday', 'wednesday', 'friday', 'saturday']
@@ -102,24 +103,13 @@ export function taperWeeksFor(totalWeeks: number, hasGoalDate: boolean): number 
   return 0
 }
 
-/** Average weekly RUN km over the last 4 weeks (0 with no runs). Pure. */
-export function computeBaselineWeeklyKm(
-  activities: { sport_type: string; started_at: string; distance_m: number | null }[],
-  now: Date
-): number {
-  const since = now.getTime() - 28 * 86400000
-  const meters = activities
-    .filter((a) => a.sport_type === 'run' && new Date(a.started_at).getTime() >= since)
-    .reduce((sum, a) => sum + (a.distance_m ?? 0), 0)
-  return +(meters / 1000 / 4).toFixed(1)
-}
-
 const round1 = (n: number) => Math.round(n * 10) / 10
 
 export interface SkeletonInput {
   today: string
   goalDate: string | null
   trainingDays: string[] | null | undefined
+  /** Starting weekly run km, from `computeTrainingRecap().baseline.weeklyKm`. */
   baselineWeeklyKm: number
 }
 
