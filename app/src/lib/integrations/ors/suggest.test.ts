@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { resolveStart, suggestRoute, selectCandidate, nextRoundTripLength, NO_LOCATION } from './suggest'
-import { ORS_NO_ROUTE } from './client'
+import { ORS_NO_ROUTE, ORS_LOOP_TOO_FAR } from './client'
 
 /**
  * Offline tests for the ORS suggest service. Supabase is stubbed (chainable,
@@ -329,6 +329,41 @@ describe('distance-first selection', () => {
     expect(bodies.map((b) => b.options.round_trip.seed)).toEqual([0, 1, 2])
   })
 
+  it('requests avoid_features and recovers from a 13x overshoot', async () => {
+    const bodies: Array<{ options: { avoid_features: string[]; round_trip: { length: number } } }> = []
+    const dists = [65000, 5200, 5200]
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_u: string, init: { body: string }) => {
+        bodies.push(JSON.parse(init.body))
+        return orsResponse(10, dists[call++])
+      })
+    )
+    const inserts: Record<string, unknown>[] = []
+    const r = await suggestRoute(makeSupabase({ onInsert: (x) => inserts.push(x) }), 'u1', {
+      distanceKm: 5,
+      terrain: 'flat',
+      coord,
+    })
+    expect(bodies[0].options.avoid_features).toEqual(['ferries', 'fords', 'steps'])
+    expect(bodies[1].options.round_trip.length).toBeLessThan(5000 * 0.5)
+    expect(r.distanceM).toBe(5200)
+    expect(inserts).toHaveLength(1)
+  })
+  it('throws ORS_LOOP_TOO_FAR when every candidate is outside the hard band', async () => {
+    const { fn } = stub([[10, 65000], [10, 40000], [10, 2000]])
+    const inserts: Record<string, unknown>[] = []
+    await expect(
+      suggestRoute(makeSupabase({ onInsert: (x) => inserts.push(x) }), 'u1', {
+        distanceKm: 5,
+        terrain: 'flat',
+        coord,
+      })
+    ).rejects.toThrow(ORS_LOOP_TOO_FAR)
+    expect(inserts).toHaveLength(0)
+    expect(fn.mock.calls.length).toBeLessThanOrEqual(3)
+  })
   it('prefers an in-tolerance candidate over a flatter out-of-tolerance one', async () => {
     stub([[5, 6500], [40, 5200], [60, 3000]])
     const r = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
@@ -378,9 +413,10 @@ describe('distance-first selection', () => {
       1000
     )
     expect(chosen.ascentM).toBe(9)
-    // clamped to 0.5x of the request
-    expect(nextRoundTripLength(10000, 10000, 100000)).toBe(5000)
-    // clamped to 1.5x
-    expect(nextRoundTripLength(10000, 10000, 1000)).toBe(15000)
+    // clamped to 0.1x of the request
+    expect(nextRoundTripLength(10000, 10000, 1000000)).toBe(1000)
+    expect(nextRoundTripLength(10000, 10000, 100000)).toBe(1000)
+    // clamped to 3x
+    expect(nextRoundTripLength(10000, 10000, 1000)).toBe(30000)
   })
 })

@@ -24,6 +24,17 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 43. Island/ferry runaway loops (15 km request → 202 km "loop" to Batam) — avoid_features + wide correction + hard band
+Symptom: 'Sentosa, Singapore' flat 15 km returned 'Closest loop found: 202.09 km' crossing the sea.
+Cause: ORS foot-walking allows ferries, so a round trip from an island ferries to another country; the old
+length correction was clamped to 0.5x..1.5x of the request, so a 13x overshoot could never be corrected, and
+the closest-candidate fallback returned it anyway.
+Fix: `orsRoundTrip` sends `options.avoid_features: ['ferries','fords','steps']` (valid foot-* values per the ORS
+routing-options docs; `highways`/`tollways` are driving-only and would 400). `LENGTH_SCALE_MIN/MAX` = 0.1/3, within
+MAX_SEEDS=3. `MIN/MAX_DISTANCE_RATIO` = 0.5/2 in suggest.ts: candidates outside are never returned; if none is
+inside, `ORS_LOOP_TOO_FAR` (422 via `orsErrorResponse`, relayed by the chat tool as a structured `error`), nothing saved.
+Not verified against the live API (no key in the agent env). `points` left at 4 (docs only say larger = rounder).
+
 ### 42. Map console error `AJAXError: Failed to fetch (0): tile.openstreetmap.org/20/...png` — cap zoom at 19
 Symptom: MapLibre logs failed tile fetches at zoom 20 (e.g. `/20/522319/378058.png`) when zoomed in on a route.
 Cause: the OSM standard tile server serves zoom 0-19 only, and a raster source without `maxzoom` makes MapLibre request z20+ tiles.

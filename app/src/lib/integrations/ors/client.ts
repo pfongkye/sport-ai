@@ -15,6 +15,14 @@ import { ORS_BASE_URL, ORS_TIMEOUT_MS, getOrsApiKey } from './config'
 import type { OrsRouteFeature } from './geo'
 
 /**
+ * ORS `options.avoid_features` for foot-* profiles. Valid foot values are
+ * ferries, fords, steps (highways/tollways are driving-only and make ORS 400).
+ * Ferries are what let an island round trip run to another country.
+ * Docs: giscience.github.io/openrouteservice/api-reference/endpoints/directions/routing-options
+ */
+export const ORS_FOOT_AVOID_FEATURES = ['ferries', 'fords', 'steps'] as const
+
+/**
  * Sentinel errors thrown by this client so callers can map them to friendly,
  * actionable messages (see errors.ts). The raw status text is attached as
  * `.cause` for logging — but NEVER log coordinates or the key alongside it.
@@ -22,6 +30,7 @@ import type { OrsRouteFeature } from './geo'
 export const ORS_RATE_LIMITED = 'ORS_RATE_LIMITED' // 429
 export const ORS_UNAUTHORIZED = 'ORS_UNAUTHORIZED' // 401/403 (bad/forbidden/missing key)
 export const ORS_NO_ROUTE = 'ORS_NO_ROUTE' // 404 / no routable path
+export const ORS_LOOP_TOO_FAR = 'ORS_LOOP_TOO_FAR' // no candidate within the hard distance band
 export const ORS_TIMEOUT = 'ORS_TIMEOUT' // AbortController fired
 export const ORS_UNAVAILABLE = 'ORS_UNAVAILABLE' // 5xx / network
 
@@ -101,7 +110,10 @@ export async function orsRoundTrip(opts: OrsRoundTripOptions): Promise<OrsRouteF
   const url = `${ORS_BASE_URL}/v2/directions/foot-walking/geojson`
   const body = JSON.stringify({
     coordinates: [[opts.lng, opts.lat]],
-    options: { round_trip: { length: opts.lengthM, points: 4, seed: opts.seed } },
+    options: {
+      round_trip: { length: opts.lengthM, points: 4, seed: opts.seed },
+      avoid_features: ORS_FOOT_AVOID_FEATURES,
+    },
     elevation: true,
     instructions: false,
   })

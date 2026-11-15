@@ -14,7 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { MAX_SEEDS } from './config'
-import { orsRoundTrip, orsGeocode } from './client'
+import { orsRoundTrip, orsGeocode, ORS_LOOP_TOO_FAR } from './client'
 import {
   bboxOf,
   computeElevationGain,
@@ -73,8 +73,14 @@ export interface RouteResult {
 export const DISTANCE_TOLERANCE = 0.1
 
 /** The `length` sent to ORS is corrected per seed but kept within these bounds. */
-export const LENGTH_SCALE_MIN = 0.5
-export const LENGTH_SCALE_MAX = 1.5
+export const LENGTH_SCALE_MIN = 0.1
+export const LENGTH_SCALE_MAX = 3
+/**
+ * Hard sanity band on actual/requested distance. A candidate outside it is never
+ * returned (not even as "closest"): e.g. an island loop that ferries to another country.
+ */
+export const MAX_DISTANCE_RATIO = 2
+export const MIN_DISTANCE_RATIO = 0.5
 /** Absolute ORS round_trip length bounds (meters). */
 export const ORS_MIN_LENGTH_M = 500
 export const ORS_MAX_LENGTH_M = 100_000
@@ -314,7 +320,15 @@ export async function suggestRoute(
   }
 
   // Distance first, then terrain (flat → least ascent, uphill → most).
-  const analysed = candidates.map((feature) => {
+  // Candidates outside the hard band are dropped before selection.
+  const inBand = candidates.filter((f) => {
+    const ratio = featureDistanceM(f, requestedDistanceM) / requestedDistanceM
+    return ratio >= MIN_DISTANCE_RATIO && ratio <= MAX_DISTANCE_RATIO
+  })
+  if (inBand.length === 0) {
+    throw new Error(ORS_LOOP_TOO_FAR, { cause: 'no candidate within the hard distance band' })
+  }
+  const analysed = inBand.map((feature) => {
     const analysis = analyse(feature)
     return {
       feature,

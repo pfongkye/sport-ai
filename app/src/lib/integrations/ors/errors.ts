@@ -1,4 +1,5 @@
 import {
+  ORS_LOOP_TOO_FAR,
   ORS_NO_ROUTE,
   ORS_RATE_LIMITED,
   ORS_TIMEOUT,
@@ -14,6 +15,13 @@ export function orsErrorResponse(err: unknown): { status: number; message: strin
     return {
       status: 422,
       message: 'I need a start location — share your location or tell me where to run.',
+    }
+  }
+  if (msg === ORS_LOOP_TOO_FAR) {
+    return {
+      status: 422,
+      message:
+        "Couldn't find a loop of about the requested distance from here (the area may be an island or have limited paths). Try a different start point or distance.",
     }
   }
   if (msg === ORS_NO_ROUTE) {

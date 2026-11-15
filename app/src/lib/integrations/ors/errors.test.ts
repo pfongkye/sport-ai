@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { orsErrorResponse } from './errors'
 import {
   classifyOrsError,
+  ORS_LOOP_TOO_FAR,
   ORS_NO_ROUTE,
   ORS_RATE_LIMITED,
   ORS_TIMEOUT,
@@ -54,6 +55,11 @@ describe('orsErrorResponse', () => {
     expect(r.message).toMatch(/different distance|start point/i)
   })
 
+  it('maps ORS_LOOP_TOO_FAR to 422 with an island hint', () => {
+    const r = orsErrorResponse(new Error(ORS_LOOP_TOO_FAR))
+    expect(r.status).toBe(422)
+    expect(r.message).toMatch(/island/i)
+  })
   it('maps ORS_RATE_LIMITED to 429', () => {
     const r = orsErrorResponse(new Error(ORS_RATE_LIMITED))
     expect(r.status).toBe(429)
