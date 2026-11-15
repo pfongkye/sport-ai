@@ -73,6 +73,55 @@ export function routeBounds(feature: RouteFeature, bbox?: readonly number[] | nu
   return [minLng, minLat, maxLng, maxLat]
 }
 
+const EARTH_RADIUS_M = 6371008.8
+
+/** Haversine distance in metres between two [lng, lat] points. */
+export function haversineMeters(a: readonly number[], b: readonly number[]): number {
+  const rad = Math.PI / 180
+  const dLat = (b[1] - a[1]) * rad
+  const dLng = (b[0] - a[0]) * rad
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * rad) * Math.cos(b[1] * rad) * Math.sin(dLng / 2) ** 2
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+export interface KmPoint {
+  km: number
+  lng: number
+  lat: number
+}
+
+/**
+ * Points at every full kilometre (1, 2, 3 ...) walking the line by cumulative
+ * haversine distance. Ignores any elevation component. Positions are linearly
+ * interpolated on the segment that crosses the km boundary.
+ */
+export function kmPointsAlongLine(coords: ReadonlyArray<readonly number[]>): KmPoint[] {
+  const out: KmPoint[] = []
+  let cum = 0
+  let nextKm = 1
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1]
+    const b = coords[i]
+    const seg = haversineMeters(a, b)
+    if (!(seg > 0)) continue
+    while (cum + seg >= nextKm * 1000) {
+      const t = (nextKm * 1000 - cum) / seg
+      out.push({ km: nextKm, lng: a[0] + (b[0] - a[0]) * t, lat: a[1] + (b[1] - a[1]) * t })
+      nextKm++
+    }
+    cum += seg
+  }
+  return out
+}
+
+/** Km marker step for a zoom level: every km when zoomed in, thinner when out. */
+export function kmStepForZoom(zoom: number): number {
+  if (zoom >= 13) return 1
+  if (zoom >= 11.5) return 5
+  return 10
+}
+
 /**
  * [zoom, widthPx] stops for the route line. ~4px at zoom 13 matches the old
  * fixed look at the default fitted zoom; thinner zoomed out, capped when zoomed in

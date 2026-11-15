@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   toRouteFeature,
   routeBounds,
+  kmPointsAlongLine,
+  kmStepForZoom,
+  haversineMeters,
   ROUTE_LINE_WIDTH,
   ROUTE_CASING_WIDTH,
   ROUTE_LINE_WIDTH_STOPS,
@@ -20,6 +23,39 @@ describe('toRouteFeature', () => {
   it('drops invalid points and returns null when < 2 remain', () => {
     expect(toRouteFeature({ type: 'LineString', coordinates: [[1, 2], [NaN, 4]] })).toBeNull()
     expect(toRouteFeature('not json')).toBeNull()
+  })
+})
+
+describe('kmPointsAlongLine', () => {
+  // ~0.0288 deg of latitude is ~3.2 km
+  const line = [[2, 45, 5], [2, 45.0288, 9]]
+  it('gives a marker per full km on a ~3.2 km line', () => {
+    const pts = kmPointsAlongLine(line)
+    expect(pts.map((p) => p.km)).toEqual([1, 2, 3])
+    pts.forEach((p) => {
+      expect(haversineMeters([2, 45], [p.lng, p.lat])).toBeGreaterThan(p.km * 1000 - 5)
+      expect(haversineMeters([2, 45], [p.lng, p.lat])).toBeLessThan(p.km * 1000 + 5)
+      expect(p.lng).toBeCloseTo(2, 9)
+      expect(p.lat).toBeGreaterThan(45)
+      expect(p.lat).toBeLessThan(45.0288)
+    })
+  })
+  it('gives none for a line under 1 km', () => {
+    expect(kmPointsAlongLine([[2, 45], [2, 45.005]])).toEqual([])
+    expect(kmPointsAlongLine([])).toEqual([])
+  })
+  it('accumulates distance across multiple segments', () => {
+    const pts = kmPointsAlongLine([[2, 45], [2, 45.006], [2, 45.012]])
+    expect(pts.map((p) => p.km)).toEqual([1])
+    expect(pts[0].lat).toBeGreaterThan(45.006)
+  })
+})
+
+describe('kmStepForZoom', () => {
+  it('thins out as zoom decreases', () => {
+    expect(kmStepForZoom(15)).toBe(1)
+    expect(kmStepForZoom(12)).toBe(5)
+    expect(kmStepForZoom(9)).toBe(10)
   })
 })
 
