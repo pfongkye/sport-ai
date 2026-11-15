@@ -47,9 +47,9 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-4xl">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         <h1 className="text-2xl font-bold text-[var(--foreground)]">Activities</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             onClick={() => {
