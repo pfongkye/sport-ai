@@ -40,8 +40,22 @@ export function weeklyRunKm(plan: PlanDraft, sk: Skeleton): number[] {
  * at or under the skeleton target, and the ~10%/week ramp.
  */
 export function validatePlan(plan: PlanDraft, sk: Skeleton): string[] {
+  const { hard, soft } = validatePlanDetailed(plan, sk)
+  return [...hard, ...soft]
+}
+
+export interface PlanIssues {
+  /** Structural problems: never repaired, always reject. */
+  hard: string[]
+  /** Weekly volume problems: repairable by scaling distances down. */
+  soft: string[]
+}
+
+/** Same checks as validatePlan, split into structural (hard) and volume (soft, repairable). */
+export function validatePlanDetailed(plan: PlanDraft, sk: Skeleton): PlanIssues {
   const issues: string[] = []
-  if (!plan.sessions.length) return ['The plan has no training sessions.']
+  const soft: string[] = []
+  if (!plan.sessions.length) return { hard: ['The plan has no training sessions.'], soft }
 
   const perDay = new Map<string, number>()
   for (const s of plan.sessions) {
@@ -83,7 +97,7 @@ export function validatePlan(plan: PlanDraft, sk: Skeleton): string[] {
       if (!hasLong) issues.push(`Week of ${w.weekStart} has no long run.`)
     }
     if (km[i] > w.targetKm * TARGET_TOLERANCE + RAMP_SLACK_KM) {
-      issues.push(
+      soft.push(
         `Week of ${w.weekStart} totals ${km[i].toFixed(1)} km, above the ${w.targetKm} km cap.`
       )
     }
@@ -93,12 +107,71 @@ export function validatePlan(plan: PlanDraft, sk: Skeleton): string[] {
       const prevTwo = [km[i - 1], i > 1 && sk.weeks[i - 2].full ? km[i - 2] : 0]
       const ref = Math.max(...prevTwo)
       if (ref > 0 && km[i] > ref * (1 + RAMP_RATE) + RAMP_SLACK_KM) {
-        issues.push(
+        soft.push(
           `Week of ${w.weekStart} (${km[i].toFixed(1)} km) jumps more than ${Math.round(RAMP_RATE * 100)}% over ${ref.toFixed(1)} km.`
         )
       }
     }
   })
 
-  return issues
+  return { hard: issues, soft }
+}
+
+/** A repair never cuts a week below this share of what the model wrote; a deeper cut means regenerate. */
+export const MIN_REPAIR_SCALE = 0.6
+
+export interface PlanRepair {
+  plan: PlanDraft
+  /** Human-readable, one per repaired week. */
+  adjustments: string[]
+  /** Short trace per session index (same order as plan.sessions); null when untouched. */
+  sessionNotes: (string | null)[]
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10
+
+/**
+ * Deterministic repair of weekly-volume violations. Walks the weeks forward and
+ * scales a week's run distances (and durations, proportionally) DOWN so it meets
+ * its cap; the ramp reference is the previous (possibly repaired) weeks.
+ * Never scales up; one uniform factor per week keeps ratios, so the long run
+ * stays the longest. A week needing a cut deeper than MIN_REPAIR_SCALE is left
+ * as-is so validation still reports it.
+ */
+export function repairPlan(plan: PlanDraft, sk: Skeleton): PlanRepair {
+  const sessions = plan.sessions.map((s) => ({ ...s }))
+  const sessionNotes: (string | null)[] = sessions.map(() => null)
+  const adjustments: string[] = []
+  const km = weeklyRunKm({ ...plan, sessions }, sk)
+  sk.weeks.forEach((w, i) => {
+    const end = addDays(w.weekStart, 6)
+    const capLimit = w.targetKm * TARGET_TOLERANCE
+    let rampLimit = Infinity
+    if (w.full && i > 0 && sk.weeks[i - 1].full) {
+      const ref = Math.max(km[i - 1], i > 1 && sk.weeks[i - 2].full ? km[i - 2] : 0)
+      if (ref > 0) rampLimit = ref * (1 + RAMP_RATE)
+    }
+    const overCap = km[i] > capLimit + RAMP_SLACK_KM
+    const overRamp = km[i] > rampLimit + RAMP_SLACK_KM
+    if (!overCap && !overRamp) return
+    const limit = Math.min(capLimit, rampLimit)
+    const factor = limit / km[i]
+    if (!(factor >= MIN_REPAIR_SCALE) || factor >= 1) return
+    const before = km[i]
+    sessions.forEach((s, idx) => {
+      if (!isRun(s.sportType) || s.scheduledDate < w.weekStart || s.scheduledDate > end) return
+      if (s.targetDistanceM != null) s.targetDistanceM = Math.floor(s.targetDistanceM * factor)
+      if (s.targetDurationS != null) s.targetDurationS = Math.floor(s.targetDurationS * factor)
+      sessionNotes[idx] = `Distance reduced ${Math.round((1 - factor) * 100)}% automatically to keep the weekly volume within safe limits.`
+    })
+    km[i] = weeklyRunKm({ ...plan, sessions }, sk)[i]
+    const reason =
+      limit === rampLimit
+        ? `to keep progression under ${Math.round(RAMP_RATE * 100)}%`
+        : `to stay within the ${w.targetKm} km weekly target`
+    adjustments.push(
+      `Week of ${w.weekStart} reduced from ${before.toFixed(1)} km to ${round1(km[i]).toFixed(1)} km ${reason}`
+    )
+  })
+  return { plan: { ...plan, sessions }, adjustments, sessionNotes }
 }

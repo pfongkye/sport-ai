@@ -33,3 +33,18 @@ export function validPlanFor(sk: Skeleton): PlanDraft {
   }
   return { title: 'Marathon plan', goal: 'Marathon 3h30', startDate: sk.startDate, endDate: sk.endDate, sessions }
 }
+
+/** A plan whose run sessions are scaled so each skeleton week totals `km[i]` (long run is the biggest session). */
+export function planWithWeeklyKm(sk: Skeleton, km: number[]): PlanDraft {
+  const plan = validPlanFor(sk)
+  sk.weeks.forEach((w, i) => {
+    const inWeek = plan.sessions.filter((s) => w.slotDates.includes(s.scheduledDate))
+    const total = inWeek.reduce((a, s) => a + (s.targetDistanceM ?? 0), 0)
+    const f = total > 0 ? (km[i] * 1000) / total : 0
+    for (const s of inWeek) {
+      s.targetDistanceM = Math.round((s.targetDistanceM ?? 0) * f)
+      s.targetDurationS = Math.round((s.targetDistanceM ?? 0) * 0.33)
+    }
+  })
+  return plan
+}

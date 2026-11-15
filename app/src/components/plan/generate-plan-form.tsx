@@ -9,7 +9,7 @@ interface Props {
   defaultGoal: string
   /** True when an active plan exists: generating replaces (archives) it. */
   replacing: boolean
-  onDone?: (message: string) => void
+  onDone?: (message: string, note?: string) => void
 }
 
 /** Goal + optional goal date → POST /api/plan/generate, then refresh the page data. */
@@ -37,12 +37,17 @@ export function GeneratePlanForm({ defaultGoal, replacing, onDone }: Props) {
         error?: string
         sessionCount?: number
         weeks?: number
+        adjustments?: string[]
       }
       if (!res.ok) {
         setError(json.error ?? 'Could not generate a plan.')
         return
       }
-      onDone?.(`Plan created: ${json.sessionCount ?? 0} sessions over ${json.weeks ?? 0} weeks.`)
+      const n = json.adjustments?.length ?? 0
+      onDone?.(
+        `Plan created: ${json.sessionCount ?? 0} sessions over ${json.weeks ?? 0} weeks.`,
+        n ? `Adjusted ${n} ${n === 1 ? 'week' : 'weeks'} to keep weekly increases under 10%.` : undefined
+      )
       router.refresh()
     } catch {
       setError('Network error. Try again.')

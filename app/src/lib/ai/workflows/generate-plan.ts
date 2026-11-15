@@ -7,15 +7,20 @@ import { localDateInTz } from '@/lib/plan/dates'
 import { planSchema, planToRows, type PlanDraft } from './plan-schema'
 import {
   buildSkeleton,
+  RAMP_RATE,
   computeBaselineWeeklyKm,
   SkeletonError,
   type Skeleton,
 } from './plan-skeleton'
-import { sanitizePlan, validatePlan } from './plan-guardrails'
+import { repairPlan, sanitizePlan, TARGET_TOLERANCE, validatePlanDetailed } from './plan-guardrails'
 
 /** Bounded generation time (spec Req 5.1). A multi-month plan is a large output. */
 export const PLAN_TIMEOUT_MS = 90_000
 const MAX_OUTPUT_TOKENS = 16_000
+/** Whole-request budget (first call + one feedback retry); the route's maxDuration is above it. */
+export const PLAN_TOTAL_BUDGET_MS = 170_000
+/** Do not start the retry with less than this left. */
+const MIN_RETRY_MS = 20_000
 
 export type PlanErrorCode =
   | 'GOAL_DATE_INVALID'
@@ -55,6 +60,8 @@ export interface GeneratePlanResult {
   weeks: number
   /** Ids of plans archived by this generation. */
   archivedPlanIds: string[]
+  /** Weeks the guardrails scaled down automatically; empty when the plan was used as generated. */
+  adjustments: string[]
 }
 
 /**
@@ -117,51 +124,78 @@ export async function generateTrainingPlan(
     throw new PlanGenerationError('AI_NOT_CONFIGURED', 'AI is not configured.')
   }
 
-  let draft: PlanDraft
-  try {
-    const result = await generateObject({
-      model,
-      schema: planSchema,
-      system: buildSystemPrompt(),
-      prompt: buildPrompt({
-        goal,
-        today,
-        skeleton,
-        sportPrefs: profile?.sport_prefs ?? ['run'],
-        readiness,
-        recent: summariseRecent(recentActivities),
-      }),
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      abortSignal: AbortSignal.timeout(PLAN_TIMEOUT_MS),
-    })
-    draft = result.object
-  } catch (err) {
-    console.error('[plan/generate] generateObject failed', err)
-    const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
-    throw new PlanGenerationError(
-      timedOut ? 'TIMEOUT' : 'GENERATION_FAILED',
-      timedOut
-        ? 'Plan generation took too long. Try again.'
-        : 'The AI could not produce a plan. Try again.'
-    )
+  const startedAt = Date.now()
+  const promptArgs = {
+    goal,
+    today,
+    skeleton,
+    sportPrefs: profile?.sport_prefs ?? ['run'],
+    readiness,
+    recent: summariseRecent(recentActivities),
+  }
+  const callModel = async (feedback: string[] | null): Promise<PlanDraft> => {
+    const remaining = PLAN_TOTAL_BUDGET_MS - (Date.now() - startedAt)
+    try {
+      const result = await generateObject({
+        model,
+        schema: planSchema,
+        system: buildSystemPrompt(),
+        prompt: buildPrompt({ ...promptArgs, feedback }),
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        abortSignal: AbortSignal.timeout(Math.min(PLAN_TIMEOUT_MS, remaining)),
+      })
+      return result.object
+    } catch (err) {
+      console.error('[plan/generate] generateObject failed', err)
+      const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+      throw new PlanGenerationError(
+        timedOut ? 'TIMEOUT' : 'GENERATION_FAILED',
+        timedOut
+          ? 'Plan generation took too long. Try again.'
+          : 'The AI could not produce a plan. Try again.'
+      )
+    }
   }
 
-  // ── 4. Validate + guardrails (nothing written on failure) ─────────────────
-  const clean = sanitizePlan(draft)
-  const issues = validatePlan(clean, skeleton)
-  if (issues.length) {
+  // ── 4. Validate, repair soft volume violations, else retry once ───────────
+  const rejected = (issues: string[], soft: boolean) => {
     console.warn('[plan/generate] plan rejected by guardrails', issues)
-    throw new PlanGenerationError(
+    return new PlanGenerationError(
       'INVALID_PLAN',
-      'The generated plan did not meet safety checks, so nothing was saved. Try again.',
+      soft
+        ? 'The plan was slightly outside safe limits, so nothing was saved. Try again.'
+        : 'The generated plan did not meet safety checks, so nothing was saved. Try again.',
       issues
     )
   }
+  const check = (draft: PlanDraft) => {
+    const clean = sanitizePlan(draft)
+    const { hard, soft } = validatePlanDetailed(clean, skeleton)
+    if (hard.length) throw rejected([...hard, ...soft], false)
+    if (!soft.length) return { ok: true as const, plan: clean, adjustments: [] as string[], notes: [] as (string | null)[] }
+    const repaired = repairPlan(clean, skeleton)
+    const after = validatePlanDetailed(repaired.plan, skeleton)
+    if (after.hard.length || after.soft.length) {
+      return { ok: false as const, issues: [...after.hard, ...after.soft] }
+    }
+    return { ok: true as const, plan: repaired.plan, adjustments: repaired.adjustments, notes: repaired.sessionNotes }
+  }
+
+  let outcome = check(await callModel(null))
+  if (!outcome.ok) {
+    console.warn('[plan/generate] repair insufficient, retrying once with feedback', outcome.issues)
+    if (PLAN_TOTAL_BUDGET_MS - (Date.now() - startedAt) < MIN_RETRY_MS) throw rejected(outcome.issues, true)
+    outcome = check(await callModel(outcome.issues))
+    if (!outcome.ok) throw rejected(outcome.issues, true)
+  }
+  const clean = outcome.plan
+  if (outcome.adjustments.length) console.info('[plan/generate] repaired weeks', outcome.adjustments)
+
   // The window is ours, not the model's.
   const plan: PlanDraft = { ...clean, startDate: skeleton.startDate, endDate: skeleton.endDate }
 
   // ── 5. Persist: archive old → insert plan → insert sessions ───────────────
-  const archived = await persistPlan(supabase, userId, plan, goal)
+  const archived = await persistPlan(supabase, userId, plan, goal, outcome.notes)
 
   return {
     planId: archived.planId,
@@ -171,6 +205,7 @@ export async function generateTrainingPlan(
     endDate: plan.endDate,
     weeks: skeleton.totalWeeks,
     archivedPlanIds: archived.archivedPlanIds,
+    adjustments: outcome.adjustments,
   }
 }
 
@@ -184,7 +219,8 @@ export async function persistPlan(
   supabase: SupabaseClient<Database>,
   userId: string,
   plan: PlanDraft,
-  goal: string
+  goal: string,
+  aiNotes: (string | null)[] = []
 ): Promise<{ planId: string; archivedPlanIds: string[] }> {
   const { data: active, error: activeErr } = await supabase
     .from('training_plans')
@@ -231,7 +267,7 @@ export async function persistPlan(
 
   const { error: sessionsErr } = await supabase
     .from('planned_sessions')
-    .insert(planToRows(plan, userId, inserted.id))
+    .insert(planToRows(plan, userId, inserted.id, aiNotes))
   if (sessionsErr) {
     console.error('[plan/generate] session insert failed, cleaning up', sessionsErr)
     await supabase.from('training_plans').delete().eq('id', inserted.id).eq('user_id', userId)
@@ -268,7 +304,8 @@ export function buildSystemPrompt(): string {
     'HARD RULES (a plan that breaks any of them is discarded):',
     '- Schedule sessions ONLY on the listed slot dates. Never on any other date. At most 2 sessions on one date.',
     '- Do NOT output rest-day rows. A date without a session is a rest day.',
-    '- Weekly total of run distance must be at or below the week\'s target km, and never more than ~10% above the previous week.',
+    '- Each week has a maxRunKm in the skeleton. The SUM of that week\'s run session distances must be at or below maxRunKm. Aim for 95% of it or less; rounding up is what gets plans rejected.',
+    '- maxRunKm already reflects the 10% weekly progression limit (previous week\'s total x 1.10) and the absolute weekly cap. Never exceed it, and never go above a previous week by more than 10%.',
     '- Every base/build/peak week with 3+ slots needs exactly one session whose sessionType is "long run" (use the week\'s long-run km).',
     '- Distances are in METRES (targetDistanceM), durations in SECONDS (targetDurationS), HR zone is an integer 1-5 or null.',
     'PERIODIZATION: progressive overload through base and build, a lighter recovery week as marked, a taper (reduced volume, keep a little intensity) before the goal date. Most running is easy (zone 2); add tempo or intervals once or twice a week in build/peak phases only.',
@@ -285,12 +322,22 @@ export function buildPrompt(args: {
   sportPrefs: string[]
   readiness: { score: number; label: string; ctl: number; atl: number; tsb: number; message: string } | null
   recent: string
+  /** Concrete guardrail violations from the previous attempt (retry only). */
+  feedback?: string[] | null
 }): string {
   const { skeleton: sk } = args
+  // Per week: the absolute cap and previous week's target x 1.10; the lower wins.
+  const maxRunKm = sk.weeks.map((w, i) => {
+    const abs = w.targetKm * TARGET_TOLERANCE
+    const prev = sk.weeks[i - 1]
+    const ramp = w.full && prev?.full ? prev.targetKm * (1 + RAMP_RATE) : Infinity
+    return Math.round(Math.min(abs, ramp) * 10) / 10
+  })
   const weeks = sk.weeks.map((w) => ({
     week: w.index + 1,
     phase: w.phase,
     targetRunKm: w.targetKm,
+    maxRunKm: maxRunKm[w.index],
     longRunKm: w.longRunKm,
     slotDates: w.slotDates,
   }))
@@ -307,5 +354,12 @@ export function buildPrompt(args: {
     `Recent 4 weeks: ${args.recent}`,
     `Weekly skeleton (JSON):`,
     JSON.stringify(weeks),
+    'For every week, the sum of the run session distances (targetDistanceM / 1000) must not exceed that week\'s maxRunKm. Check each week\'s sum before answering.',
+    ...(args.feedback?.length
+      ? [
+          'YOUR PREVIOUS ATTEMPT WAS REJECTED for these reasons. Fix them (reduce the volume of the listed weeks and keep every other week within its maxRunKm):',
+          ...args.feedback.map((f) => `- ${f}`),
+        ]
+      : []),
   ].join('\n')
 }

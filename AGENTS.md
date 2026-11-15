@@ -24,6 +24,17 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 47. Plan rejected for a 14% week (23.0 vs 20.1 km): repair soft volume violations, don't discard the plan
+Symptom: `POST /api/plan/generate` 422 "did not meet safety checks" after ~22 s; log `Week of 2027-02-15 (23.0 km) jumps more
+than 10% over 20.1 km.` Cause: any guardrail issue rejected the whole plan, though the model only overshot the ramp by a few km.
+Fix (`plan-guardrails.ts`, `generate-plan.ts`): `validatePlanDetailed` returns `{hard, soft}`. HARD rejects. SOFT (weekly
+cap/ramp) goes through `repairPlan`: forward week-by-week, scales run distances/durations DOWN with one factor per week (floor,
+never up, long run stays longest, ratios kept), limited to `MIN_REPAIR_SCALE` (0.6); deeper cuts are left to ONE retry of
+`generateObject` with the violation messages appended (total budget `PLAN_TOTAL_BUDGET_MS` 170 s, route `maxDuration` 180;
+Cloud Run's default request timeout is 300 s). Repairs are returned as `adjustments`, shown in the plan UI and the coach tool,
+and traced in `planned_sessions.ai_notes`. The prompt gives each week `maxRunKm` = min(target x 1.15, previous target x 1.10).
+Tests mock `generateObject`; real-LLM behaviour is unverified. `generateObject` still logs `AISDK_DEP_GENERATE_OBJECT` (deprecated).
+
 ### 46. Training plan: one shared future-and-pending guard, skeleton owns the numbers
 Plan generation (`lib/ai/workflows/generate-plan.ts`) is context → deterministic skeleton (`plan-skeleton.ts`:
 window, Monday weeks, slots from `profiles.training_days`, taper, +10%/wk cap) → ONE `generateObject` → guardrails
@@ -33,8 +44,9 @@ edits planned sessions on the athlete's behalf (manual reschedule route, `adjust
 `lib/plan/session-guard.ts` (`isFutureAndPending` + `applyFutureAndPending` in the UPDATE, "today" from
 `user_settings.timezone` via `getAthleteToday`). Do not re-implement the filter. Single active plan is enforced in
 code only (no partial unique index yet; open decision). Activity auto-link (`lib/plan/link-activity.ts`) runs
-best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Not verified against a live LLM: a
-model that ignores the caps gets its plan rejected; if that happens often, loosen `TARGET_TOLERANCE` or retry once.
+best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Guardrail failures are split HARD
+(structure: window, days, rest day, long run, empty: always reject) vs SOFT (weekly volume/ramp: repaired, see #46). Not
+verified against a live LLM: if repair + the single feedback retry still reject often, loosen `TARGET_TOLERANCE`.
 
 ### 45. Vitest test fails with an error the code already caught: `beforeEach(() => mock.mockReset())`
 Symptom: a test asserting a mocked `generateObject` rejection is handled passes all its expects, then fails with

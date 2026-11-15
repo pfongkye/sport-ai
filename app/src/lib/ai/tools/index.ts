@@ -605,7 +605,11 @@ export function buildCoachTools(
           weeks: r.weeks,
           sessionCount: r.sessionCount,
           replacedPreviousPlan: r.archivedPlanIds.length > 0,
-          message: 'Plan saved. Summarise briefly and point the athlete to the Plan page.',
+          adjustments: r.adjustments,
+          message:
+            (r.adjustments.length
+              ? `Adjusted ${r.adjustments.length} ${r.adjustments.length === 1 ? 'week' : 'weeks'} to keep weekly increases under 10%; mention this briefly. `
+              : '') + 'Plan saved. Summarise briefly and point the athlete to the Plan page.',
         }
       } catch (err) {
         if (err instanceof PlanGenerationError) {

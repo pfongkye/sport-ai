@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
-import { makeSkeleton, validPlanFor } from './plan-fixtures'
+import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
 
 // No network, no paid API: mock the AI SDK call and the provider/readiness layers.
 const generateObjectMock = vi.fn()
@@ -120,5 +120,75 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
       code: 'GOAL_TOO_SOON',
     })
     expect(generateObjectMock).not.toHaveBeenCalled()
+  })
+
+  describe('near-miss recovery', () => {
+    const sk = () => makeSkeleton({ goalDate: GOAL_DATE, baseline: 30 })
+    // TODAY 2026-10-12, baseline 30: weekly caps 30/33/36.3/...; week 3 jumps 20.1 -> 23.0.
+    const NEAR_MISS = [20.1, 20.1, 23.0, 22.0, 22.5, 23, 24, 15]
+    const ACTS = { activities: [{ user_id: USER, sport_type: 'run', started_at: '2026-10-05T07:00:00Z', distance_m: 120000, duration_s: 36000 }] }
+    const HOPELESS = [20.1, 20.1, 40, 22, 22.5, 23, 24, 15]
+
+    it('repairs a 14% jump, persists the plan and returns the adjustment', async () => {
+      generateObjectMock.mockResolvedValue({ object: planWithWeeklyKm(sk(), NEAR_MISS) })
+      const { client, tables } = seed(ACTS)
+      const r = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+      expect(generateObjectMock).toHaveBeenCalledTimes(1)
+      expect(r.adjustments).toHaveLength(1)
+      expect(r.adjustments[0]).toMatch(/Week of 2026-10-26 reduced from 23\.0 km to 22\.\d km/)
+      expect(tables.training_plans).toHaveLength(1)
+      const week = tables.planned_sessions.filter((s) => (s.scheduled_date as string) >= '2026-10-26' && (s.scheduled_date as string) <= '2026-11-01')
+      const km = week.reduce((a, s) => a + (s.target_distance_m as number), 0) / 1000
+      expect(km).toBeLessThanOrEqual(22.11)
+      expect(week.every((s) => typeof s.ai_notes === 'string')).toBe(true)
+    })
+
+    it('still rejects hard (structural) violations without retrying', async () => {
+      const bad = planWithWeeklyKm(sk(), NEAR_MISS)
+      bad.sessions.push({ ...bad.sessions[0], scheduledDate: '2027-03-01' })
+      generateObjectMock.mockResolvedValue({ object: bad })
+      const { client, tables } = seed()
+      const err = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW }).catch((e) => e)
+      expect(err.code).toBe('INVALID_PLAN')
+      expect(generateObjectMock).toHaveBeenCalledTimes(1)
+      expect(tables.training_plans).toHaveLength(0)
+    })
+
+    it('retries exactly once with the violations as feedback, then rejects', async () => {
+      generateObjectMock.mockResolvedValue({ object: planWithWeeklyKm(sk(), HOPELESS) })
+      const { client, tables } = seed(ACTS)
+      const err = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW }).catch((e) => e)
+      expect(err).toBeInstanceOf(PlanGenerationError)
+      expect(err.code).toBe('INVALID_PLAN')
+      expect(generateObjectMock).toHaveBeenCalledTimes(2)
+      const [first, second] = generateObjectMock.mock.calls.map((c) => (c[0] as { prompt: string }).prompt)
+      expect(first).not.toMatch(/PREVIOUS ATTEMPT WAS REJECTED/)
+      expect(second).toMatch(/PREVIOUS ATTEMPT WAS REJECTED/)
+      expect(second).toMatch(/Week of 2026-10-26/)
+      expect(tables.training_plans).toHaveLength(0)
+    })
+
+    it('persists when the retry succeeds', async () => {
+      generateObjectMock
+        .mockResolvedValueOnce({ object: planWithWeeklyKm(sk(), HOPELESS) })
+        .mockResolvedValueOnce({ object: validPlanFor(sk()) })
+      const { client, tables } = seed(ACTS)
+      const r = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+      expect(generateObjectMock).toHaveBeenCalledTimes(2)
+      expect(tables.training_plans).toHaveLength(1)
+      expect(r.adjustments).toEqual([])
+    })
+
+    it('tells the model each week\'s maximum km (previous week x 1.10 and the absolute cap)', async () => {
+      generateObjectMock.mockResolvedValue({ object: validPlanFor(sk()) })
+      const { client } = seed(ACTS)
+      await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+      const { prompt, system } = generateObjectMock.mock.calls[0][0] as { prompt: string; system: string }
+      const weeks = JSON.parse(prompt.split('Weekly skeleton (JSON):\n')[1].split('\n')[0]) as { targetRunKm: number; maxRunKm: number }[]
+      expect(weeks[0].maxRunKm).toBeCloseTo(weeks[0].targetRunKm * 1.15, 1)
+      expect(weeks[2].maxRunKm).toBeCloseTo(Math.min(weeks[2].targetRunKm * 1.15, weeks[1].targetRunKm * 1.1), 1)
+      expect(prompt).toMatch(/sum of the run session distances/)
+      expect(system).toMatch(/maxRunKm/)
+    })
   })
 })

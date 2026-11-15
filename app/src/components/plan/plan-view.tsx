@@ -24,6 +24,7 @@ interface Props {
 export function PlanView({ active, defaultGoal }: Props) {
   const router = useRouter()
   const [announce, setAnnounce] = useState('')
+  const [note, setNote] = useState('')
   const [showRegenerate, setShowRegenerate] = useState(false)
 
   const weeks = useMemo(
@@ -45,7 +46,14 @@ export function PlanView({ active, defaultGoal }: Props) {
             Generate a periodized plan from your goal, training days and recent load.
           </p>
         </div>
-        <GeneratePlanForm defaultGoal={defaultGoal} replacing={false} onDone={setAnnounce} />
+        <GeneratePlanForm
+          defaultGoal={defaultGoal}
+          replacing={false}
+          onDone={(m, n) => {
+            setAnnounce(n ? `${m} ${n}` : m)
+            setNote(n ?? '')
+          }}
+        />
         <p role="status" className="sr-only">
           {announce}
         </p>
@@ -85,8 +93,9 @@ export function PlanView({ active, defaultGoal }: Props) {
           <GeneratePlanForm
             defaultGoal={plan.goal ?? defaultGoal}
             replacing
-            onDone={(m) => {
-              setAnnounce(m)
+            onDone={(m, n) => {
+              setAnnounce(n ? `${m} ${n}` : m)
+              setNote(n ?? '')
               setShowRegenerate(false)
               setPicked(null)
             }}
@@ -97,6 +106,7 @@ export function PlanView({ active, defaultGoal }: Props) {
       <p role="status" aria-live="polite" className="sr-only">
         {announce}
       </p>
+      {note && <p className="text-xs text-[var(--muted-foreground)]">{note}</p>}
 
       {week && (
         <section aria-label="Plan calendar" className="space-y-3">

@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/generate-plan'
 
 export const runtime = 'nodejs'
-// One structured LLM call for a multi-week plan; keep a bounded ceiling above PLAN_TIMEOUT_MS.
-export const maxDuration = 120
+// Up to two structured LLM calls (one feedback retry); keep a ceiling above PLAN_TOTAL_BUDGET_MS (170 s). Cloud Run's request timeout default is 300 s.
+export const maxDuration = 180
 
 const STATUS_BY_CODE: Record<PlanGenerationError['code'], number> = {
   GOAL_DATE_INVALID: 400,

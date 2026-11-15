@@ -32,8 +32,14 @@ const positiveInt = (n: number | null): number | null =>
   typeof n === 'number' && Number.isFinite(n) && Math.round(n) > 0 ? Math.round(n) : null
 
 /** camelCase draft → snake_case `planned_sessions` insert rows (all `pending`). */
-export function planToRows(plan: PlanDraft, userId: string, planId: string): PlannedSessionInsert[] {
-  return plan.sessions.map((s) => ({
+export function planToRows(
+  plan: PlanDraft,
+  userId: string,
+  planId: string,
+  /** Optional per-session trace (same order as plan.sessions), stored in ai_notes. */
+  aiNotes: (string | null)[] = []
+): PlannedSessionInsert[] {
+  return plan.sessions.map((s, i) => ({
     plan_id: planId,
     user_id: userId,
     scheduled_date: s.scheduledDate,
@@ -47,5 +53,6 @@ export function planToRows(plan: PlanDraft, userId: string, planId: string): Pla
         ? Math.round(s.targetHrZone)
         : null,
     status: 'pending' as const,
+    ...(aiNotes[i] ? { ai_notes: aiNotes[i] } : {}),
   }))
 }

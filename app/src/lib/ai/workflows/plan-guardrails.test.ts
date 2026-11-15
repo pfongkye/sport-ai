@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizePlan, validatePlan } from './plan-guardrails'
-import { makeSkeleton, validPlanFor } from './plan-fixtures'
+import { repairPlan, sanitizePlan, validatePlan, validatePlanDetailed, weeklyRunKm } from './plan-guardrails'
+import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
 
 describe('plan guardrails', () => {
   const sk = makeSkeleton({ goalDate: '2027-01-31' })
@@ -77,5 +77,71 @@ describe('plan guardrails', () => {
     const n = plan.sessions.length
     plan.sessions.push({ ...plan.sessions[0], sessionType: 'Rest' })
     expect(sanitizePlan(plan).sessions).toHaveLength(n)
+  })
+})
+
+describe('plan repair', () => {
+  const sk = makeSkeleton({ goalDate: '2026-12-06', baseline: 30 })
+  // Week index 2 jumps 20.1 -> 23.0 km (the real-world near miss).
+  const nearMiss = [20.1, 20.1, 23.0, 22.0, 22.5, 23, 24, 15]
+
+  it('classifies volume problems as soft and structural ones as hard', () => {
+    const plan = planWithWeeklyKm(sk, nearMiss)
+    expect(validatePlanDetailed(plan, sk).hard).toEqual([])
+    expect(validatePlanDetailed(plan, sk).soft.join(' ')).toMatch(/jumps more than 10%/)
+    plan.sessions.push({ ...plan.sessions[0], scheduledDate: '2027-03-01' })
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/outside the plan window/)
+  })
+
+  it('repairs the 20.1 -> 23.0 km week to <= 22.1 km and records it', () => {
+    const plan = planWithWeeklyKm(sk, nearMiss)
+    expect(validatePlan(plan, sk).length).toBeGreaterThan(0)
+    const r = repairPlan(plan, sk)
+    expect(weeklyRunKm(r.plan, sk)[2]).toBeLessThanOrEqual(22.11)
+    expect(validatePlan(r.plan, sk)).toEqual([])
+    expect(r.adjustments).toHaveLength(1)
+    expect(r.adjustments[0]).toMatch(/^Week of 2026-10-26 reduced from 23\.0 km to 22\.\d km to keep progression under 10%/)
+    expect(r.sessionNotes.filter(Boolean).length).toBe(sk.weeks[2].slotDates.length)
+  })
+
+  it('cascades: later weeks are re-checked against the repaired previous week', () => {
+    const plan = planWithWeeklyKm(sk, [20.1, 20.1, 23.0, 25.3, 25.0, 25.5, 26, 15])
+    const before = validatePlan(plan, sk)
+    expect(before.join(' ')).toMatch(/2026-10-26/)
+    const r = repairPlan(plan, sk)
+    const km = weeklyRunKm(r.plan, sk)
+    expect(km[2]).toBeLessThanOrEqual(20.1 * 1.1 + 0.01)
+    expect(km[3]).toBeLessThanOrEqual(km[2] * 1.1 + 0.01)
+    expect(r.adjustments.length).toBeGreaterThanOrEqual(2)
+    expect(validatePlan(r.plan, sk)).toEqual([])
+  })
+
+  it('never increases a distance or duration, and does not touch compliant weeks or the taper', () => {
+    const plan = planWithWeeklyKm(sk, nearMiss)
+    const r = repairPlan(plan, sk)
+    r.plan.sessions.forEach((s, i) => {
+      expect(s.targetDistanceM ?? 0).toBeLessThanOrEqual(plan.sessions[i].targetDistanceM ?? 0)
+      expect(s.targetDurationS ?? 0).toBeLessThanOrEqual(plan.sessions[i].targetDurationS ?? 0)
+    })
+    const taper = sk.weeks[sk.weeks.length - 1]
+    expect(taper.phase).toBe('taper')
+    const taperIdx = plan.sessions.map((s, i) => (taper.slotDates.includes(s.scheduledDate) ? i : -1)).filter((i) => i >= 0)
+    for (const i of taperIdx) expect(r.plan.sessions[i]).toEqual(plan.sessions[i])
+  })
+
+  it('keeps the long run the longest session after scaling', () => {
+    const plan = planWithWeeklyKm(sk, nearMiss)
+    const r = repairPlan(plan, sk)
+    const w = sk.weeks[2]
+    const inWeek = r.plan.sessions.filter((s) => w.slotDates.includes(s.scheduledDate))
+    const long = inWeek.find((s) => /long/i.test(s.sessionType))!
+    expect(Math.max(...inWeek.map((s) => s.targetDistanceM ?? 0))).toBe(long.targetDistanceM)
+  })
+
+  it('leaves a week that would need a cut deeper than 40% for regeneration', () => {
+    const plan = planWithWeeklyKm(sk, [20.1, 20.1, 40, 22, 22.5, 23, 24, 15])
+    const r = repairPlan(plan, sk)
+    expect(r.adjustments).toEqual([])
+    expect(validatePlanDetailed(r.plan, sk).soft.length).toBeGreaterThan(0)
   })
 })
