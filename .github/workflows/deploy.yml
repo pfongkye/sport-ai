@@ -18,8 +18,7 @@
 #   • SUPABASE_INTERNAL_URL is intentionally LEFT UNSET.
 #   • ALLOWED_EMAILS uses gcloud's custom `^|^` delimiter (it may contain commas).
 #
-# CI improvement over the script: the image is tagged with BOTH the commit SHA and
-# :latest, so a deploy is traceable and you can roll back to any prior SHA.
+# CI improvement over the script: the image is tagged with the commit SHA, so a deploy is traceable and you can roll back to any prior SHA.
 # ─────────────────────────────────────────────────────────────────────────────
 name: Deploy app to Cloud Run
 
@@ -114,7 +113,8 @@ jobs:
       # Build the image on Cloud Build using the same config the manual script
       # uses (deploy/gcp/cloudbuild.yaml: -f docker/Dockerfile --target runner,
       # context dir app, NEXT_PUBLIC_* as build args). Context = repo root so both
-      # app/ and docker/ are available. Tagged :<sha> (this build) and :latest.
+      # app/ and docker/ are available. Tagged :<sha> only (see CI_DEPLOY.md: moving :latest needs
+      # artifactregistry.tags.delete, which the writer role lacks).
       - name: Build & push image (Cloud Build)
         run: |
           SUPABASE_URL="https://${SUPABASE_DOMAIN}"
@@ -125,9 +125,6 @@ jobs:
             --region "$GCP_REGION" \
             --config "$GITHUB_WORKSPACE/deploy/gcp/cloudbuild.yaml" \
             --substitutions="$SUBS"
-          # Also tag the freshly built image as :latest for parity with the script.
-          gcloud artifacts docker tags add \
-            "${IMAGE}:${GITHUB_SHA}" "${IMAGE}:latest"
 
       # Deploy to Cloud Run. Flags mirror 04_deploy_app_cloudrun.sh exactly.
       # --set-env-vars uses the ^|^ custom delimiter because ALLOWED_EMAILS may

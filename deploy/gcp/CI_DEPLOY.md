@@ -52,10 +52,9 @@ printf '%s' 'sk-...' | gcloud secrets versions add OPENAI_API_KEY --data-file=-
 
 ## Image tagging & rollback
 
-Each CI build tags the image twice:
+Each CI build tags the image with its commit SHA:
 
 - `…/sportai/sportai-app:<commit-sha>` — the exact build for that commit.
-- `…/sportai/sportai-app:latest` — a moving pointer (parity with the script).
 
 The deploy always points Cloud Run at the **`:<commit-sha>`** tag, so every revision
 is traceable to a commit. To **roll back**, redeploy a previous SHA's image:
@@ -292,12 +291,15 @@ Everything the workflow passes to gcloud is kept identical to
 | Service | `sportai-app` |
 | Region | `europe-west1` (overridable via `GCP_REGION`) |
 | Artifact Registry repo | `sportai` |
-| Image | `europe-west1-docker.pkg.dev/<project>/sportai/sportai-app` (tags `:<sha>` + `:latest`) |
+| Image | `europe-west1-docker.pkg.dev/<project>/sportai/sportai-app` (tag `:<sha>`) |
 | Build | Cloud Build, `-f docker/Dockerfile --target runner`, context `app/`, `NEXT_PUBLIC_*` as build args |
 | Deploy flags | `--allow-unauthenticated --port 3000 --cpu 1 --memory 512Mi --min-instances 0 --max-instances 4` |
 | Runtime env | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_APP_URL`, (+`ALLOWED_EMAILS`, +`STRAVA_CLIENT_ID` when set) via `^|^` delimiter |
 | Secrets | `OPENAI_API_KEY:latest`, `SUPABASE_SERVICE_ROLE_KEY:latest` (+`STRAVA_CLIENT_SECRET:latest` when Strava enabled) |
 | `SUPABASE_INTERNAL_URL` | intentionally unset |
 
-The one intentional CI improvement: the script tags only `:latest`; CI additionally
-tags `:<commit-sha>` and deploys that tag, for traceability and easy rollback.
+The one intentional CI improvement: the script uses only `:latest`; CI tags and deploys
+`:<commit-sha>`, for traceability and easy rollback.
+
+> CI does not move `:latest`: re-pointing an existing tag needs `artifactregistry.tags.delete`
+> (repoAdmin), which the least-privilege `artifactregistry.writer` role lacks. Nothing deploys `:latest` from CI.
