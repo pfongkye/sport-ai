@@ -24,6 +24,15 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 44. Playwright e2e: server-side Supabase needs a real stub; mobile overflow check must not use innerWidth
+Symptom/needs: layout bugs (overflow, misplaced fixed bottom nav) only showed on a phone; `page.route` cannot mock
+server components' Supabase fetches; `isMobile` emulation made `window.innerWidth` grow with overflowing content,
+hiding the bug. Fix: `app/e2e/` runs `next dev` against `e2e/support/stub-supabase.mjs` (fixtures in `fixtures.mjs`,
+auth cookie in `auth.ts`), and `expectNoHorizontalOverflow` compares `scrollWidth` to `page.viewportSize()`. Fullpage
+screenshots paint the fixed nav mid-image (use the viewport shot for nav). Hide the Next dev badge with
+`style: 'nextjs-portal{display:none}'`. If browser download is blocked, set `PW_CHROMIUM_PATH` (a headless-shell binary
+works; a symlinked full chrome crashed in crashpad). See README "End-to-end / screenshot tests".
+
 ### 43. Island/ferry runaway loops (15 km request → 202 km "loop" to Batam) — avoid_features + wide correction + hard band
 Symptom: 'Sentosa, Singapore' flat 15 km returned 'Closest loop found: 202.09 km' crossing the sea.
 Cause: ORS foot-walking allows ferries, so a round trip from an island ferries to another country; the old

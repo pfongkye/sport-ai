@@ -79,3 +79,9 @@ secrets/
 .worktrees/
 # MapLibre worker copied from node_modules by scripts/copy-maplibre-worker.mjs
 app/public/maplibre-gl-worker.mjs
+
+# Playwright e2e output (app/)
+app/e2e-results/
+app/e2e-report/
+app/e2e-screenshots/
+app/test-results/

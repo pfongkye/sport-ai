@@ -862,3 +862,30 @@ npx supabase gen types typescript \
 | 6 | Strava/Garmin API, AI gateway, SaaS billing | Post-marathon |
 
 See full spec: `.kiro/specs/sportai-coaching-app/`
+
+## End-to-end / screenshot tests (Playwright)
+
+Purpose: catch layout bugs (horizontal overflow, displaced bottom nav) that otherwise only show on a real phone.
+Specs live in `app/e2e/`, config in `app/playwright.config.ts`. Vitest only picks up `src/**/*.test.ts`; Playwright only `e2e/**/*.spec.ts`.
+
+```bash
+cd app
+npm run e2e:install        # once: downloads Chromium (needs internet)
+npm run e2e                # starts stub Supabase (:54321) + `next dev` (:3100), runs all projects
+npx playwright test --project=mobile-360x800 -g activities   # one page / one viewport
+```
+
+Screenshots land in `app/e2e-screenshots/<project>/<page>.png` (viewport) and `<page>-full.png` (full page); projects are
+`mobile-360x800`, `mobile-390x844`, `desktop-1280x800`. Each page spec also asserts no horizontal overflow
+(`scrollWidth <= viewport width`) and that the mobile bottom nav is visible and pinned (hidden on desktop).
+Set `PW_CHROMIUM_PATH=/path/to/chromium` to use an existing browser instead of the downloaded one.
+
+How the backend is mocked:
+- Server-side Supabase calls (proxy.ts, server components) cannot be intercepted by `page.route`, so `e2e/support/stub-supabase.mjs`
+  is a tiny HTTP server for `/auth/v1/user` and `/rest/v1/<table>` serving `e2e/support/fixtures.mjs` (filters are ignored; add
+  tables/rows there). The app is started with `NEXT_PUBLIC_SUPABASE_URL` pointing at it.
+- Auth: `e2e/support/auth.ts` sets the `sb-sportai-auth` cookie (`base64-` + session JSON); the stub accepts any token.
+- Browser-side `/api/*` (chat, routes suggest, Strava) and OSM tiles are mocked per test in `e2e/support/mock-api.ts`.
+  ORS/OpenAI/Strava are therefore never called. Add new mocks there when a page starts fetching a new endpoint.
+- The app runs with `next dev`: `npm run build` fails offline (next/font/google), while dev falls back to a system font with warnings.
+  Screenshot fonts therefore differ from production; do not diff pixels against a real deployment.
