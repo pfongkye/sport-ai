@@ -108,7 +108,7 @@ export function RouteMapFrame({ geometry, bbox, summary }: RouteMapFrameProps) {
   }
 
   return (
-    <div className="relative h-[320px] w-full">
+    <div className="relative h-[320px] w-full short-landscape:h-[calc(100dvh-3rem)]">
       <div
         ref={dialogRef}
         {...(open
@@ -146,7 +146,7 @@ export function RouteMapFrame({ geometry, bbox, summary }: RouteMapFrameProps) {
         {open && (
           <>
             <div
-              className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-2 pr-14"
+              className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-2 pr-14 short-landscape:inset-x-auto short-landscape:left-0 short-landscape:flex-col short-landscape:pr-0"
               style={{
                 paddingTop: 'max(env(safe-area-inset-top), 0.75rem)',
                 paddingLeft: 'max(env(safe-area-inset-left), 0.75rem)',
@@ -165,7 +165,7 @@ export function RouteMapFrame({ geometry, bbox, summary }: RouteMapFrameProps) {
               </button>
               <div
                 aria-hidden="true"
-                className="flex min-h-11 min-w-0 items-center gap-3 rounded-full bg-white px-4 text-sm font-semibold tabular-nums text-slate-900 shadow-md ring-1 ring-black/10"
+                className="flex min-h-11 min-w-0 items-center gap-3 rounded-full bg-white px-4 short-landscape:flex-col short-landscape:items-start short-landscape:gap-1 short-landscape:rounded-2xl short-landscape:py-2 text-sm font-semibold tabular-nums text-slate-900 shadow-md ring-1 ring-black/10"
               >
                 <span>{formatDistance(summary.distanceM)}</span>
                 <span>↑ {Math.round(summary.ascentM)} m</span>

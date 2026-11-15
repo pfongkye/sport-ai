@@ -42,3 +42,32 @@ export function trapTabTarget(count: number, current: number, shift: boolean): n
   if (!shift && current === count - 1) return 0
   return null
 }
+
+/** Short-and-wide screens (phone rotated). Mirrors the `short-landscape` Tailwind variant in globals.css. */
+export const SHORT_LANDSCAPE_QUERY = '(orientation: landscape) and (max-height: 500px)'
+
+export type MapOrientation = 'landscape' | 'portrait'
+
+/** Orientation of a map container from its size (square counts as portrait). */
+export function orientationOf(width: number, height: number): MapOrientation {
+  return width > height ? 'landscape' : 'portrait'
+}
+
+export interface FitPadding {
+  top: number
+  bottom: number
+  left: number
+  right: number
+}
+
+const FIT_PADDING_INLINE = 40
+// Portrait fullscreen: clear the top bar (close + summary strip) and bottom controls.
+const FIT_PADDING_FULLSCREEN: FitPadding = { top: 96, bottom: 80, left: 32, right: 32 }
+// Short landscape fullscreen: the summary is a left side panel; zoom/fit buttons sit on the right.
+const FIT_PADDING_FULLSCREEN_LANDSCAPE: FitPadding = { top: 24, bottom: 24, left: 176, right: 72 }
+
+/** Padding for fitBounds, by overlay state and screen shape. */
+export function fitPaddingFor(fullscreen: boolean, shortLandscape: boolean): number | FitPadding {
+  if (!fullscreen) return FIT_PADDING_INLINE
+  return shortLandscape ? FIT_PADDING_FULLSCREEN_LANDSCAPE : FIT_PADDING_FULLSCREEN
+}

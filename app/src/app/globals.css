@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Phone held sideways: short and wide. Keep in sync with SHORT_LANDSCAPE_QUERY (map-overlay.ts). */
+@custom-variant short-landscape (@media (orientation: landscape) and (max-height: 500px));
+
 :root {
   --background: #ffffff;
   --foreground: #0f172a;

@@ -56,7 +56,7 @@ export function RouteSummary({
         )}
       </div>
 
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <dl className="grid grid-cols-2 sm:grid-cols-4 short-landscape:grid-cols-2 gap-3">
         {stats.map((s) => (
           <div key={s.label}>
             <dt className="text-xs uppercase tracking-wide text-[var(--muted-foreground)]">

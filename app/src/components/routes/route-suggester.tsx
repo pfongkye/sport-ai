@@ -104,8 +104,8 @@ export function RouteSuggester({ hasHome }: { hasHome: boolean }) {
   }
 
   return (
-    <div className="space-y-5">
-      <Card>
+    <div className="space-y-5 short-landscape:grid short-landscape:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] short-landscape:grid-rows-[auto_auto_1fr] short-landscape:items-start short-landscape:gap-x-4 short-landscape:gap-y-4 short-landscape:space-y-0">
+      <Card className="short-landscape:col-start-1 short-landscape:row-start-1">
         <CardContent className="pt-6 space-y-5">
           {/* Distance */}
           <div className="space-y-2">
@@ -219,31 +219,42 @@ export function RouteSuggester({ hasHome }: { hasHome: boolean }) {
       </Card>
 
       {route && (
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <RouteSummary
-              requestedDistanceM={route.requestedDistanceM}
-              distanceM={route.distanceM}
-              ascentM={route.ascentM}
-              descentM={route.descentM}
-              terrain={route.terrain}
-              startLabel={route.start.label}
-              distanceWithinTolerance={route.distanceWithinTolerance}
-            />
-            <RouteMapFrame
-              geometry={route.geometry}
-              bbox={route.bbox}
-              summary={{
-                requestedDistanceM: route.requestedDistanceM,
-                distanceM: route.distanceM,
-                ascentM: route.ascentM,
-                descentM: route.descentM,
-                terrain: route.terrain,
-                startLabel: route.start.label,
-                distanceWithinTolerance: route.distanceWithinTolerance,
-              }}
-            />
-            <ElevationProfile profile={route.elevationProfile} />
+        // Portrait: one card (summary, map, profile). Short landscape: the card and
+        // its content dissolve (`contents`) so summary + profile sit in the left
+        // column under the controls and the map takes the right column.
+        <Card className="short-landscape:contents">
+          <CardContent className="pt-6 space-y-4 short-landscape:contents">
+            <div className="space-y-4 short-landscape:col-start-1 short-landscape:row-start-2 short-landscape:rounded-lg short-landscape:border short-landscape:border-[var(--border)] short-landscape:bg-[var(--card)] short-landscape:p-4 short-landscape:shadow-sm">
+              <RouteSummary
+                requestedDistanceM={route.requestedDistanceM}
+                distanceM={route.distanceM}
+                ascentM={route.ascentM}
+                descentM={route.descentM}
+                terrain={route.terrain}
+                startLabel={route.start.label}
+                distanceWithinTolerance={route.distanceWithinTolerance}
+              />
+            </div>
+            <div className="short-landscape:sticky short-landscape:top-4 short-landscape:col-start-2 short-landscape:row-span-3 short-landscape:row-start-1 short-landscape:rounded-lg short-landscape:border short-landscape:border-[var(--border)] short-landscape:bg-[var(--card)] short-landscape:p-2 short-landscape:shadow-sm">
+              <RouteMapFrame
+                geometry={route.geometry}
+                bbox={route.bbox}
+                summary={{
+                  requestedDistanceM: route.requestedDistanceM,
+                  distanceM: route.distanceM,
+                  ascentM: route.ascentM,
+                  descentM: route.descentM,
+                  terrain: route.terrain,
+                  startLabel: route.start.label,
+                  distanceWithinTolerance: route.distanceWithinTolerance,
+                }}
+              />
+            </div>
+            {route.elevationProfile.length >= 2 && (
+            <div className="short-landscape:col-start-1 short-landscape:row-start-3 short-landscape:rounded-lg short-landscape:border short-landscape:border-[var(--border)] short-landscape:bg-[var(--card)] short-landscape:p-4 short-landscape:shadow-sm">
+              <ElevationProfile profile={route.elevationProfile} />
+            </div>
+            )}
           </CardContent>
         </Card>
       )}

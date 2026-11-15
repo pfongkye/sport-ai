@@ -11,6 +11,7 @@ import {
   toRouteFeature,
   type RouteLine,
 } from './route-geo'
+import { fitPaddingFor, orientationOf, SHORT_LANDSCAPE_QUERY } from './map-overlay'
 import { MAP_MAX_ZOOM, OSM_RASTER_STYLE } from './route-map-style'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -33,9 +34,6 @@ interface RouteMapProps {
 }
 
 const SOURCE_ID = 'route'
-const FIT_PADDING = 40
-// Fullscreen: clear the top bar (close button + summary strip) and the bottom controls.
-const FIT_PADDING_FULLSCREEN = { top: 96, bottom: 80, left: 32, right: 32 }
 const ARROW_IMAGE_ID = 'route-arrow'
 
 /** White right-pointing chevron with a dark outline, so it reads on the red line. */
@@ -114,7 +112,20 @@ export default function RouteMap({
     map.touchZoomRotate.disableRotation()
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     mapRef.current = map
-    const resize = new ResizeObserver(() => map.resize())
+    // Any container resize (rotation, overlay toggle, layout change) resizes the
+    // canvas; a portrait<->landscape flip of the container also refits the route
+    // (not every resize, so a user's pan/zoom survives mobile URL-bar jitter).
+    let lastOrientation = orientationOf(container.clientWidth, container.clientHeight)
+    const resize = new ResizeObserver((entries) => {
+      map.resize()
+      const { width, height } = entries[0].contentRect
+      if (width === 0 || height === 0) return
+      const next = orientationOf(width, height)
+      if (next !== lastOrientation) {
+        lastOrientation = next
+        fitRef.current?.()
+      }
+    })
     resize.observe(container)
     return () => {
       resize.disconnect()
@@ -189,7 +200,10 @@ export default function RouteMap({
       fitRef.current = () => {
         map.resize()
         map.fitBounds(routeBounds(feature, bbox), {
-          padding: fullscreenRef.current ? FIT_PADDING_FULLSCREEN : FIT_PADDING,
+          padding: fitPaddingFor(
+            fullscreenRef.current,
+            window.matchMedia(SHORT_LANDSCAPE_QUERY).matches
+          ),
           animate: false,
           maxZoom: 17,
         })

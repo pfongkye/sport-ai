@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   MAP_HISTORY_KEY,
+  fitPaddingFor,
+  orientationOf,
   isMapHistoryState,
   trapTabTarget,
   withMapHistoryState,
@@ -41,5 +43,22 @@ describe('trapTabTarget', () => {
   })
   it('does nothing with no focusable elements', () => {
     expect(trapTabTarget(0, -1, false)).toBeNull()
+  })
+})
+
+describe('landscape helpers', () => {
+  it('orientationOf: wide is landscape, square/tall is portrait', () => {
+    expect(orientationOf(800, 360)).toBe('landscape')
+    expect(orientationOf(360, 800)).toBe('portrait')
+    expect(orientationOf(400, 400)).toBe('portrait')
+  })
+
+  it('fitPaddingFor: inline is a number; fullscreen differs by screen shape', () => {
+    expect(fitPaddingFor(false, true)).toBe(40)
+    const portrait = fitPaddingFor(true, false) as { top: number; left: number }
+    const landscape = fitPaddingFor(true, true) as { top: number; left: number }
+    expect(portrait.top).toBe(96)
+    expect(landscape.top).toBeLessThan(portrait.top)
+    expect(landscape.left).toBeGreaterThan(portrait.left)
   })
 })
