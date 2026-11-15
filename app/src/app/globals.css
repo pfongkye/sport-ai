@@ -135,3 +135,8 @@ html {
     animation: none;
   }
 }
+
+/* Bottom padding that clears the iOS home indicator (needs viewport-fit=cover). */
+@utility safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom);
+}
