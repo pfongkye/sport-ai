@@ -13,6 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import type { NormalizedActivity } from '@/types/activity'
+import { linkActivityToPlannedSession } from '@/lib/plan/link-activity'
 
 export type InsertStatus = 'created' | 'duplicate' | 'error'
 
@@ -115,5 +116,11 @@ export async function insertNormalizedActivity(
     await supabase.from('activity_streams').insert(streamRows)
   }
 
+  // Best-effort, non-fatal: mark a same-day same-sport pending planned session done.
+  await linkActivityToPlannedSession(supabase, userId, {
+    id: inserted.id,
+    sportType: activity.sportType,
+    startedAt: activity.startedAt,
+  })
   return { status: 'created', activityId: inserted.id }
 }
