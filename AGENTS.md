@@ -24,6 +24,19 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 39. MapLibre v6 route line never renders: worker URL is wrong under the bundler
+Symptom: /routes shows the OSM tiles and the result card, but no route line and no fit to the
+loop. Raster tiles work because they load on the main thread; GeoJSON sources need the worker.
+Cause: `maplibre-gl@6` is ESM-only and derives its worker URL from `import.meta.url`
+(`./maplibre-gl-worker.mjs` beside itself, or '' if the URL is not http). Next/Turbopack emits
+the library and worker as hashed `/_next/static/media/*.mjs` assets, so the derived URL 404s and
+the worker never starts. (Inferred from the library source and build output; not reproduced in a
+real browser.)
+Fix: `maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs')` in `route-map.tsx`. The file is copied
+from `node_modules/maplibre-gl/dist` into `app/public/` by `scripts/copy-maplibre-worker.mjs`
+(npm `predev`/`prebuild`; output gitignored). Any new MapLibre map needs the same. Also: create
+the map once and update the GeoJSON source with `setData`, don't re-create it per route.
+
 ### 38. New Cloud Run runtime secret: add to RUN_SECRETS in BOTH deploy paths, create it BEFORE merge
 Symptom: after adding a feature that reads a new `process.env.<KEY>`, prod loses the key on the
 next deploy (feature reports "not configured"), or the new revision fails to start.
