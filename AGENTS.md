@@ -24,6 +24,11 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 42. Map console error `AJAXError: Failed to fetch (0): tile.openstreetmap.org/20/...png` — cap zoom at 19
+Symptom: MapLibre logs failed tile fetches at zoom 20 (e.g. `/20/522319/378058.png`) when zoomed in on a route.
+Cause: the OSM standard tile server serves zoom 0-19 only, and a raster source without `maxzoom` makes MapLibre request z20+ tiles.
+Fix: `route-map-style.ts` sets `maxzoom: 19` on the raster source (MapLibre overzooms z19 tiles) and `MAP_MAX_ZOOM = 19` on the map. If errors persist at z<=19, OSM may be rejecting the app under its tile usage policy; the fix is then a tile provider meant for apps (swap the single `OSM_RASTER_STYLE` constant), not a referrer hack.
+
 ### 41. Route ascent/descent: ORS `summary.ascent` is a noisy SRTM per-edge sum — use computeElevationGain
 Symptom: /routes card showed e.g. 92 m ascent next to a 16 m elevation-chart range (Bordeaux), 55 m vs 9 m (Pessac).
 Cause: ORS sums per-edge deltas of ~90 m SRTM elevation (±several m vertical error, smoothing off by

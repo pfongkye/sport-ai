@@ -11,32 +11,13 @@ import {
   toRouteFeature,
   type RouteLine,
 } from './route-geo'
+import { MAP_MAX_ZOOM, OSM_RASTER_STYLE } from './route-map-style'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-/**
- * Keyless OSM raster-tile style. Swap this ONE constant to change the basemap
- * (e.g. to a vector style with your own tile key). It deliberately does NOT use
- * the ORS key — the ORS key is a server-only secret and must never reach the
- * browser.
- */
 // Bundlers rewrite import.meta.url inside maplibre-gl, so its default worker URL
 // resolves to '' and GeoJSON sources never load (AGENTS.md #39). Point it at the
 // same-origin copy made by scripts/copy-maplibre-worker.mjs.
 maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs')
-
-const OSM_RASTER_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    },
-  },
-  layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
-}
 
 interface RouteMapProps {
   /** GeoJSON LineString, lng-first ([lng,lat] or [lng,lat,ele]). */
@@ -121,6 +102,7 @@ export default function RouteMap({
     const map = new maplibregl.Map({
       container,
       style: OSM_RASTER_STYLE,
+      maxZoom: MAP_MAX_ZOOM,
       center: [0, 0],
       zoom: 1,
       attributionControl: { compact: true },
