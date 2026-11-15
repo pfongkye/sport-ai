@@ -38,8 +38,8 @@ export function RouteSummary({
   const stats: { label: string; value: string }[] = [
     { label: 'Distance', value: formatDistance(distanceM) },
     { label: 'Requested', value: formatDistance(requestedDistanceM) },
-    { label: 'Ascent', value: `${Math.round(ascentM)} m` },
-    { label: 'Descent', value: `${Math.round(descentM)} m` },
+    { label: 'Ascent (est.)', value: `${Math.round(ascentM)} m` },
+    { label: 'Descent (est.)', value: `${Math.round(descentM)} m` },
   ]
 
   return (

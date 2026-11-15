@@ -24,6 +24,17 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 41. Route ascent/descent: ORS `summary.ascent` is a noisy SRTM per-edge sum — use computeElevationGain
+Symptom: /routes card showed e.g. 92 m ascent next to a 16 m elevation-chart range (Bordeaux), 55 m vs 9 m (Pessac).
+Cause: ORS sums per-edge deltas of ~90 m SRTM elevation (±several m vertical error, smoothing off by
+default), so jitter accumulates to 5-25x the real relief. We never computed ascent ourselves.
+Fix: `lib/integrations/ors/geo.ts` `smoothElevation` (≈100 m distance-based moving average, ends pinned)
++ `computeElevationGain` (3 m hysteresis). `suggest.ts` uses it for BOTH flat/uphill selection and the
+persisted/displayed `ascentM`/`descentM`, and builds the chart profile from the same smoothed series.
+ORS summary values are only a fallback when the geometry has no z. Card labels say "(est.)". Never
+select or display ORS `summary.ascent` directly; `terrainScore` is just that fallback. Old
+`suggested_routes` rows keep their old stored values (no migration).
+
 ### 40. Auth redirects dropped the port (http://localhost/login) — build origins with lib/public-origin.ts
 Symptom: `curl -D- http://localhost:3000/dashboard` → `307 Location: http://localhost/login?...`;
 browser can't reach the app locally.

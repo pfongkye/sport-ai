@@ -17,7 +17,11 @@ import { MAX_SEEDS } from './config'
 import { orsRoundTrip, orsGeocode } from './client'
 import {
   bboxOf,
+  computeElevationGain,
+  hasElevation,
   sampleElevationProfile,
+  sampleProfileFromSeries,
+  smoothElevation,
   terrainScore,
   type LineString,
   type OrsRouteFeature,
@@ -138,24 +142,49 @@ function isFiniteCoord(lng: unknown, lat: unknown): boolean {
   )
 }
 
+interface Analysis {
+  ascentM: number
+  descentM: number
+  elevationProfile: Array<{ distM: number; eleM: number }>
+}
+
+/**
+ * Ascent/descent + chart profile from ONE smoothed elevation series (ORS's own
+ * summary ascent is a noisy ~90 m SRTM per-edge sum). Falls back to the ORS
+ * summary values only when the geometry has no z-values.
+ */
+function analyse(feature: OrsRouteFeature): Analysis {
+  const coords = feature.geometry.coordinates as Array<[number, number, number]>
+  if (hasElevation(coords)) {
+    const smoothed = smoothElevation(coords)
+    const { ascentM, descentM } = computeElevationGain(smoothed)
+    return { ascentM, descentM, elevationProfile: sampleProfileFromSeries(smoothed) }
+  }
+  const summary = feature.properties?.summary ?? {}
+  return {
+    ascentM: terrainScore(feature),
+    descentM:
+      (typeof summary.descent === 'number' ? summary.descent : feature.properties?.descent) ?? 0,
+    elevationProfile: sampleElevationProfile(coords),
+  }
+}
+
 /** Normalise an ORS feature into a RouteResult (minus the persisted routeId). */
 function normalise(
   feature: OrsRouteFeature,
   terrain: Terrain,
   requestedDistanceM: number,
-  start: ResolvedStart
+  start: ResolvedStart,
+  analysis: Analysis
 ): Omit<RouteResult, 'routeId'> {
   const coords = feature.geometry.coordinates as Array<[number, number, number]>
   const bbox = bboxOf(coords)
-  const elevationProfile = sampleElevationProfile(coords)
   const summary = feature.properties?.summary ?? {}
   const distanceM = Math.round(
     typeof summary.distance === 'number' ? summary.distance : requestedDistanceM
   )
-  const ascentM = Math.round(terrainScore(feature))
-  const descentM = Math.round(
-    (typeof summary.descent === 'number' ? summary.descent : feature.properties?.descent) ?? 0
-  )
+  const ascentM = Math.round(analysis.ascentM)
+  const descentM = Math.round(analysis.descentM)
   return {
     requestedDistanceM,
     distanceM,
@@ -164,7 +193,7 @@ function normalise(
     terrain,
     bbox,
     geometry: { type: 'LineString', coordinates: coords },
-    elevationProfile,
+    elevationProfile: analysis.elevationProfile,
     start: { lng: start.lng, lat: start.lat, label: start.label },
   }
 }
@@ -209,14 +238,21 @@ export async function suggestRoute(
   }
 
   // Select by terrain: flat → least ascent, uphill → most ascent.
-  const chosen = candidates.reduce((best, c) => {
-    const bestScore = terrainScore(best)
-    const score = terrainScore(c)
+  const analysed = candidates.map((feature) => ({ feature, analysis: analyse(feature) }))
+  const chosen = analysed.reduce((best, c) => {
+    const bestScore = best.analysis.ascentM
+    const score = c.analysis.ascentM
     if (opts.terrain === 'uphill') return score > bestScore ? c : best
     return score < bestScore ? c : best
   })
 
-  const normalised = normalise(chosen, opts.terrain, requestedDistanceM, start)
+  const normalised = normalise(
+    chosen.feature,
+    opts.terrain,
+    requestedDistanceM,
+    start,
+    chosen.analysis
+  )
 
   // Persist ONE row AFTER a valid route is chosen.
   const insert = {

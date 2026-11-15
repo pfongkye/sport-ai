@@ -70,8 +70,20 @@ function makeSupabase(opts: SupabaseStubOpts): SupabaseClient<Database> {
   return client as unknown as SupabaseClient<Database>
 }
 
-/** A fake ORS geo+json response feature with a given ascent. */
-function orsResponse(ascent: number, distance = 5000) {
+/**
+ * A fake ORS geo+json response with a real 3D geometry whose COMPUTED gain
+ * (smoothed + hysteresis) equals `ascent`: a monotonic ramp up then down, one
+ * point per ~100 m (so smoothing leaves it intact). `summaryAscent` is the (noisy)
+ * ORS summary value and defaults to `ascent`.
+ */
+function orsResponse(ascent: number, distance = 5000, summaryAscent = ascent) {
+  const legPoints = 25
+  const stepDeg = 100 / (6371000 * (Math.PI / 180))
+  const coordinates: number[][] = []
+  for (let i = 0; i <= 2 * legPoints; i++) {
+    const up = i <= legPoints ? i : 2 * legPoints - i
+    coordinates.push([-0.1, 51.5 + i * stepDeg, 10 + (ascent * up) / legPoints])
+  }
   return {
     ok: true,
     status: 200,
@@ -79,15 +91,8 @@ function orsResponse(ascent: number, distance = 5000) {
       features: [
         {
           type: 'Feature',
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              [-0.1, 51.5, 10],
-              [-0.101, 51.501, 10 + ascent / 2],
-              [-0.1, 51.5, 10],
-            ],
-          },
-          properties: { summary: { distance, ascent, descent: ascent } },
+          geometry: { type: 'LineString', coordinates },
+          properties: { summary: { distance, ascent: summaryAscent, descent: summaryAscent } },
         },
       ],
     }),
@@ -230,6 +235,44 @@ describe('suggestRoute', () => {
       coord: { lng: -0.1, lat: 51.5 },
     })
     expect(result.ascentM).toBe(90)
+  })
+
+  it('uphill ignores a larger ORS summary.ascent when computed ascent is lower', async () => {
+    // [computed, ORS summary]: first has the huge (noisy) ORS figure but little real climb.
+    const candidates: Array<[number, number]> = [
+      [20, 500],
+      [60, 5],
+      [30, 40],
+    ]
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const [computed, summary] = candidates[call++] ?? candidates[0]
+        return orsResponse(computed, 5000, summary)
+      })
+    )
+    const inserts: Record<string, unknown>[] = []
+    const supabase = makeSupabase({ onInsert: (row) => inserts.push(row), insertedId: 'r4' })
+    const result = await suggestRoute(supabase, 'u1', {
+      distanceKm: 5,
+      terrain: 'uphill',
+      coord: { lng: -0.1, lat: 51.5 },
+    })
+    expect(result.ascentM).toBe(60)
+    expect(inserts[0].ascent_m).toBe(60)
+  })
+
+  it('chart profile comes from the same series: range ≤ computed ascent + 1', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => orsResponse(40)))
+    const supabase = makeSupabase({ insertedId: 'r5' })
+    const result = await suggestRoute(supabase, 'u1', {
+      distanceKm: 5,
+      terrain: 'flat',
+      coord: { lng: -0.1, lat: 51.5 },
+    })
+    const ele = result.elevationProfile.map((p) => p.eleM)
+    expect(Math.max(...ele) - Math.min(...ele)).toBeLessThanOrEqual(result.ascentM + 1)
   })
 
   it('sets planned_session_id when attaching to a session', async () => {
