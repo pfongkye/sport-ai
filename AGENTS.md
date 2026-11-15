@@ -24,6 +24,24 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 46. Training plan: one shared future-and-pending guard, skeleton owns the numbers
+Plan generation (`lib/ai/workflows/generate-plan.ts`) is context → deterministic skeleton (`plan-skeleton.ts`:
+window, Monday weeks, slots from `profiles.training_days`, taper, +10%/wk cap) → ONE `generateObject` → guardrails
+(`plan-guardrails.ts`) → archive old active plan → insert plan → insert sessions (on session failure: delete the
+new plan AND reactivate the archived one). A guardrail failure writes nothing (422 `INVALID_PLAN`). Any code that
+edits planned sessions on the athlete's behalf (manual reschedule route, `adjustUpcomingSessions` tool) MUST use
+`lib/plan/session-guard.ts` (`isFutureAndPending` + `applyFutureAndPending` in the UPDATE, "today" from
+`user_settings.timezone` via `getAthleteToday`). Do not re-implement the filter. Single active plan is enforced in
+code only (no partial unique index yet; open decision). Activity auto-link (`lib/plan/link-activity.ts`) runs
+best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Not verified against a live LLM: a
+model that ignores the caps gets its plan rejected; if that happens often, loosen `TARGET_TOLERANCE` or retry once.
+
+### 45. Vitest test fails with an error the code already caught: `beforeEach(() => mock.mockReset())`
+Symptom: a test asserting a mocked `generateObject` rejection is handled passes all its expects, then fails with
+the mock's own error (`→ boom`). Cause: a function RETURNED from `beforeEach` is run as a teardown hook, and
+`mockReset()` returns the mock itself, so Vitest calls the rejecting mock after the test. Fix: block body,
+`beforeEach(() => { mock.mockReset() })`.
+
 ### 44. Playwright e2e: server-side Supabase needs a real stub; mobile overflow check must not use innerWidth
 Symptom/needs: layout bugs (overflow, misplaced fixed bottom nav) only showed on a phone; `page.route` cannot mock
 server components' Supabase fetches; `isMobile` emulation made `window.innerWidth` grow with overflowing content,
