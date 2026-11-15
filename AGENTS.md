@@ -49,7 +49,13 @@ Fix: `lib/integrations/ors/geo.ts` `smoothElevation` (≈100 m distance-based mo
 persisted/displayed `ascentM`/`descentM`, and builds the chart profile from the same smoothed series.
 ORS summary values are only a fallback when the geometry has no z. Card labels say "(est.)". Never
 select or display ORS `summary.ascent` directly; `terrainScore` is just that fallback. Old
-`suggested_routes` rows keep their old stored values (no migration).
+`suggested_routes` rows keep their old stored values until backfilled (no migration; optional): from `app/`, run
+`NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node --experimental-strip-types scripts/backfill-route-ascent.mjs`
+(DRY RUN by default, add `--apply` to write, `--batch=N`). It recomputes via `recomputeAscent` in `geo.ts` and skips rows
+without z. Retention: migration `015_suggested_routes_retention.sql` (applied MANUALLY) adds
+`prune_suggested_routes(retain_days default 90)`, which deletes unlinked (`planned_session_id IS NULL`) routes older
+than N days. Cached rows are never reused as an ORS response cache, so there is no TTL refresh. ORS quota: `quota.ts`
+logs `[ors-quota] low|exhausted` from `X-RateLimit-*` headers (`ORS_QUOTA_WARN_PCT`, default 10); see CI_DEPLOY.md.
 
 ### 40. Auth redirects dropped the port (http://localhost/login) — build origins with lib/public-origin.ts
 Symptom: `curl -D- http://localhost:3000/dashboard` → `307 Location: http://localhost/login?...`;

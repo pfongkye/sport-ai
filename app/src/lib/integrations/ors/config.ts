@@ -23,3 +23,12 @@ export const ORS_TIMEOUT_MS = 8000
 
 /** Max round-trip seeds we try per suggestion (cost/latency cap). */
 export const MAX_SEEDS = 3
+
+/**
+ * Warn when the remaining ORS quota (X-RateLimit-Remaining / X-RateLimit-Limit)
+ * drops to this percentage or below. Default 10. Invalid values fall back to 10.
+ */
+export function getOrsQuotaWarnPct(): number {
+  const raw = Number(process.env.ORS_QUOTA_WARN_PCT)
+  return Number.isFinite(raw) && raw >= 0 && raw <= 100 && process.env.ORS_QUOTA_WARN_PCT ? raw : 10
+}

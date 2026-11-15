@@ -108,7 +108,7 @@ export default async function DashboardPage() {
         <Card className="border-dashed">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-[var(--muted-foreground)]">
-              Today's Session
+              Today&apos;s Session
             </CardTitle>
           </CardHeader>
           <CardContent>

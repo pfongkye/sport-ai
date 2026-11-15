@@ -15,6 +15,13 @@ export function useRecorder() {
   const chunksRef = useRef<BlobPart[]>([])
   const streamRef = useRef<MediaStream | null>(null)
 
+  const cleanup = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+    mediaRef.current = null
+    chunksRef.current = []
+  }, [])
+
   const start = useCallback(async () => {
     setError(null)
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -65,14 +72,7 @@ export function useRecorder() {
       }
       rec.stop()
     })
-  }, [])
-
-  const cleanup = () => {
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
-    mediaRef.current = null
-    chunksRef.current = []
-  }
+  }, [cleanup])
 
   return { state, error, start, stop }
 }

@@ -6,6 +6,7 @@ import {
   terrainScore,
   smoothElevation,
   computeElevationGain,
+  recomputeAscent,
   type OrsRouteFeature,
 } from './geo'
 
@@ -98,12 +99,8 @@ describe('terrainScore + terrain selection', () => {
 
   it('flat selects the MIN ascent, uphill selects the MAX ascent', () => {
     const candidates = [mk(50), mk(10), mk(90)]
-    const flat = candidates.reduce((best, c) =>
-      terrainScore(c) < terrainScore(best) ? c : best
-    )
-    const uphill = candidates.reduce((best, c) =>
-      terrainScore(c) > terrainScore(best) ? c : best
-    )
+    const flat = candidates.reduce((best, c) => (terrainScore(c) < terrainScore(best) ? c : best))
+    const uphill = candidates.reduce((best, c) => (terrainScore(c) > terrainScore(best) ? c : best))
     expect(terrainScore(flat)).toBe(10)
     expect(terrainScore(uphill)).toBe(90)
   })
@@ -129,8 +126,7 @@ function noise(i: number): number {
   return (x - Math.floor(x)) * 2 - 1
 }
 
-const gain = (c: Array<[number, number, number]>) =>
-  computeElevationGain(smoothElevation(c))
+const gain = (c: Array<[number, number, number]>) => computeElevationGain(smoothElevation(c))
 
 describe('smoothElevation', () => {
   it('keeps length and pins first and last elevation', () => {
@@ -165,7 +161,11 @@ describe('computeElevationGain', () => {
   })
 
   it('noisy sine (2 cycles, amplitude 8 m, 7.5 km, ±2 m noise) ≈ 32 m, raw sum > 400 m', () => {
-    const c = line(751, 10, (d, i) => 15 + 8 * Math.sin((2 * Math.PI * 2 * d) / 7500) + 2 * noise(i))
+    const c = line(
+      751,
+      10,
+      (d, i) => 15 + 8 * Math.sin((2 * Math.PI * 2 * d) / 7500) + 2 * noise(i)
+    )
     let raw = 0
     for (let i = 1; i < c.length; i++) raw += Math.max(0, c[i][2] - c[i - 1][2])
     expect(raw).toBeGreaterThan(400)
@@ -179,5 +179,43 @@ describe('computeElevationGain', () => {
     const { ascentM, descentM } = gain(c)
     expect(Math.abs(ascentM - descentM)).toBeLessThanOrEqual(3)
     expect(ascentM).toBeGreaterThan(20)
+  })
+})
+
+describe('recomputeAscent', () => {
+  // ~11 m spacing east at the equator, flat terrain with +/-4 m alternating jitter.
+  const jittery = Array.from({ length: 200 }, (_, i) => [
+    i * 0.0001,
+    0,
+    50 + (i % 2 === 0 ? 4 : -4),
+  ])
+
+  it('gives a much lower ascent than the raw per-edge sum on a jittery series', () => {
+    const rawSum = jittery.reduce(
+      (acc, c, i) => (i > 0 ? acc + Math.max(0, c[2] - jittery[i - 1][2]) : acc),
+      0
+    )
+    const out = recomputeAscent(jittery)
+    expect(rawSum).toBeGreaterThan(300)
+    expect(out).not.toBeNull()
+    expect(out!.ascentM).toBeLessThan(10)
+    expect(Number.isInteger(out!.ascentM)).toBe(true)
+  })
+
+  it('keeps a real climb', () => {
+    const climb = Array.from({ length: 100 }, (_, i) => [i * 0.0001, 0, i * 0.5])
+    const out = recomputeAscent(climb)
+    expect(out!.ascentM).toBeGreaterThan(40)
+    expect(out!.descentM).toBe(0)
+  })
+
+  it('returns null without z values', () => {
+    expect(
+      recomputeAscent([
+        [0, 0],
+        [0.001, 0],
+      ])
+    ).toBeNull()
+    expect(recomputeAscent([])).toBeNull()
   })
 })

@@ -8,6 +8,9 @@
 #
 # Setup & secret/variable reference: deploy/gcp/CI_DEPLOY.md
 #
+# The `deploy` job `needs: checks`, which calls ci.yml (lint, tsc, tests, build).
+# Nothing is built on Cloud Build or deployed unless those pass.
+#
 # Key behaviours mirrored from script 04:
 #   • NEXT_PUBLIC_* are BUILD ARGS (baked into the browser bundle — AGENTS.md #2),
 #     passed to Cloud Build, NOT just runtime env.
@@ -30,6 +33,7 @@ on:
       - "docker/Dockerfile"
       - "deploy/gcp/cloudbuild.yaml"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/ci.yml"
   # Manual trigger from the Actions tab — runs regardless of the paths filter.
   workflow_dispatch:
 
@@ -39,7 +43,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Lint, typecheck, tests and build (ci.yml). The deploy job waits for this, so a
+  # failing check blocks the Cloud Build / Cloud Run deploy (also on manual runs).
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: checks
     runs-on: ubuntu-latest
 
     # Required for google-github-actions/auth with Workload Identity Federation:

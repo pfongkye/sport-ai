@@ -536,6 +536,12 @@ are powered by [OpenRouteService](https://openrouteservice.org).
    remember a new dependency like `maplibre-gl` must also be installed in the container (see the
    [`Module not found`](#module-not-found-cant-resolve-package) troubleshooting entry).
 
+**Quota and retention.** The free ORS tier has daily limits. The app logs `[ors-quota] low ...` when the
+remaining quota falls to `ORS_QUOTA_WARN_PCT` percent (default 10) and `[ors-quota] exhausted ...` on a 429; see
+[`deploy/gcp/CI_DEPLOY.md`](deploy/gcp/CI_DEPLOY.md#ors-quota-alert) for a Cloud Logging alert. A self-hosted ORS
+only needs `ORS_BASE_URL` (it sends no quota headers, so nothing is logged). Old cached routes can be pruned with
+`SELECT public.prune_suggested_routes();` (migration `015`, applied manually; keeps routes attached to a plan).
+
 Set a **home location** in Settings → Location to use as the default route start. You can also
 pick "My location" (uses the browser's geolocation) or type a place on the Routes page.
 

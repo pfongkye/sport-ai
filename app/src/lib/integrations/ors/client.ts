@@ -13,6 +13,7 @@
 
 import { ORS_BASE_URL, ORS_TIMEOUT_MS, getOrsApiKey } from './config'
 import type { OrsRouteFeature } from './geo'
+import { reportOrsQuota } from './quota'
 
 /**
  * ORS `options.avoid_features` for foot-* profiles. Valid foot values are
@@ -132,6 +133,7 @@ export async function orsRoundTrip(opts: OrsRoundTripOptions): Promise<OrsRouteF
 
   // Bounded timeout, honoring a caller-supplied signal too.
   const res = await withTimeout(run, opts.signal)
+  reportOrsQuota('directions', res.status, res.headers)
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -171,6 +173,7 @@ export async function orsGeocode(
   } catch {
     return null // network blip / timeout / module absent → degrade to "needs a coordinate"
   }
+  reportOrsQuota('geocode', res.status, res.headers)
   if (!res.ok) return null
 
   const json = (await res.json().catch(() => null)) as {

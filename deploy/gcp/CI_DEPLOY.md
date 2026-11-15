@@ -64,6 +64,71 @@ be added to `RUN_SECRETS` in both `deploy.yml` and script 04 (AGENTS.md #38).
 
 ---
 
+## Checks before deploy (CI) and branch protection
+
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs one job, `app-checks`, in `app/`: `npm ci`,
+`npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` (with dummy `NEXT_PUBLIC_*` values). It runs on every
+pull request, on pushes to `main`, and is called by `deploy.yml` as the `checks` job. The `deploy` job has
+`needs: checks`, so a failure stops the deploy before Cloud Build starts (this also applies to manual runs).
+
+It has no `paths:` filter so the check always reports, which a required check needs.
+
+### Which check name to require
+
+- On pull requests, the check appears as **`app-checks`** (workflow `CI`). Require this one.
+- In the deploy workflow's own runs it appears as `checks / app-checks`. That only matters for the deploy run
+  itself and is not what branch protection should require.
+
+### Recommended `main` protection (set manually, not done by code)
+
+GitHub Settings -> Branches -> Add rule for `main` (or a ruleset):
+
+- Require a pull request before merging (optionally 1 approval).
+- Require status checks to pass: add `app-checks`, and enable "Require branches to be up to date".
+- Block force pushes and deletions.
+- Optional: apply to administrators too.
+
+The same via CLI (replace `<owner>/<repo>`; run it yourself, this repo's workflows never do):
+
+```bash
+gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": { "strict": true, "contexts": ["app-checks"] },
+  "enforce_admins": false,
+  "required_pull_request_reviews": { "required_approving_review_count": 0 },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
+```
+
+Branch protection on private repos needs a paid GitHub plan. Without it, CI still runs on PRs and gates the deploy,
+but merging is not blocked.
+
+---
+
+## ORS quota alert
+
+The app logs one line per ORS response when quota is low, and an error on a 429:
+
+- `[ors-quota] low endpoint=directions remaining=... limit=... pct=...` (severity WARNING)
+- `[ors-quota] exhausted endpoint=...` (severity ERROR)
+
+The threshold is `ORS_QUOTA_WARN_PCT` (default 10). Lines contain no coordinates or API key. To be notified,
+create a log-based alert in Cloud Logging (Logging -> Log-based alerts -> Create alert) with this query:
+
+```
+resource.type="cloud_run_revision"
+resource.labels.service_name="sportai-app"
+textPayload:"[ors-quota]"
+```
+
+Attach a notification channel (email) and set a notification rate limit (for example 1 per day). Self-hosted ORS
+only needs `ORS_BASE_URL`; it sends no `X-RateLimit-*` headers, so no `[ors-quota]` lines appear.
+
+---
+
 ## Image tagging & rollback
 
 Each CI build tags the image with its commit SHA:

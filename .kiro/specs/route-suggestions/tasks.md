@@ -179,3 +179,12 @@ Mirror `lib/integrations/strava/` structure and conventions.
 - [ ] Manual on a phone viewport: 5k flat loop from browser geo → map + elevation + honest summary;
       attach a route to a plan long-run session; confirm the ORS key never appears in the client
       bundle/network (not sent as a query param, not under a `NEXT_PUBLIC_` name).
+
+---
+
+## Follow-ups
+
+- [x] ORS quota logging (`ors/quota.ts`, `[ors-quota]` prefix, `ORS_QUOTA_WARN_PCT`) with unit tests.
+- [x] Retention: migration `015_suggested_routes_retention.sql` (`prune_suggested_routes`). No TTL refresh because
+      cached rows are only listed / viewed by id, never reused instead of calling ORS.
+- [x] Optional ascent backfill: `recomputeAscent` (geo.ts) + `app/scripts/backfill-route-ascent.mjs` (dry run by default).

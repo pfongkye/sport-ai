@@ -227,6 +227,22 @@ export function computeElevationGain(
 }
 
 /**
+ * Recompute rounded ascent/descent from stored 3D geometry using the same path
+ * as suggest.ts (smoothElevation + computeElevationGain, AGENTS.md #41).
+ * Returns null when the geometry has no z-values (nothing to recompute from).
+ * Used by scripts/backfill-route-ascent.mjs for rows saved before the fix.
+ */
+export function recomputeAscent(
+  coords: number[][]
+): { ascentM: number; descentM: number } | null {
+  if (!hasElevation(coords)) return null
+  const { ascentM, descentM } = computeElevationGain(
+    smoothElevation(coords as Array<[number, number, number]>)
+  )
+  return { ascentM: Math.round(ascentM), descentM: Math.round(descentM) }
+}
+
+/**
  * ORS-reported ascent (meters) for a route feature. NOISY (per-edge sum over ~90 m
  * SRTM data): only a fallback when the geometry has no z-values; use
  * `computeElevationGain` for selection and display. ORS
