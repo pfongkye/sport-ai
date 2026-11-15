@@ -25,6 +25,9 @@ export type _Database = {
           sport_prefs: string[] | null
           primary_goal: string | null
           training_days: string[] | null
+          home_lat: number | null
+          home_lng: number | null
+          home_label: string | null
           created_at: string
           updated_at: string
         }
@@ -38,6 +41,9 @@ export type _Database = {
           sport_prefs?: string[] | null
           primary_goal?: string | null
           training_days?: string[] | null
+          home_lat?: number | null
+          home_lng?: number | null
+          home_label?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -50,6 +56,62 @@ export type _Database = {
           sport_prefs?: string[] | null
           primary_goal?: string | null
           training_days?: string[] | null
+          home_lat?: number | null
+          home_lng?: number | null
+          home_label?: string | null
+          updated_at?: string
+        }
+      }
+      suggested_routes: {
+        Row: {
+          id: string
+          user_id: string
+          planned_session_id: string | null
+          requested_distance_m: number
+          distance_m: number
+          ascent_m: number
+          descent_m: number
+          terrain: RouteTerrain
+          start_lat: number
+          start_lng: number
+          start_label: string | null
+          geometry: Json
+          elevation_profile: Json
+          bbox: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          planned_session_id?: string | null
+          requested_distance_m: number
+          distance_m: number
+          ascent_m: number
+          descent_m: number
+          terrain: RouteTerrain
+          start_lat: number
+          start_lng: number
+          start_label?: string | null
+          geometry: Json
+          elevation_profile: Json
+          bbox: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          planned_session_id?: string | null
+          requested_distance_m?: number
+          distance_m?: number
+          ascent_m?: number
+          descent_m?: number
+          terrain?: RouteTerrain
+          start_lat?: number
+          start_lng?: number
+          start_label?: string | null
+          geometry?: Json
+          elevation_profile?: Json
+          bbox?: Json
           updated_at?: string
         }
       }
@@ -350,6 +412,8 @@ export type AIProvider = 'openai' | 'anthropic' | 'google' | 'mistral'
 
 export type Units = 'metric' | 'imperial'
 
+export type RouteTerrain = 'flat' | 'uphill'
+
 // ─── Explicit row types (used throughout the app) ───────────────────────────
 // Defined explicitly so they remain typed even while Database = any during dev.
 
@@ -363,6 +427,9 @@ export interface Profile {
   sport_prefs: string[] | null
   primary_goal: string | null
   training_days: string[] | null
+  home_lat: number | null
+  home_lng: number | null
+  home_label: string | null
   created_at: string
   updated_at: string
 }
@@ -459,6 +526,28 @@ export interface UserSettings {
   units: Units
   language: string
   timezone: string
+  updated_at: string
+}
+
+export interface SuggestedRoute {
+  id: string
+  user_id: string
+  planned_session_id: string | null
+  requested_distance_m: number
+  distance_m: number
+  ascent_m: number
+  descent_m: number
+  terrain: RouteTerrain
+  start_lat: number
+  start_lng: number
+  start_label: string | null
+  /** GeoJSON LineString ([lng,lat,ele][]). Typed as Json since Database = any. */
+  geometry: Json
+  /** [{ distM, eleM }] sampled elevation profile. */
+  elevation_profile: Json
+  /** [minLng, minLat, maxLng, maxLat]. */
+  bbox: Json
+  created_at: string
   updated_at: string
 }
 

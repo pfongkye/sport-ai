@@ -66,6 +66,7 @@ ensure_secret () {
 }
 ensure_secret OPENAI_API_KEY
 ensure_secret SUPABASE_SERVICE_ROLE_KEY
+ensure_secret ORS_API_KEY
 # ensure_secret USDA_API_KEY   # optional; uncomment if you use it
 
 # Strava import is optional. Enable it by exporting BOTH STRAVA_CLIENT_ID and
@@ -135,7 +136,7 @@ fi
 
 # Secrets mounted into the service. The Strava client secret is appended only
 # when Strava is enabled.
-RUN_SECRETS="OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest"
+RUN_SECRETS="OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,ORS_API_KEY=ORS_API_KEY:latest"
 if [[ "$STRAVA_ENABLED" == "1" ]]; then
   RUN_SECRETS="${RUN_SECRETS},STRAVA_CLIENT_SECRET=STRAVA_CLIENT_SECRET:latest"
 fi

@@ -23,6 +23,7 @@ const EXPECTED_TOOLS = [
   'addActivity',
   'listStravaActivities',
   'importFromStrava',
+  'suggestRoute',
 ] as const
 
 describe('buildCoachTools', () => {
@@ -77,6 +78,67 @@ describe('buildCoachTools', () => {
     expect(
       schema!.safeParse!({ limit: 1, activityId: '550e8400-e29b-41d4-a716-446655440000' }).success
     ).toBe(true)
+  })
+
+  it('suggestRoute schema safeParses the all-omitted model payload to all-null (gotcha #36)', () => {
+    // Under strict function-calling an .optional() field is still "Required";
+    // these fields must be .nullable().default(null) so omitting them → null,
+    // never a validation failure that silently kills the turn.
+    const tools = buildCoachTools(stubSupabase, 'user-1') as Record<
+      string,
+      { inputSchema?: { safeParse?: (v: unknown) => { success: boolean; data?: unknown } } }
+    >
+    const schema = tools.suggestRoute.inputSchema
+    expect(schema?.safeParse).toBeTypeOf('function')
+    const r = schema!.safeParse!({}) as {
+      success: boolean
+      data?: { distanceKm: unknown; terrain: unknown; place: unknown }
+    }
+    expect(r.success).toBe(true)
+    expect(r.data?.distanceKm).toBeNull()
+    expect(r.data?.terrain).toBeNull()
+    expect(r.data?.place).toBeNull()
+    // Explicit nulls also pass.
+    expect(schema!.safeParse!({ distanceKm: null, terrain: null, place: null }).success).toBe(true)
+    // Real values pass; enum is still enforced.
+    expect(schema!.safeParse!({ distanceKm: 10, terrain: 'uphill', place: 'park' }).success).toBe(true)
+    expect(schema!.safeParse!({ terrain: 'bogus' }).success).toBe(false)
+  })
+
+  it('suggestRoute.execute returns needsLocation (not a throw) when location is unresolved (gotcha #36)', async () => {
+    // Offline + deterministic: a stub Supabase where every resolveStart lookup
+    // (profile home, recent activities) returns no data → the service throws
+    // NO_LOCATION → execute MUST catch it and return { needsLocation: true }.
+    const emptyBuilder = () => {
+      const chain: Record<string, unknown> = {}
+      const self = () => chain
+      Object.assign(chain, {
+        select: self,
+        eq: self,
+        order: self,
+        limit: self,
+        maybeSingle: async () => ({ data: null, error: null }),
+        single: async () => ({ data: null, error: null }),
+        then: (resolve: (v: { data: unknown[]; error: null }) => unknown) =>
+          resolve({ data: [], error: null }),
+      })
+      return chain
+    }
+    const offlineSupabase = {
+      from: () => emptyBuilder(),
+    } as unknown as SupabaseClient<Database>
+
+    const tools = buildCoachTools(offlineSupabase, 'user-1') as unknown as Record<
+      string,
+      { execute: (input: unknown, ...rest: unknown[]) => Promise<{ needsLocation?: boolean; message?: string }> }
+    >
+    const result = await tools.suggestRoute.execute({
+      distanceKm: null,
+      terrain: null,
+      place: null,
+    })
+    expect(result.needsLocation).toBe(true)
+    expect(typeof result.message).toBe('string')
   })
 
   it('updateSessionStatus accepts a non-UUID sessionId at the schema level (regression)', () => {
