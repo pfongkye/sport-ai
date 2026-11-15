@@ -12,6 +12,7 @@ import {
   importStravaActivities as importStravaActivitiesSvc,
 } from '@/lib/integrations/strava/sync'
 import { formatDistance, formatDuration } from '@/lib/utils'
+import { ORS_LOOP_TOO_FAR } from '@/lib/integrations/ors/client'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -503,6 +504,13 @@ export function buildCoachTools(
           terrain: route.terrain,
           ascent: `${route.ascentM} m`,
           startLabel: route.start.label ?? 'your start point',
+          distanceWithinTolerance: route.distanceWithinTolerance !== false,
+          ...(route.distanceWithinTolerance === false
+            ? {
+                toleranceNote:
+                  'No loop landed within 10% of the requested distance. Say plainly that this is the closest loop found and give both distances.',
+              }
+            : {}),
           note:
             'Describe the distance, ascent and terrain honestly, including how the actual distance ' +
             'compares to what was requested. Do NOT invent named streets or landmarks.',
@@ -513,6 +521,12 @@ export function buildCoachTools(
           return {
             needsLocation: true,
             message: 'Ask the athlete where they want to run.',
+          }
+        }
+        if (msg === ORS_LOOP_TOO_FAR) {
+          return {
+            error:
+              "Couldn't find a loop of about the requested distance from there (the area may be an island or have limited paths). Tell the athlete to try a different start point or distance.",
           }
         }
         // ORS_* sentinels or any other failure — surface a plain message, never throw.

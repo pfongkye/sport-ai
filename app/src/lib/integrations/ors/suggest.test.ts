@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-import { resolveStart, suggestRoute, NO_LOCATION } from './suggest'
-import { ORS_NO_ROUTE } from './client'
+import { resolveStart, suggestRoute, selectCandidate, nextRoundTripLength, NO_LOCATION } from './suggest'
+import { ORS_NO_ROUTE, ORS_LOOP_TOO_FAR } from './client'
 
 /**
  * Offline tests for the ORS suggest service. Supabase is stubbed (chainable,
@@ -70,8 +70,20 @@ function makeSupabase(opts: SupabaseStubOpts): SupabaseClient<Database> {
   return client as unknown as SupabaseClient<Database>
 }
 
-/** A fake ORS geo+json response feature with a given ascent. */
-function orsResponse(ascent: number, distance = 5000) {
+/**
+ * A fake ORS geo+json response with a real 3D geometry whose COMPUTED gain
+ * (smoothed + hysteresis) equals `ascent`: a monotonic ramp up then down, one
+ * point per ~100 m (so smoothing leaves it intact). `summaryAscent` is the (noisy)
+ * ORS summary value and defaults to `ascent`.
+ */
+function orsResponse(ascent: number, distance = 5000, summaryAscent = ascent) {
+  const legPoints = 25
+  const stepDeg = 100 / (6371000 * (Math.PI / 180))
+  const coordinates: number[][] = []
+  for (let i = 0; i <= 2 * legPoints; i++) {
+    const up = i <= legPoints ? i : 2 * legPoints - i
+    coordinates.push([-0.1, 51.5 + i * stepDeg, 10 + (ascent * up) / legPoints])
+  }
   return {
     ok: true,
     status: 200,
@@ -79,15 +91,8 @@ function orsResponse(ascent: number, distance = 5000) {
       features: [
         {
           type: 'Feature',
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              [-0.1, 51.5, 10],
-              [-0.101, 51.501, 10 + ascent / 2],
-              [-0.1, 51.5, 10],
-            ],
-          },
-          properties: { summary: { distance, ascent, descent: ascent } },
+          geometry: { type: 'LineString', coordinates },
+          properties: { summary: { distance, ascent: summaryAscent, descent: summaryAscent } },
         },
       ],
     }),
@@ -232,6 +237,44 @@ describe('suggestRoute', () => {
     expect(result.ascentM).toBe(90)
   })
 
+  it('uphill ignores a larger ORS summary.ascent when computed ascent is lower', async () => {
+    // [computed, ORS summary]: first has the huge (noisy) ORS figure but little real climb.
+    const candidates: Array<[number, number]> = [
+      [20, 500],
+      [60, 5],
+      [30, 40],
+    ]
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const [computed, summary] = candidates[call++] ?? candidates[0]
+        return orsResponse(computed, 5000, summary)
+      })
+    )
+    const inserts: Record<string, unknown>[] = []
+    const supabase = makeSupabase({ onInsert: (row) => inserts.push(row), insertedId: 'r4' })
+    const result = await suggestRoute(supabase, 'u1', {
+      distanceKm: 5,
+      terrain: 'uphill',
+      coord: { lng: -0.1, lat: 51.5 },
+    })
+    expect(result.ascentM).toBe(60)
+    expect(inserts[0].ascent_m).toBe(60)
+  })
+
+  it('chart profile comes from the same series: range ≤ computed ascent + 1', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => orsResponse(40)))
+    const supabase = makeSupabase({ insertedId: 'r5' })
+    const result = await suggestRoute(supabase, 'u1', {
+      distanceKm: 5,
+      terrain: 'flat',
+      coord: { lng: -0.1, lat: 51.5 },
+    })
+    const ele = result.elevationProfile.map((p) => p.eleM)
+    expect(Math.max(...ele) - Math.min(...ele)).toBeLessThanOrEqual(result.ascentM + 1)
+  })
+
   it('sets planned_session_id when attaching to a session', async () => {
     const inserts: Record<string, unknown>[] = []
     vi.stubGlobal('fetch', vi.fn(async () => orsResponse(20)))
@@ -260,5 +303,120 @@ describe('suggestRoute', () => {
       })
     ).rejects.toThrow(ORS_NO_ROUTE)
     expect(inserts).toHaveLength(0)
+  })
+})
+
+describe('distance-first selection', () => {
+  const coord = { lng: -0.1, lat: 51.5 }
+  /** Mock fetch returning [ascent, distance] per call; records the request bodies. */
+  function stub(cands: Array<[number, number]>) {
+    const bodies: Array<{ options: { round_trip: { length: number; seed: number } } }> = []
+    let call = 0
+    const fn = vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body))
+      const [a, d] = cands[call++] ?? cands[cands.length - 1]
+      return orsResponse(a, d)
+    })
+    vi.stubGlobal('fetch', fn)
+    return { bodies, fn }
+  }
+
+  it('scales the next request length down after a 30% overshoot', async () => {
+    const { bodies } = stub([[10, 6500], [10, 5000], [10, 5000]])
+    await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(bodies[0].options.round_trip.length).toBe(5000)
+    expect(bodies[1].options.round_trip.length).toBe(3846)
+    expect(bodies.map((b) => b.options.round_trip.seed)).toEqual([0, 1, 2])
+  })
+
+  it('requests avoid_features and recovers from a 13x overshoot', async () => {
+    const bodies: Array<{ options: { avoid_features: string[]; round_trip: { length: number } } }> = []
+    const dists = [65000, 5200, 5200]
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_u: string, init: { body: string }) => {
+        bodies.push(JSON.parse(init.body))
+        return orsResponse(10, dists[call++])
+      })
+    )
+    const inserts: Record<string, unknown>[] = []
+    const r = await suggestRoute(makeSupabase({ onInsert: (x) => inserts.push(x) }), 'u1', {
+      distanceKm: 5,
+      terrain: 'flat',
+      coord,
+    })
+    expect(bodies[0].options.avoid_features).toEqual(['ferries', 'fords', 'steps'])
+    expect(bodies[1].options.round_trip.length).toBeLessThan(5000 * 0.5)
+    expect(r.distanceM).toBe(5200)
+    expect(inserts).toHaveLength(1)
+  })
+  it('throws ORS_LOOP_TOO_FAR when every candidate is outside the hard band', async () => {
+    const { fn } = stub([[10, 65000], [10, 40000], [10, 2000]])
+    const inserts: Record<string, unknown>[] = []
+    await expect(
+      suggestRoute(makeSupabase({ onInsert: (x) => inserts.push(x) }), 'u1', {
+        distanceKm: 5,
+        terrain: 'flat',
+        coord,
+      })
+    ).rejects.toThrow(ORS_LOOP_TOO_FAR)
+    expect(inserts).toHaveLength(0)
+    expect(fn.mock.calls.length).toBeLessThanOrEqual(3)
+  })
+  it('prefers an in-tolerance candidate over a flatter out-of-tolerance one', async () => {
+    stub([[5, 6500], [40, 5200], [60, 3000]])
+    const r = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(r.distanceM).toBe(5200)
+    expect(r.distanceWithinTolerance).toBe(true)
+  })
+
+  it('terrain decides among in-tolerance candidates', async () => {
+    stub([[30, 5100], [10, 4900], [80, 7000]])
+    const flat = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(flat.ascentM).toBe(10)
+    stub([[30, 5100], [10, 4900], [80, 7000]])
+    const hill = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'uphill', coord })
+    expect(hill.ascentM).toBe(30)
+  })
+
+  it('none in tolerance: closest by distance wins and is flagged', async () => {
+    stub([[5, 6500], [90, 5700], [20, 3000]])
+    const r = await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(r.distanceM).toBe(5700)
+    expect(r.distanceWithinTolerance).toBe(false)
+  })
+
+  it('never makes more than 3 ORS calls', async () => {
+    const { fn } = stub([[10, 9000]])
+    await suggestRoute(makeSupabase({}), 'u1', { distanceKm: 5, terrain: 'flat', coord })
+    expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  it('failures write no row', async () => {
+    const inserts: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, text: async () => '' })))
+    await expect(
+      suggestRoute(makeSupabase({ onInsert: (r) => inserts.push(r) }), 'u1', {
+        distanceKm: 5,
+        terrain: 'flat',
+        coord,
+      })
+    ).rejects.toThrow()
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('selectCandidate / nextRoundTripLength helpers', () => {
+    const { chosen } = selectCandidate(
+      [{ distanceM: 100, ascentM: 1 }, { distanceM: 1050, ascentM: 9 }],
+      'flat',
+      1000
+    )
+    expect(chosen.ascentM).toBe(9)
+    // clamped to 0.1x of the request
+    expect(nextRoundTripLength(10000, 10000, 1000000)).toBe(1000)
+    expect(nextRoundTripLength(10000, 10000, 100000)).toBe(1000)
+    // clamped to 3x
+    expect(nextRoundTripLength(10000, 10000, 1000)).toBe(30000)
   })
 })

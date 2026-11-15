@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Phone held sideways: short and wide. Keep in sync with SHORT_LANDSCAPE_QUERY (map-overlay.ts). */
+@custom-variant short-landscape (@media (orientation: landscape) and (max-height: 500px));
+
 :root {
   --background: #ffffff;
   --foreground: #0f172a;
@@ -113,4 +116,22 @@ html {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
+}
+
+/* Full-screen route map overlay: short fade-in, none when reduced motion is set. */
+@keyframes map-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.map-overlay-in {
+  animation: map-overlay-in 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-overlay-in {
+    animation: none;
+  }
 }

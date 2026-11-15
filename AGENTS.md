@@ -24,6 +24,65 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 43. Island/ferry runaway loops (15 km request → 202 km "loop" to Batam) — avoid_features + wide correction + hard band
+Symptom: 'Sentosa, Singapore' flat 15 km returned 'Closest loop found: 202.09 km' crossing the sea.
+Cause: ORS foot-walking allows ferries, so a round trip from an island ferries to another country; the old
+length correction was clamped to 0.5x..1.5x of the request, so a 13x overshoot could never be corrected, and
+the closest-candidate fallback returned it anyway.
+Fix: `orsRoundTrip` sends `options.avoid_features: ['ferries','fords','steps']` (valid foot-* values per the ORS
+routing-options docs; `highways`/`tollways` are driving-only and would 400). `LENGTH_SCALE_MIN/MAX` = 0.1/3, within
+MAX_SEEDS=3. `MIN/MAX_DISTANCE_RATIO` = 0.5/2 in suggest.ts: candidates outside are never returned; if none is
+inside, `ORS_LOOP_TOO_FAR` (422 via `orsErrorResponse`, relayed by the chat tool as a structured `error`), nothing saved.
+Not verified against the live API (no key in the agent env). `points` left at 4 (docs only say larger = rounder).
+
+### 42. Map console error `AJAXError: Failed to fetch (0): tile.openstreetmap.org/20/...png` — cap zoom at 19
+Symptom: MapLibre logs failed tile fetches at zoom 20 (e.g. `/20/522319/378058.png`) when zoomed in on a route.
+Cause: the OSM standard tile server serves zoom 0-19 only, and a raster source without `maxzoom` makes MapLibre request z20+ tiles.
+Fix: `route-map-style.ts` sets `maxzoom: 19` on the raster source (MapLibre overzooms z19 tiles) and `MAP_MAX_ZOOM = 19` on the map. If errors persist at z<=19, OSM may be rejecting the app under its tile usage policy; the fix is then a tile provider meant for apps (swap the single `OSM_RASTER_STYLE` constant), not a referrer hack.
+
+### 41. Route ascent/descent: ORS `summary.ascent` is a noisy SRTM per-edge sum — use computeElevationGain
+Symptom: /routes card showed e.g. 92 m ascent next to a 16 m elevation-chart range (Bordeaux), 55 m vs 9 m (Pessac).
+Cause: ORS sums per-edge deltas of ~90 m SRTM elevation (±several m vertical error, smoothing off by
+default), so jitter accumulates to 5-25x the real relief. We never computed ascent ourselves.
+Fix: `lib/integrations/ors/geo.ts` `smoothElevation` (≈100 m distance-based moving average, ends pinned)
++ `computeElevationGain` (3 m hysteresis). `suggest.ts` uses it for BOTH flat/uphill selection and the
+persisted/displayed `ascentM`/`descentM`, and builds the chart profile from the same smoothed series.
+ORS summary values are only a fallback when the geometry has no z. Card labels say "(est.)". Never
+select or display ORS `summary.ascent` directly; `terrainScore` is just that fallback. Old
+`suggested_routes` rows keep their old stored values (no migration).
+
+### 40. Auth redirects dropped the port (http://localhost/login) — build origins with lib/public-origin.ts
+Symptom: `curl -D- http://localhost:3000/dashboard` → `307 Location: http://localhost/login?...`;
+browser can't reach the app locally.
+Cause: `lib/supabase/middleware.ts` cloned `request.nextUrl` (which reports host WITHOUT the port
+in the dev container; reproduced with no forwarded headers and with `Host: localhost:3000`) and
+only fixed it when x-forwarded-host was present, and then did `url.host = fwd; url.port = ''`,
+which also strips a port that is part of the forwarded host.
+Fix: one shared helper `resolvePublicOrigin(headers, fallbackUrl)` in `lib/public-origin.ts`:
+x-forwarded-host(+proto; default https, http for localhost) → Host header (keeps port) →
+NEXT_PUBLIC_APP_URL → request URL. Used by the proxy/middleware, the auth callback and Strava.
+Do not re-implement it inline. Note: `next dev` may emit a RELATIVE `Location: /login?...` for
+same-origin redirects; that is fine (browser keeps host:port). Turbopack caches a failed
+resolve of a NEW file imported while the file did not yet exist: if you see "Can't resolve" for
+a file that exists, `docker restart sportai-app` (no volume changes).
+
+### 39. MapLibre v6 route line never renders: worker URL is wrong under the bundler
+Symptom: /routes shows the OSM tiles and the result card, but no route line and no fit to the
+loop. Raster tiles work because they load on the main thread; GeoJSON sources need the worker.
+Cause: `maplibre-gl@6` is ESM-only and derives its worker URL from `import.meta.url`
+(`./maplibre-gl-worker.mjs` beside itself, or '' if the URL is not http). Next/Turbopack emits
+the library and worker as hashed `/_next/static/media/*.mjs` assets, so the derived URL 404s and
+the worker never starts. (Inferred from the library source and build output; not reproduced in a
+real browser.)
+Fix: `maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs')` in `route-map.tsx`. The file is copied
+from `node_modules/maplibre-gl/dist` into `app/public/` by `scripts/copy-maplibre-worker.mjs`
+(npm `predev`/`prebuild`; output gitignored). Any new MapLibre map needs the same. Also: create
+the map once and update the GeoJSON source with `setData`, don't re-create it per route.
+Also: the auth proxy must let `.mjs` through. `proxy.ts` matcher AND `isPublicAsset` in
+`lib/supabase/middleware.ts` list static extensions; without `mjs` an unauthenticated request for
+`/maplibre-gl-worker.mjs` gets a 307 to /login (HTML, not JS). Any new root-level static file type
+in `public/` needs adding to both lists. Verify with `curl -sI <host>/maplibre-gl-worker.mjs` → 200.
+
 ### 38. New Cloud Run runtime secret: add to RUN_SECRETS in BOTH deploy paths, create it BEFORE merge
 Symptom: after adding a feature that reads a new `process.env.<KEY>`, prod loses the key on the
 next deploy (feature reports "not configured"), or the new revision fails to start.

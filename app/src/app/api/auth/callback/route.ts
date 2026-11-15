@@ -1,31 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { isEmailAllowed } from '@/lib/auth/allow-list'
-
-/**
- * Resolves the public-facing origin for redirects.
- *
- * Behind a proxy/tunnel (ngrok), `new URL(request.url).origin` is the INTERNAL
- * address the Next.js server received the request on (http://localhost:3000),
- * not the public URL the user is on. That makes post-login redirects bounce to
- * localhost instead of the ngrok URL.
- *
- * Resolution order:
- *  1. x-forwarded-host / x-forwarded-proto (set by ngrok and most proxies)
- *  2. NEXT_PUBLIC_APP_URL (explicit public base, set by ngrok-sync.sh)
- *  3. request.url origin (plain localhost dev)
- */
-function resolvePublicOrigin(request: Request): string {
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https'
-  if (forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`
-  }
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL
-  }
-  return new URL(request.url).origin
-}
+import { resolvePublicOrigin } from '@/lib/public-origin'
 
 /**
  * OAuth callback handler.
@@ -36,7 +12,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/dashboard'
-  const origin = resolvePublicOrigin(request)
+  const origin = resolvePublicOrigin(request.headers, request.url)
 
   if (code) {
     const supabase = await createClient()

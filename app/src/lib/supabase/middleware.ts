@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/types/database'
 import { SUPABASE_SERVER_URL, SUPABASE_ANON_KEY, SUPABASE_STORAGE_KEY } from './config'
 import { isEmailAllowed } from '@/lib/auth/allow-list'
+import { resolvePublicOrigin } from '@/lib/public-origin'
 
 /**
  * Refreshes the Supabase auth session in middleware.
@@ -44,16 +45,8 @@ export async function updateSession(request: NextRequest) {
   // Behind a proxy/tunnel (ngrok), request.nextUrl may carry the internal host
   // (localhost:3000) instead of the public one. Build redirect URLs against the
   // forwarded host so we don't bounce users off the tunnel back to localhost.
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https'
   const redirectTo = (path: string) => {
-    const url = request.nextUrl.clone()
-    url.pathname = path
-    if (forwardedHost) {
-      url.host = forwardedHost
-      url.protocol = forwardedProto
-      url.port = ''
-    }
+    const url = new URL(path, resolvePublicOrigin(request.headers, request.url))
     return url
   }
 
@@ -63,7 +56,7 @@ export async function updateSession(request: NextRequest) {
     pathname === '/robots.txt' ||
     pathname === '/sitemap.xml' ||
     pathname.startsWith('/icons/') ||
-    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?|ttf)$/.test(pathname)
+    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?|ttf|mjs)$/.test(pathname)
 
   if (isPublicAsset) {
     return supabaseResponse

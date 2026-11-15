@@ -84,6 +84,48 @@ function haversineLngLat(a: [number, number], b: [number, number]): number {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
+/** Cumulative haversine distance (meters) from the first point, per coordinate. */
+function cumulativeDistances(coords: number[][]): number[] {
+  const cum: number[] = coords.length ? [0] : []
+  for (let i = 1; i < coords.length; i++) {
+    const prev = coords[i - 1]
+    const curr = coords[i]
+    cum.push(cum[i - 1] + haversineLngLat([prev[0], prev[1]], [curr[0], curr[1]]))
+  }
+  return cum
+}
+
+export interface ElevationPoint {
+  distM: number
+  eleM: number
+}
+
+/** True when every coordinate carries a finite z (elevation) value. */
+export function hasElevation(coords: number[][]): boolean {
+  return coords.length > 0 && coords.every((c) => Number.isFinite(c[2]))
+}
+
+/**
+ * Decimate an elevation series to at most `maxPoints` (uniform by index, always
+ * keeping first + last). Distances are rounded to whole meters.
+ */
+export function sampleProfileFromSeries(
+  series: ElevationPoint[],
+  maxPoints = 100
+): ElevationPoint[] {
+  const n = series.length
+  if (n === 0) return []
+  if (n <= maxPoints) {
+    return series.map((p) => ({ distM: Math.round(p.distM), eleM: p.eleM }))
+  }
+  const out: ElevationPoint[] = []
+  for (let k = 0; k < maxPoints; k++) {
+    const idx = Math.round((k * (n - 1)) / (maxPoints - 1))
+    out.push({ distM: Math.round(series[idx].distM), eleM: series[idx].eleM })
+  }
+  return out
+}
+
 /**
  * Sample a 3D geometry (`[lng,lat,ele][]`) into an elevation profile for the UI
  * chart: `[{ distM, eleM }]` where `distM` is cumulative planar/haversine
@@ -94,32 +136,100 @@ export function sampleElevationProfile(
   coords3d: Array<[number, number, number]>,
   maxPoints = 100
 ): Array<{ distM: number; eleM: number }> {
-  if (coords3d.length === 0) return []
+  const cum = cumulativeDistances(coords3d)
+  return sampleProfileFromSeries(
+    coords3d.map((c, i) => ({ distM: cum[i], eleM: c[2] ?? 0 })),
+    maxPoints
+  )
+}
 
-  // Cumulative distance along the full geometry.
-  const cum: number[] = [0]
-  for (let i = 1; i < coords3d.length; i++) {
-    const prev = coords3d[i - 1]
-    const curr = coords3d[i]
-    cum.push(cum[i - 1] + haversineLngLat([prev[0], prev[1]], [curr[0], curr[1]]))
-  }
-
+/**
+ * Distance-based moving average of the elevation (z) values. Each point becomes
+ * the mean of all points within ±`windowM/2` meters ALONG THE ROUTE, so uneven
+ * ORS point spacing is handled. First and last points are pinned to their raw
+ * values so a loop keeps its start/end elevation. Output length = input length.
+ */
+export function smoothElevation(
+  coords3d: Array<[number, number, number]>,
+  windowM = 100
+): ElevationPoint[] {
   const n = coords3d.length
-  if (n <= maxPoints) {
-    return coords3d.map((c, i) => ({ distM: Math.round(cum[i]), eleM: c[2] ?? 0 }))
-  }
+  if (n === 0) return []
+  const cum = cumulativeDistances(coords3d)
+  const prefix: number[] = [0]
+  for (let i = 0; i < n; i++) prefix.push(prefix[i] + (coords3d[i][2] ?? 0))
 
-  // Uniform decimation to maxPoints, keeping first + last.
-  const out: Array<{ distM: number; eleM: number }> = []
-  for (let k = 0; k < maxPoints; k++) {
-    const idx = Math.round((k * (n - 1)) / (maxPoints - 1))
-    out.push({ distM: Math.round(cum[idx]), eleM: coords3d[idx][2] ?? 0 })
+  const half = windowM / 2
+  const out: ElevationPoint[] = []
+  let lo = 0
+  let hi = 0 // exclusive upper bound
+  for (let i = 0; i < n; i++) {
+    while (cum[lo] < cum[i] - half) lo++
+    if (hi < i + 1) hi = i + 1
+    while (hi < n && cum[hi] <= cum[i] + half) hi++
+    const mean = (prefix[hi] - prefix[lo]) / (hi - lo)
+    out.push({ distM: cum[i], eleM: mean })
   }
+  out[0].eleM = coords3d[0][2] ?? 0
+  out[n - 1].eleM = coords3d[n - 1][2] ?? 0
   return out
 }
 
 /**
- * Total ascent (meters) for an ORS route feature, used to score terrain. ORS
+ * Total ascent/descent of an elevation series using a hysteresis state machine:
+ * a climb (or descent) only counts once the series has moved at least
+ * `thresholdM` from the last confirmed extreme, so residual jitter is ignored.
+ * Run on a smoothed series (see `smoothElevation`).
+ */
+export function computeElevationGain(
+  series: ElevationPoint[],
+  thresholdM = 3
+): { ascentM: number; descentM: number } {
+  let ascentM = 0
+  let descentM = 0
+  if (series.length < 2) return { ascentM, descentM }
+
+  let extreme = series[0].eleM
+  let dir = 0 // 0 unknown, 1 climbing, -1 descending
+  for (let i = 1; i < series.length; i++) {
+    const e = series[i].eleM
+    if (dir === 0) {
+      if (e - extreme >= thresholdM) {
+        ascentM += e - extreme
+        extreme = e
+        dir = 1
+      } else if (extreme - e >= thresholdM) {
+        descentM += extreme - e
+        extreme = e
+        dir = -1
+      }
+    } else if (dir === 1) {
+      if (e > extreme) {
+        ascentM += e - extreme
+        extreme = e
+      } else if (extreme - e >= thresholdM) {
+        descentM += extreme - e
+        extreme = e
+        dir = -1
+      }
+    } else {
+      if (e < extreme) {
+        descentM += extreme - e
+        extreme = e
+      } else if (e - extreme >= thresholdM) {
+        ascentM += e - extreme
+        extreme = e
+        dir = 1
+      }
+    }
+  }
+  return { ascentM, descentM }
+}
+
+/**
+ * ORS-reported ascent (meters) for a route feature. NOISY (per-edge sum over ~90 m
+ * SRTM data): only a fallback when the geometry has no z-values; use
+ * `computeElevationGain` for selection and display. ORS
  * puts ascent on `properties.summary.ascent` and/or `properties.ascent` when
  * `elevation: true` is requested; fall back across both and default to 0.
  */

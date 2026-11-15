@@ -19,6 +19,8 @@ export interface RouteSummaryProps {
   startLabel?: string | null
   /** Optional caller note, e.g. a honest caveat about the distance match. */
   note?: string | null
+  /** False = the closest loop found is outside the distance tolerance. Undefined = unknown. */
+  distanceWithinTolerance?: boolean
 }
 
 const TERRAIN_LABEL: Record<'flat' | 'uphill', string> = {
@@ -34,12 +36,13 @@ export function RouteSummary({
   terrain,
   startLabel,
   note,
+  distanceWithinTolerance,
 }: RouteSummaryProps) {
   const stats: { label: string; value: string }[] = [
     { label: 'Distance', value: formatDistance(distanceM) },
     { label: 'Requested', value: formatDistance(requestedDistanceM) },
-    { label: 'Ascent', value: `${Math.round(ascentM)} m` },
-    { label: 'Descent', value: `${Math.round(descentM)} m` },
+    { label: 'Ascent (est.)', value: `${Math.round(ascentM)} m` },
+    { label: 'Descent (est.)', value: `${Math.round(descentM)} m` },
   ]
 
   return (
@@ -53,7 +56,7 @@ export function RouteSummary({
         )}
       </div>
 
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <dl className="grid grid-cols-2 sm:grid-cols-4 short-landscape:grid-cols-2 gap-3">
         {stats.map((s) => (
           <div key={s.label}>
             <dt className="text-xs uppercase tracking-wide text-[var(--muted-foreground)]">
@@ -63,6 +66,13 @@ export function RouteSummary({
           </div>
         ))}
       </dl>
+
+      {distanceWithinTolerance === false && (
+        <p className="text-sm font-medium text-[var(--foreground)]">
+          Closest loop found: {formatDistance(distanceM)} (requested{' '}
+          {formatDistance(requestedDistanceM)})
+        </p>
+      )}
 
       {note && <p className="text-xs text-[var(--muted-foreground)]">{note}</p>}
     </div>

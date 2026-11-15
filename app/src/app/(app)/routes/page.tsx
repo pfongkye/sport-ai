@@ -18,7 +18,7 @@ export default async function RoutesPage() {
     typeof profile?.home_lat === 'number' && typeof profile?.home_lng === 'number'
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-2xl">
+    <div className="p-4 md:p-6 space-y-5 max-w-2xl short-landscape:max-w-none">
       <div>
         <h1 className="text-2xl font-bold text-[var(--foreground)]">Routes</h1>
         <p className="text-sm text-[var(--muted-foreground)] mt-1">

@@ -47,7 +47,7 @@ export function ElevationProfile({ profile }: ElevationProfileProps) {
     <figure className="space-y-1">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="w-full h-24"
+        className="w-full h-24 short-landscape:h-14"
         preserveAspectRatio="none"
         aria-hidden
       >

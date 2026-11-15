@@ -4,6 +4,8 @@ import {
   bboxOf,
   sampleElevationProfile,
   terrainScore,
+  smoothElevation,
+  computeElevationGain,
   type OrsRouteFeature,
 } from './geo'
 
@@ -104,5 +106,78 @@ describe('terrainScore + terrain selection', () => {
     )
     expect(terrainScore(flat)).toBe(10)
     expect(terrainScore(uphill)).toBe(90)
+  })
+})
+
+// --- computed ascent/descent (smoothed + hysteresis) ---------------------------
+
+/** Degrees of latitude per meter along a meridian (haversine R = 6371000). */
+const DEG_PER_M = 180 / (Math.PI * 6371000)
+
+/** Straight north-going line, one point every `stepM`, elevation from `ele(distM, i)`. */
+function line(
+  n: number,
+  stepM: number,
+  ele: (distM: number, i: number) => number
+): Array<[number, number, number]> {
+  return Array.from({ length: n }, (_, i) => [0, i * stepM * DEG_PER_M, ele(i * stepM, i)])
+}
+
+/** Deterministic pseudo-noise in [-1, 1] (no Math.random). */
+function noise(i: number): number {
+  const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453
+  return (x - Math.floor(x)) * 2 - 1
+}
+
+const gain = (c: Array<[number, number, number]>) =>
+  computeElevationGain(smoothElevation(c))
+
+describe('smoothElevation', () => {
+  it('keeps length and pins first and last elevation', () => {
+    const c = line(50, 10, (_d, i) => 20 + 5 * noise(i))
+    const s = smoothElevation(c)
+    expect(s).toHaveLength(c.length)
+    expect(s[0].eleM).toBe(c[0][2])
+    expect(s[s.length - 1].eleM).toBe(c[c.length - 1][2])
+    expect(s[0].distM).toBe(0)
+  })
+
+  it('returns [] for empty input', () => {
+    expect(smoothElevation([])).toEqual([])
+  })
+})
+
+describe('computeElevationGain', () => {
+  it('flat line = 0 / 0', () => {
+    expect(gain(line(200, 10, () => 20))).toEqual({ ascentM: 0, descentM: 0 })
+  })
+
+  it('10 m ramp over 1 km ≈ 10 m ascent, 0 descent', () => {
+    const { ascentM, descentM } = gain(line(101, 10, (d) => 20 + (d / 1000) * 10))
+    expect(ascentM).toBeGreaterThan(9)
+    expect(ascentM).toBeLessThan(11)
+    expect(descentM).toBe(0)
+  })
+
+  it('±1 m jitter around a constant = 0', () => {
+    const c = line(400, 10, (_d, i) => 30 + (i % 2 === 0 ? 1 : -1))
+    expect(gain(c)).toEqual({ ascentM: 0, descentM: 0 })
+  })
+
+  it('noisy sine (2 cycles, amplitude 8 m, 7.5 km, ±2 m noise) ≈ 32 m, raw sum > 400 m', () => {
+    const c = line(751, 10, (d, i) => 15 + 8 * Math.sin((2 * Math.PI * 2 * d) / 7500) + 2 * noise(i))
+    let raw = 0
+    for (let i = 1; i < c.length; i++) raw += Math.max(0, c[i][2] - c[i - 1][2])
+    expect(raw).toBeGreaterThan(400)
+    const { ascentM } = gain(c)
+    expect(ascentM).toBeGreaterThan(26)
+    expect(ascentM).toBeLessThan(38)
+  })
+
+  it('loop (same start/end elevation): |ascent − descent| ≤ 3', () => {
+    const c = line(751, 10, (d) => 15 + 8 * Math.sin((2 * Math.PI * 2 * d) / 7500))
+    const { ascentM, descentM } = gain(c)
+    expect(Math.abs(ascentM - descentM)).toBeLessThanOrEqual(3)
+    expect(ascentM).toBeGreaterThan(20)
   })
 })
