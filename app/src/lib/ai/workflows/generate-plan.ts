@@ -4,6 +4,7 @@ import type { Database, Json } from '@/types/database'
 import { resolveUserAISettings, resolveModel } from '../provider'
 import { computeReadiness } from '../readiness'
 import { addDays, localDateInTz, mondayOf } from '@/lib/plan/dates'
+import { resolveAthleteTimeZone } from '@/lib/plan/timezone'
 import { planSchema, planToRows, type PlanDraft } from './plan-schema'
 import {
   buildSkeleton,
@@ -53,6 +54,8 @@ export interface GeneratePlanOptions {
   goal?: string | null
   /** YYYY-MM-DD; null/undefined = a default 12-week block with no taper. */
   goalDate?: string | null
+  /** Request zone (body field or browser cookie); wins over `user_settings.timezone` when valid. */
+  timeZone?: string | null
   /** Injectable clock for tests. */
   now?: Date
 }
@@ -87,7 +90,8 @@ export async function generateTrainingPlan(
 
   // ── 1. Context (deterministic) ────────────────────────────────────────────
   const { settings, userApiKey } = await resolveUserAISettings(userId)
-  const today = localDateInTz(now, settings?.timezone)
+  const timeZone = resolveAthleteTimeZone({ cookieTz: opts.timeZone, settingsTz: settings?.timezone })
+  const today = localDateInTz(now, timeZone)
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -109,7 +113,7 @@ export async function generateTrainingPlan(
     {
       dateOfBirth: profile?.date_of_birth,
       trainingDays: profile?.training_days,
-      timezone: settings?.timezone,
+      timezone: timeZone,
     },
     today
   )

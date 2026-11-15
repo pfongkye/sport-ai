@@ -35,9 +35,12 @@ interface StreamRow {
 export function ActivityDetail({
   activity,
   streams,
+  timeZone,
 }: {
   activity: Activity
   streams: StreamRow[]
+  /** Athlete's IANA zone, so server and client render the same day. */
+  timeZone?: string
 }) {
   const router = useRouter()
   const [deleting, setDeleting] = useState(false)
@@ -84,7 +87,7 @@ export function ActivityDetail({
               {activity.notes ? ` — ${activity.notes}` : ''}
             </h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              {formatDate(activity.started_at, 'long')}
+              {formatDate(activity.started_at, 'long', timeZone)}
             </p>
           </div>
         </div>

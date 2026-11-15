@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { loadActivePlan } from '@/lib/plan/load-plan'
+import { readTzCookie } from '@/lib/plan/request-timezone'
 import { PlanView } from '@/components/plan/plan-view'
 
 export const metadata: Metadata = { title: 'Training Plan' }
@@ -11,9 +12,10 @@ export default async function PlanPage() {
     data: { user },
   } = await supabase.auth.getUser()
 
+  const cookieTz = await readTzCookie()
   const [active, profile] = user
     ? await Promise.all([
-        loadActivePlan(supabase, user.id).catch(() => null),
+        loadActivePlan(supabase, user.id, new Date(), cookieTz).catch(() => null),
         supabase.from('profiles').select('primary_goal').eq('id', user.id).maybeSingle(),
       ])
     : [null, { data: null }]

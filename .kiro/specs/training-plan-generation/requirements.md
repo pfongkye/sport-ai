@@ -104,7 +104,7 @@ agent for flexible ops") supports this.
 
 ### 6. Training recap (deterministic history analysis)
 - **6.1** MUST compute a deterministic recap of the athlete's last 6 complete Monday-based weeks
-  (athlete timezone; the current partial week is not counted) with a pure function
+  (athlete timezone = the browser zone, see design point 3; the current partial week is not counted) with a pure function
   `computeTrainingRecap(activities, profile, today)`: same inputs give the same output, no LLM, no
   randomness, no clock reads inside.
 - **6.2** A week is a *qualifying week* only with at least `MIN_ACTIVITIES_PER_WEEK` (2) activities

@@ -77,3 +77,45 @@ describe('isEditableUpcoming (shared guard)', () => {
     expect(none).toBe('2026-10-12') // UTC default
   })
 })
+
+describe('athlete "today" at the day boundary', () => {
+  const at = (iso: string, tz: string) => localDateInTz(new Date(iso), tz)
+  it('Pacific/Auckland (UTC+13) is a day ahead of UTC from 11:00Z', () => {
+    expect(at('2026-01-15T10:59:00Z', 'Pacific/Auckland')).toBe('2026-01-15')
+    expect(at('2026-01-15T11:00:00Z', 'Pacific/Auckland')).toBe('2026-01-16')
+  })
+  it('Pacific/Honolulu (UTC-10) is still the previous day until 10:00Z', () => {
+    expect(at('2026-01-15T09:59:00Z', 'Pacific/Honolulu')).toBe('2026-01-14')
+    expect(at('2026-01-15T10:00:00Z', 'Pacific/Honolulu')).toBe('2026-01-15')
+  })
+  it('Europe/Paris rolls over at local midnight across both DST changes', () => {
+    // Autumn (2026-10-25, CEST→CET at 01:00Z): midnight is 22:00Z before, 23:00Z after.
+    expect(at('2026-10-24T21:59:00Z', 'Europe/Paris')).toBe('2026-10-24')
+    expect(at('2026-10-24T22:00:00Z', 'Europe/Paris')).toBe('2026-10-25')
+    expect(at('2026-10-25T22:59:00Z', 'Europe/Paris')).toBe('2026-10-25')
+    expect(at('2026-10-25T23:00:00Z', 'Europe/Paris')).toBe('2026-10-26')
+    // Spring (2026-03-29, CET→CEST at 01:00Z).
+    expect(at('2026-03-28T22:59:00Z', 'Europe/Paris')).toBe('2026-03-28')
+    expect(at('2026-03-28T23:00:00Z', 'Europe/Paris')).toBe('2026-03-29')
+    expect(at('2026-03-29T21:59:00Z', 'Europe/Paris')).toBe('2026-03-29')
+    expect(at('2026-03-29T22:00:00Z', 'Europe/Paris')).toBe('2026-03-30')
+  })
+  it('getAthleteToday: a valid cookie zone wins over the stored zone', async () => {
+    const { client } = makeFakeSupabase({
+      tables: { user_settings: [{ user_id: 'u1', timezone: 'UTC' }] },
+    })
+    const now = new Date('2026-01-15T11:30:00Z')
+    expect(await getAthleteToday(client, 'u1', now)).toBe('2026-01-15')
+    expect(await getAthleteToday(client, 'u1', now, 'Pacific/Auckland')).toBe('2026-01-16')
+    expect(await getAthleteToday(client, 'u1', now, 'Mars/Phobos')).toBe('2026-01-15')
+  })
+  it('the editable guard follows the passed zone', async () => {
+    const { client } = makeFakeSupabase({ tables: { user_settings: [] } })
+    const now = new Date('2026-01-15T11:30:00Z')
+    const session = { scheduled_date: '2026-01-15', status: 'pending' }
+    const auckland = await getAthleteToday(client, 'u1', now, 'Pacific/Auckland')
+    const honolulu = await getAthleteToday(client, 'u1', now, 'Pacific/Honolulu')
+    expect(isEditableUpcoming(session, auckland)).toBe(false)
+    expect(isEditableUpcoming(session, honolulu)).toBe(true)
+  })
+})

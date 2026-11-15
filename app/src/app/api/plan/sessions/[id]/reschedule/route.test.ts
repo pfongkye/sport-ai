@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
 
 // Route does its own auth via createClient(); mock it with a fake RLS-scoped client.
@@ -124,5 +124,43 @@ describe('PATCH /api/plan/sessions/[id]/reschedule', () => {
     setup([session()])
     authUser = null
     expect((await call('s1', { date: day(5) })).status).toBe(401)
+  })
+})
+
+describe('PATCH reschedule: "today" follows the browser zone cookie', () => {
+  const callWithTz = (tz: string, id: string, body: unknown) =>
+    PATCH(
+      new Request('http://x/api', {
+        method: 'PATCH',
+        headers: { cookie: `tz=${encodeURIComponent(tz)}` },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id }) }
+    )
+  const fixed = () => {
+    current = makeFakeSupabase({
+      rlsUserId: 'u1',
+      tables: {
+        user_settings: [{ user_id: 'u1', timezone: 'UTC' }],
+        training_plans: [{ id: 'plan-1', user_id: 'u1', start_date: '2026-10-01', end_date: '2026-12-01' }],
+        planned_sessions: [
+          { id: 's1', plan_id: 'plan-1', user_id: 'u1', scheduled_date: '2026-10-12', status: 'pending', ai_notes: null },
+        ],
+      },
+    })
+    authUser = { id: 'u1' }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-12T20:00:00Z')) // Oct 13 09:00 in Auckland, Oct 12 10:00 in Honolulu
+  })
+  afterEach(() => { vi.useRealTimers() })
+  it('Auckland: the Oct 12 session is already past', async () => {
+    fixed()
+    expect((await callWithTz('Pacific/Auckland', 's1', { date: '2026-10-15' })).status).toBe(409)
+  })
+  it('Honolulu: the Oct 12 session is still today and can be moved', async () => {
+    fixed()
+    expect((await callWithTz('Pacific/Honolulu', 's1', { date: '2026-10-15' })).status).toBe(200)
   })
 })

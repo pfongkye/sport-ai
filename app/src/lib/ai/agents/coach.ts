@@ -5,6 +5,8 @@ import type { ReadinessResult } from '@/types/activity'
 import { buildCoachTools } from '../tools'
 import { buildCoachSystemPrompt } from '../prompts/coach'
 import { resolveModel } from '../provider'
+import { localDateInTz } from '@/lib/plan/dates'
+import { resolveAthleteTimeZone } from '@/lib/plan/timezone'
 
 interface BuildCoachAgentParams {
   supabase: SupabaseClient<Database>
@@ -16,6 +18,8 @@ interface BuildCoachAgentParams {
   userApiKey: string | null
   /** Service-role client — required by the Strava tools (token decryption). */
   admin?: SupabaseClient<Database>
+  /** Browser zone for this request (validated `tz` cookie), passed to the plan tools. */
+  timeZone?: string | null
 }
 
 /**
@@ -35,19 +39,22 @@ interface BuildCoachAgentParams {
  * prefer adding typed tools or a remote (HTTP) MCP service. See AGENTS.md.
  */
 export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Agent> {
-  const { supabase, userId, profile, settings, readiness, userApiKey, admin } = params
+  const { supabase, userId, profile, settings, readiness, userApiKey, admin, timeZone } = params
 
   const provider: AIProvider = settings?.ai_provider ?? 'openai'
   const modelId = settings?.ai_model ?? 'gpt-4o'
   const model = resolveModel(provider, modelId, userApiKey)
 
-  const tools = buildCoachTools(supabase, userId, admin)
+  const tools = buildCoachTools(supabase, userId, admin, timeZone)
 
   const instructions = buildCoachSystemPrompt({
     profile,
     settings,
     readiness,
-    today: new Date().toISOString().slice(0, 10),
+    today: localDateInTz(
+      new Date(),
+      resolveAthleteTimeZone({ cookieTz: timeZone, settingsTz: settings?.timezone })
+    ),
   })
 
   return new Agent({

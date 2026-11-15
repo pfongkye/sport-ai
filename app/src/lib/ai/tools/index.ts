@@ -16,7 +16,7 @@ import { ORS_LOOP_TOO_FAR } from '@/lib/integrations/ors/client'
 import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/generate-plan'
 import { adjustUpcomingSessions as adjustUpcomingSessionsSvc } from '@/lib/plan/adjust'
 import { getAthleteToday } from '@/lib/plan/session-guard'
-import { isIsoDate } from '@/lib/plan/dates'
+import { addDays, isIsoDate } from '@/lib/plan/dates'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -31,7 +31,9 @@ import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/li
 export function buildCoachTools(
   supabase: SupabaseClient<Database>,
   userId: string,
-  admin?: SupabaseClient<Database>
+  admin?: SupabaseClient<Database>,
+  /** Browser zone for this request (chat `tz` cookie); wins over the stored setting when valid. */
+  timeZone?: string | null
 ) {
   // ─── getRecentActivities ──────────────────────────────────────────────────
   const getRecentActivities = createTool({
@@ -174,9 +176,8 @@ export function buildCoachTools(
         .describe('How many days ahead to look'),
     }),
     execute: async (inputData) => {
-      const today = new Date().toISOString().slice(0, 10)
-      const until = new Date()
-      until.setDate(until.getDate() + inputData.days)
+      const today = await getAthleteToday(supabase, userId, new Date(), timeZone)
+      const until = addDays(today, inputData.days)
 
       const { data, error } = await supabase
         .from('planned_sessions')
@@ -185,7 +186,7 @@ export function buildCoachTools(
         )
         .eq('user_id', userId)
         .gte('scheduled_date', today)
-        .lte('scheduled_date', until.toISOString().slice(0, 10))
+        .lte('scheduled_date', until)
         .order('scheduled_date', { ascending: true })
 
       if (error) throw new Error(`Failed to fetch planned sessions: ${error.message}`)
@@ -322,7 +323,7 @@ export function buildCoachTools(
 
       // Step 2: confirmed → write via the shared insert path.
       try {
-        const { id } = await insertManualActivity(supabase, userId, draft)
+        const { id } = await insertManualActivity(supabase, userId, draft, timeZone)
         return { saved: true, activityId: id }
       } catch (err) {
         return { saved: false, error: err instanceof Error ? err.message : 'Failed to save' }
@@ -595,7 +596,7 @@ export function buildCoachTools(
       }
 
       try {
-        const r = await generateTrainingPlan(supabase, userId, { goal, goalDate })
+        const r = await generateTrainingPlan(supabase, userId, { goal, goalDate, timeZone })
         return {
           created: true,
           planId: r.planId,
@@ -658,7 +659,7 @@ export function buildCoachTools(
         return { adjusted: [], rejected: [], message: 'No adjustments were provided.' }
       }
       try {
-        const today = await getAthleteToday(supabase, userId)
+        const today = await getAthleteToday(supabase, userId, new Date(), timeZone)
         const outcome = await adjustUpcomingSessionsSvc(supabase, userId, adjustments, today)
         return { ...outcome, today }
       } catch {

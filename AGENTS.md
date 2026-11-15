@@ -24,6 +24,19 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 51. The athlete's time zone is the BROWSER's: `tz` cookie for SSR, `user_settings.timezone` as the synced copy
+`components/layout/timezone-sync.tsx` (mounted in `(app)/layout.tsx`) reads `Intl.DateTimeFormat().resolvedOptions().timeZone`, writes the
+`tz` cookie (Lax, path /, 1 year) and `PATCH /api/settings/timezone` (validated IANA, no write when unchanged, `lib/plan/set-timezone.ts`),
+and calls `router.refresh()` once when the cookie was missing/different, so the first server render used the stored zone and the next the
+browser's. Server code NEVER reads the zone ad hoc: use `resolveAthleteTimeZone({cookieTz, settingsTz})` (`lib/plan/timezone.ts`, cookie >
+setting > UTC, both validated). Server components read the cookie with `readTzCookie()` (`lib/plan/request-timezone.ts`); route handlers use
+`tzFromCookieHeader(request.headers.get('cookie'))` (testable without `next/headers`); `getAthleteToday/getAthleteTimezone(supabase, userId, now, cookieTz)`,
+`loadActivePlan(.., now, cookieTz)`, `generateTrainingPlan({timeZone})`, `buildCoachTools(.., admin, timeZone)` and `linkActivityToPlannedSession(.., cookieTz)`
+take it as a parameter. Paths with no request (Strava sync) fall back to the stored zone. Trap: `new Date('YYYY-MM-DD')` parses as UTC, so formatting it
+in a zone behind UTC shows the PREVIOUS day. Plan dates are plain strings: use `dayLabel`/`weekLabel` (`timeZone: 'UTC'`) or `addDays`/`diffDays`
+(UTC math); format timestamps (`started_at`) with the athlete zone (`formatDate(d, fmt, tz)`), never the runtime's (Cloud Run is UTC). New files may need
+`docker compose --env-file docker/.env restart app`.
+
 ### 50. Plan baseline and prompt come from the training recap, not a flat mean or the 15 km floor
 `lib/ai/workflows/training-recap.ts` `computeTrainingRecap(activities, profile, today)` is the ONLY source of the plan's starting
 volume, the prompt's history block and the stored snapshot (pure, no clock; `today` is the athlete's local date, activities are

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { localDateInTz } from './dates'
+import { resolveAthleteTimeZone } from './timezone'
 import { EDITABLE_STATUSES } from './session-guard'
 
 /**
@@ -15,7 +16,9 @@ import { EDITABLE_STATUSES } from './session-guard'
 export async function linkActivityToPlannedSession(
   supabase: SupabaseClient<Database>,
   userId: string,
-  activity: { id: string; sportType: string; startedAt: string | Date }
+  activity: { id: string; sportType: string; startedAt: string | Date },
+  /** Request zone (browser `tz` cookie); wins over the stored setting when valid. */
+  cookieTz?: string | null
 ): Promise<string | null> {
   try {
     const started = new Date(activity.startedAt)
@@ -26,7 +29,10 @@ export async function linkActivityToPlannedSession(
       .select('timezone')
       .eq('user_id', userId)
       .maybeSingle()
-    const day = localDateInTz(started, settings?.timezone)
+    const day = localDateInTz(
+      started,
+      resolveAthleteTimeZone({ cookieTz, settingsTz: settings?.timezone })
+    )
 
     const { data: plan } = await supabase
       .from('training_plans')

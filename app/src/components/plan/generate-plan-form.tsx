@@ -31,7 +31,11 @@ export function GeneratePlanForm({ defaultGoal, replacing, onDone }: Props) {
       const res = await http('/api/plan/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal: goal.trim() || null, goalDate: goalDate || null }),
+        body: JSON.stringify({
+          goal: goal.trim() || null,
+          goalDate: goalDate || null,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       })
       const json = (await res.json().catch(() => ({}))) as {
         error?: string

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAthleteToday } from '@/lib/plan/session-guard'
+import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { rescheduleSession } from '@/lib/plan/reschedule'
 
 export const runtime = 'nodejs'
@@ -30,7 +31,12 @@ export async function PATCH(
   }
 
   const { id } = await params
-  const today = await getAthleteToday(supabase, user.id)
+  const today = await getAthleteToday(
+    supabase,
+    user.id,
+    new Date(),
+    tzFromCookieHeader(request.headers.get('cookie'))
+  )
   const result = await rescheduleSession(supabase, user.id, id, body?.date, today)
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
   return NextResponse.json({ sessionId: result.sessionId, from: result.from, to: result.to })

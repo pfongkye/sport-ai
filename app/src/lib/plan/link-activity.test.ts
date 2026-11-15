@@ -62,4 +62,22 @@ describe('linkActivityToPlannedSession', () => {
     const broken = { from: () => { throw new Error('db down') } } as never
     await expect(linkActivityToPlannedSession(broken, 'u1', { id: 'a', sportType: 'run', startedAt: '2026-10-12T07:00:00Z' })).resolves.toBeNull()
   })
+  it('links an activity at 23:30 local that is already the next UTC day (Honolulu, UTC-10)', async () => {
+    // 2026-10-13T09:30Z = 2026-10-12 23:30 in Honolulu.
+    const { client } = setup([sess({ scheduled_date: '2026-10-12' })], 'Pacific/Honolulu')
+    const id = await linkActivityToPlannedSession(client, 'u1', { id: 'act-1', sportType: 'run', startedAt: '2026-10-13T09:30:00Z' })
+    expect(id).toBe('s1')
+  })
+  it('links an activity at 00:30 local that is still the previous UTC day (Auckland, UTC+13)', async () => {
+    // 2026-01-14T11:30Z = 2026-01-15 00:30 in Auckland.
+    const { client } = setup([sess({ scheduled_date: '2026-01-15' })], 'Pacific/Auckland')
+    const id = await linkActivityToPlannedSession(client, 'u1', { id: 'act-1', sportType: 'run', startedAt: '2026-01-14T11:30:00Z' })
+    expect(id).toBe('s1')
+  })
+  it('the request zone wins over the stored zone', async () => {
+    const { client } = setup([sess({ scheduled_date: '2026-01-15' })], 'UTC')
+    const startedAt = '2026-01-14T11:30:00Z'
+    expect(await linkActivityToPlannedSession(client, 'u1', { id: 'a', sportType: 'run', startedAt })).toBeNull()
+    expect(await linkActivityToPlannedSession(client, 'u1', { id: 'a', sportType: 'run', startedAt }, 'Pacific/Auckland')).toBe('s1')
+  })
 })

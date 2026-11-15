@@ -103,6 +103,7 @@
 - [x] Unit: `planToRows` mapping.
 - [x] Unit: the shared future-and-editable predicate (`isEditableUpcoming`) helper (Task 4.2) — accepts future pending,
       rejects past, completed and skipped; accepts moved (modified); timezone boundary at "today".
+- [x] Browser time zone: `tz` cookie + `PATCH /api/settings/timezone` sync (`TimezoneSync` in the app layout), `resolveAthleteTimeZone` used by the plan page/API, reschedule, coach tools, recap bucketing and activity auto-link.
 - [x] Integration: mocked `generateObject` → archive+insert plan+sessions; cleanup on session-insert
       failure; activity auto-link.
 - [x] Integration: reschedule endpoint moves a future pending session's date (status→modified) and

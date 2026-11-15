@@ -39,7 +39,8 @@ const SESSION_COLUMNS =
 export async function loadActivePlan(
   supabase: SupabaseClient<Database>,
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  cookieTz?: string | null
 ): Promise<ActivePlan | null> {
   const { data: plan, error } = await supabase
     .from('training_plans')
@@ -60,7 +61,7 @@ export async function loadActivePlan(
     .order('scheduled_date', { ascending: true })
   if (sErr) throw new Error(`Failed to load plan sessions: ${sErr.message}`)
 
-  const timezone = await getAthleteTimezone(supabase, userId)
+  const timezone = await getAthleteTimezone(supabase, userId, cookieTz)
   return {
     plan: { ...plan, recap: asRecap(plan.recap) },
     sessions: (sessions ?? []) as PlanSessionRow[],

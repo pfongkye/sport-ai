@@ -94,7 +94,9 @@ export function composeNotes(notes: string | null, strength: StrengthBlock[]): s
 export async function insertManualActivity(
   supabase: SupabaseClient<Database>,
   userId: string,
-  draft: ActivityDraftInput
+  draft: ActivityDraftInput,
+  /** Browser zone from the request cookie, for matching the local day. */
+  cookieTz?: string | null
 ): Promise<{ id: string }> {
   const notes = composeNotes(draft.notes, draft.strength)
 
@@ -133,6 +135,6 @@ export async function insertManualActivity(
     id: data.id,
     sportType: draft.sportType,
     startedAt: draft.startedAt,
-  })
+  }, cookieTz)
   return { id: data.id }
 }

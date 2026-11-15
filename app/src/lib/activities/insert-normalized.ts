@@ -42,7 +42,9 @@ export async function insertNormalizedActivity(
   supabase: SupabaseClient<Database>,
   userId: string,
   activity: NormalizedActivity,
-  rawFile?: RawFile
+  rawFile?: RawFile,
+  /** Browser zone from the request cookie, for matching the local day. */
+  cookieTz?: string | null
 ): Promise<InsertResult> {
   if (!activity.externalId) {
     return { status: 'error', message: 'Missing external_id (cannot dedup)' }
@@ -121,6 +123,6 @@ export async function insertNormalizedActivity(
     id: inserted.id,
     sportType: activity.sportType,
     startedAt: activity.startedAt,
-  })
+  }, cookieTz)
   return { status: 'created', activityId: inserted.id }
 }

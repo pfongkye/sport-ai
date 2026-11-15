@@ -199,7 +199,10 @@ New pure module `app/src/lib/ai/workflows/training-recap.ts`; `computeTrainingRe
 2. **Regeneration duplication (Req 1.7).** Archive the existing active plan before inserting a new
    one; enforce single-active in code (and ideally a partial unique index later).
 3. **Date/timezone.** `scheduled_date` is a date (no time). Compute the window in the athlete's
-   timezone (`user_settings.timezone`) so "start next Monday" and taper land correctly.
+   timezone so "start next Monday" and taper land correctly. The zone is the BROWSER's
+   (`Intl.DateTimeFormat().resolvedOptions().timeZone`), resolved per request by
+   `resolveAthleteTimeZone`: valid `tz` cookie (or the `timeZone` body field on generate) >
+   `user_settings.timezone` (synced copy for code with no request) > UTC.
 4. **Model over-scheduling.** Guardrails must reject sessions outside [start,end], missing rest
    days, or >~10%/week volume jumps — don't trust the LLM to self-limit.
 5. **Adaptation scope (Req 3.3) + manual reschedule (Req 2a.2).** BOTH the `adjustUpcomingSessions`
@@ -207,7 +210,7 @@ New pure module `app/src/lib/ai/workflows/training-recap.ts`; `computeTrainingRe
    status IN ('pending','modified')` and never touch completed/past rows. Factor the predicate into ONE shared
    helper so the AI path and the manual UI path cannot diverge, and re-check it server-side on the
    reschedule endpoint (never trust the client, Req 2a.4). Compute "today" in the athlete's timezone
-   (`user_settings.timezone`), consistent with point 3.
+   (the resolved zone of point 3), consistent with it.
 6. **Cost/latency.** One `generateObject` call, but a long marathon block is many sessions → large
    output. Bound tokens, set a timeout, and consider generating week-by-week if output size is a
    problem (deterministic loop, still one schema per week).

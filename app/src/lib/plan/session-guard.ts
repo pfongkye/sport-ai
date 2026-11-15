@@ -12,6 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { localDateInTz } from './dates'
+import { resolveAthleteTimeZone } from './timezone'
 
 export const EDITABLE_STATUSES = ['pending', 'modified'] as const
 
@@ -48,28 +49,35 @@ export function applyEditableUpcoming<Q extends FilterableQuery<Q>>(query: Q, to
     .is('completed_activity_id', null)
 }
 
-/** The athlete's timezone from user_settings (UTC when unset/unreadable). */
+/**
+ * The athlete's timezone: the request's `tz` cookie (browser zone) when valid,
+ * else `user_settings.timezone`, else UTC.
+ */
 export async function getAthleteTimezone(
   supabase: SupabaseClient<Database>,
-  userId: string
+  userId: string,
+  cookieTz?: string | null
 ): Promise<string> {
+  let settingsTz: string | null = null
   try {
     const { data } = await supabase
       .from('user_settings')
       .select('timezone')
       .eq('user_id', userId)
       .maybeSingle()
-    return data?.timezone || 'UTC'
+    settingsTz = data?.timezone ?? null
   } catch {
-    return 'UTC'
+    // unreadable settings → cookie or UTC
   }
+  return resolveAthleteTimeZone({ cookieTz, settingsTz })
 }
 
 /** "Today" as a `YYYY-MM-DD` date in the athlete's timezone. */
 export async function getAthleteToday(
   supabase: SupabaseClient<Database>,
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  cookieTz?: string | null
 ): Promise<string> {
-  return localDateInTz(now, await getAthleteTimezone(supabase, userId))
+  return localDateInTz(now, await getAthleteTimezone(supabase, userId, cookieTz))
 }
