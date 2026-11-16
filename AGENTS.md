@@ -24,6 +24,22 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 53. Debugging the Supabase stack in prod: PostgREST hides 4xx, logs to stderr; Postgres logs only FATAL
+- PostgREST at its default log level logs only 5xx. An RLS denial or check violation (4xx) leaves no trace. `PGRST_LOG_LEVEL=info` would
+  log every request, so it is NOT enabled; reproduce the failing write in SQL instead (below).
+- PostgREST writes to stderr, so `docker logs sportai-rest | grep x` finds nothing. Use `docker logs sportai-rest 2>&1 | grep x`.
+- `db` runs with `-c log_min_messages=fatal` (`docker-compose.yml`), so constraint and RLS errors are not in `docker logs sportai-db`.
+  Reproduce them with psql; the transaction is rolled back, so nothing is written:
+  ```sql
+  BEGIN;
+  SET LOCAL role authenticated;
+  SELECT set_config('request.jwt.claims', '{"sub":"<user-uuid>","role":"authenticated"}', true);
+  INSERT INTO public.training_plans (...) VALUES (...);  -- the failing statement; psql prints the exact error
+  ROLLBACK;
+  ```
+- Never paste a stack trace or `docker compose config` output containing `POSTGRES_PASSWORD`/`DATABASE_URL` anywhere. If one leaks, rotate
+  it (docker/DEPLOY.md, "Rotating the Postgres password"). Changing `POSTGRES_PASSWORD` in `.env` alone breaks the stack (roles keep the old one).
+
 ### 52. Plan save 500 PERSIST_FAILED had no logs; hard guardrail issues now repair or retry
 Symptom: `POST /api/plan/generate` 500 `PERSIST_FAILED` with nothing in the logs. Cause: PostgREST only logs 5xx, so a 4xx (RLS, check
 constraint, missing column such as `recap`/`constraints` before migrations 016/017) was invisible and `persistPlan` swallowed the error.
