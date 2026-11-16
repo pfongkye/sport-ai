@@ -31,7 +31,7 @@ fi
 # VAULT_ENC_KEY must be exactly 32 characters (supavisor AES-256 key). A 64-char
 # `openssl rand -hex 32` value makes sportai-pooler crash-loop with
 # "Unknown cipher or invalid key size" and burns CPU. Use `openssl rand -hex 16`.
-VAULT_KEY=$(grep '^VAULT_ENC_KEY=' .env | tail -n1 | cut -d= -f2- | tr -d '"\r')
+VAULT_KEY=$(grep '^VAULT_ENC_KEY=' .env | tail -n1 | cut -d= -f2- | tr -d '"\r' || true)
 if [ "${#VAULT_KEY}" -ne 32 ]; then
   echo "ERROR: VAULT_ENC_KEY in ~/sportai/docker/.env must be exactly 32 characters (got ${#VAULT_KEY})." >&2
   echo "       Generate one with: openssl rand -hex 16" >&2
