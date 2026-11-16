@@ -64,6 +64,40 @@ Generate NEW values (do not reuse dev) for: `POSTGRES_PASSWORD`, `JWT_SECRET`,
 `PG_META_CRYPTO_KEY`, `SECRET_KEY_BASE`, `DASHBOARD_PASSWORD`. Regenerate ANON/SERVICE
 keys from the new `JWT_SECRET` (README "Regenerating Secrets").
 
+**`VAULT_ENC_KEY` must be exactly 32 characters** (`openssl rand -hex 16`). A 64-char
+`openssl rand -hex 32` value makes `sportai-pooler` (supavisor 2.9.5) crash-loop with
+`ErlangError {:badarg,{'aead.c',90},'Unknown cipher or invalid key size'}` and burn ~170% CPU
+on the 2 vCPU VM. `deploy/gcp/03_supabase_up.sh` aborts before `compose up` if the length is not 32.
+
+### Is the pooler needed?
+`sportai-pooler` (supavisor) is not used by the app: the app talks to PostgREST, which
+connects straight to `db`. Nothing else in the compose files references it. It is kept
+because it ships in the upstream Supabase stack, and it is internal only in prod (no
+published port). It can be dropped safely if you need the CPU/RAM: stop it with
+`docker compose ... stop supavisor` (or remove the service). Not removed here.
+
+### Envoy health check for PostgREST
+The `rest` cluster in `volumes/api/envoy/cds.yaml` health-checks PostgREST's admin
+`/ready` on port 3001 (`PGRST_ADMIN_SERVER_HOST: 0.0.0.0`). The old `path: /` check built
+the full OpenAPI document every 5s and hit `57014` statement timeouts. Port 3001 is only
+on the internal docker network; no compose file publishes it (Caddy publishes only 80/443).
+
+Apply on the VM after pulling:
+```bash
+cd ~/sportai/docker
+sudo docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate rest api-gw
+```
+(`api-gw` is the Envoy service, container `sportai-envoy`. Env changes need a recreate, see AGENTS.md #8.)
+
+Verify:
+```bash
+sudo docker exec sportai-envoy curl -s -o /dev/null -w '%{http_code}\n' http://rest:3001/ready   # 200
+sudo docker exec sportai-envoy curl -s http://localhost:9901/clusters | grep '^rest::.*health_flags'  # healthy (if admin enabled)
+sudo docker logs sportai-envoy --since 5m | grep -i health                     # no failures
+sudo docker logs sportai-db --since 5m | grep -c 57014                        # 0 new timeouts
+sudo docker exec sportai-envoy envoy --mode validate -c /etc/envoy/envoy.yaml  # config valid
+```
+
 ### Encryption key (the one exception)
 `app.encryption_key` (env `SUPABASE_ENCRYPTION_KEY`) is the pgcrypto symmetric key that
 encrypts users' BYO AI provider keys at rest (`user_settings.ai_api_key_enc`).
