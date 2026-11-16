@@ -49,13 +49,16 @@ resources:
                   socket_address:
                     address: rest
                     port_value: 3000
+                health_check_config:
+                  # PostgREST admin server (PGRST_ADMIN_SERVER_PORT), internal network only
+                  port_value: 3001
     health_checks:
       - timeout: 2s
         interval: 5s
         unhealthy_threshold: 3
         healthy_threshold: 2
         http_health_check:
-          path: /
+          path: /ready
     circuit_breakers:
       thresholds:
         - priority: DEFAULT

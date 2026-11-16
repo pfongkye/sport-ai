@@ -17,10 +17,28 @@ interface Props {
   defaultGoal: string
 }
 
+function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={direction === 'left' ? 'm15 18-6-6 6-6' : 'm9 18 6-6-6-6'} />
+    </svg>
+  )
+}
+
 /**
  * Week-grouped plan calendar. Mobile-first: one week at a time, days stacked in
- * a single column on a phone; 2 columns from `sm`, a 7-column week grid from
- * `lg`. Week navigation uses 44px buttons (no horizontal scroll, no clipped cells).
+ * a single column on a phone; 2 columns from `sm`, 4 columns from `lg`, 7 from `2xl`.
+ * Week navigation uses 44px buttons (no horizontal scroll, no clipped cells).
  */
 export function PlanView({ active, defaultGoal }: Props) {
   const router = useRouter()
@@ -122,7 +140,7 @@ export function PlanView({ active, defaultGoal }: Props) {
               onClick={() => setPicked(idx - 1)}
               aria-label="Previous week"
             >
-              ←
+              <ChevronIcon direction="left" />
             </Button>
             <div className="text-center">
               <p className="text-sm font-semibold text-[var(--foreground)]" aria-live="polite">
@@ -149,11 +167,11 @@ export function PlanView({ active, defaultGoal }: Props) {
               onClick={() => setPicked(idx + 1)}
               aria-label="Next week"
             >
-              →
+              <ChevronIcon direction="right" />
             </Button>
           </div>
 
-          <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7 short-landscape:grid-cols-2">
+          <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 short-landscape:grid-cols-2">
             {week.days.map((day) => {
               const isToday = day.date === today
               return (

@@ -64,6 +64,99 @@ Generate NEW values (do not reuse dev) for: `POSTGRES_PASSWORD`, `JWT_SECRET`,
 `PG_META_CRYPTO_KEY`, `SECRET_KEY_BASE`, `DASHBOARD_PASSWORD`. Regenerate ANON/SERVICE
 keys from the new `JWT_SECRET` (README "Regenerating Secrets").
 
+**`VAULT_ENC_KEY` must be exactly 32 characters** (`openssl rand -hex 16`). A 64-char
+`openssl rand -hex 32` value makes `sportai-pooler` (supavisor 2.9.5) crash-loop with
+`ErlangError {:badarg,{'aead.c',90},'Unknown cipher or invalid key size'}` and burn ~170% CPU
+on the 2 vCPU VM. `deploy/gcp/03_supabase_up.sh` aborts before `compose up` if the length is not 32.
+
+### Is the pooler needed?
+`sportai-pooler` (supavisor) is not used by the app: the app talks to PostgREST, which
+connects straight to `db`. Nothing else in the compose files references it. It is kept
+because it ships in the upstream Supabase stack, and it is internal only in prod (no
+published port). It can be dropped safely if you need the CPU/RAM: stop it with
+`docker compose ... stop supavisor` (or remove the service). Not removed here.
+
+### Envoy health check for PostgREST
+The `rest` cluster in `volumes/api/envoy/cds.yaml` health-checks PostgREST's admin
+`/ready` on port 3001 (`PGRST_ADMIN_SERVER_HOST: 0.0.0.0`). The old `path: /` check built
+the full OpenAPI document every 5s and hit `57014` statement timeouts. Port 3001 is only
+on the internal docker network; no compose file publishes it (Caddy publishes only 80/443).
+
+Apply on the VM after pulling:
+```bash
+cd ~/sportai/docker
+sudo docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate rest api-gw
+```
+(`api-gw` is the Envoy service, container `sportai-envoy`. Env changes need a recreate, see AGENTS.md #8.)
+
+Verify:
+```bash
+sudo docker exec sportai-envoy curl -s -o /dev/null -w '%{http_code}\n' http://rest:3001/ready   # 200
+sudo docker exec sportai-envoy curl -s http://localhost:9901/clusters | grep '^rest::.*health_flags'  # healthy (if admin enabled)
+sudo docker logs sportai-envoy --since 5m | grep -i health                     # no failures
+sudo docker logs sportai-db --since 5m | grep -c 57014                        # 0 new timeouts
+sudo docker exec sportai-envoy envoy --mode validate -c /etc/envoy/envoy.yaml  # config valid
+```
+
+### Rotating the Postgres password
+`POSTGRES_PASSWORD` is read by the Postgres image and `volumes/db/roles.sql` only when the data
+volume is first initialised. Editing it in `.env` alone leaves the roles on the old password, so
+every service that connects fails to authenticate after its next recreate. Rotate in this order.
+
+Roles and consumers (from `docker-compose.yml` and `volumes/db/roles.sql`):
+
+| Role | Used by service |
+|---|---|
+| `authenticator` | `rest` (PostgREST) |
+| `supabase_auth_admin` | `auth` |
+| `supabase_storage_admin` | `storage` |
+| `supabase_admin` | `realtime`, `supavisor` (pooler) |
+| `postgres` | `meta`, and the `db` container's own `POSTGRES_PASSWORD` |
+| `pgbouncer`, `supabase_functions_admin` | set by `roles.sql`, no compose service connects as them |
+
+1. Open psql as the superuser inside the container. `\password` prompts, so the new value never
+   reaches shell history or process arguments:
+   ```bash
+   cd ~/sportai/docker
+   sudo docker exec -it sportai-db psql -U supabase_admin -d postgres
+   ```
+   ```
+   \password authenticator
+   \password supabase_auth_admin
+   \password supabase_storage_admin
+   \password supabase_admin
+   \password postgres
+   \password pgbouncer
+   \password supabase_functions_admin
+   ```
+   Enter the same new value each time.
+2. Put the same value in the VM `.env` as `POSTGRES_PASSWORD`.
+3. Recreate every consumer so it picks up the new env (`restart` does not, see AGENTS.md #8):
+   ```bash
+   sudo docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml \
+     up -d --force-recreate db rest auth storage realtime meta supavisor
+   ```
+4. Check `sudo docker logs sportai-auth --since 2m 2>&1 | grep -i auth`, `curl -s https://<domain>/rest/v1/` and a login.
+
+Avoid special URL characters (`@ : / ? # %`) in the password: it is interpolated into
+`postgres://role:${POSTGRES_PASSWORD}@host/...` connection strings.
+
+If a password was exposed (pasted log, stack trace, screenshot), rotate it with these steps. Do
+not commit `.env` or any file containing the value.
+
+`VAULT_ENC_KEY` is separate. Supavisor uses it to encrypt tenant connection data in its `_supavisor`
+schema (including the DB password). Changing it makes the stored tenant unreadable, so after changing
+it, delete the tenant row (`DELETE FROM _supavisor.tenants WHERE external_id = '<POOLER_TENANT_ID>';`, cascades to its users)
+and recreate `supavisor`. `volumes/pooler/pooler.exs` only creates the tenant when it is missing, so it is
+re-seeded from the current `POSTGRES_PASSWORD` on that start. The key must stay exactly 32 characters. Rotate it together with the DB
+password if both leaked.
+
+### Troubleshooting API errors
+- PostgREST logs only 5xx at the default level and writes to stderr: `sudo docker logs sportai-rest --since 10m 2>&1 | grep -i error`.
+- Postgres runs with `log_min_messages=fatal`, so RLS and constraint errors are not in `sportai-db` logs.
+  Reproduce the write in psql inside `BEGIN; SET LOCAL role authenticated; SELECT set_config('request.jwt.claims','{"sub":"<uuid>","role":"authenticated"}',true); <statement>; ROLLBACK;`
+  (full recipe in AGENTS.md #53).
+
 ### Encryption key (the one exception)
 `app.encryption_key` (env `SUPABASE_ENCRYPTION_KEY`) is the pgcrypto symmetric key that
 encrypts users' BYO AI provider keys at rest (`user_settings.ai_api_key_enc`).

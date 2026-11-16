@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { repairPlan, sanitizePlan, validatePlan, validatePlanDetailed, weeklyRunKm } from './plan-guardrails'
+import { repairMissingLongRuns, repairPlan, sanitizePlan, validatePlan, validatePlanDetailed, weeklyRunKm } from './plan-guardrails'
 import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
 
 describe('plan guardrails', () => {
@@ -143,5 +143,44 @@ describe('plan repair', () => {
     const r = repairPlan(plan, sk)
     expect(r.adjustments).toEqual([])
     expect(validatePlanDetailed(r.plan, sk).soft.length).toBeGreaterThan(0)
+  })
+})
+
+describe('repairMissingLongRuns', () => {
+  const sk = makeSkeleton({ goalDate: '2027-01-31' })
+  const week = sk.weeks[2]
+  const stripLong = () => {
+    const plan = validPlanFor(sk)
+    for (const s of plan.sessions) if (week.slotDates.includes(s.scheduledDate)) s.sessionType = 'easy'
+    return plan
+  }
+
+  it('relabels the longest run of a week that has none, leaving distances untouched', () => {
+    const plan = stripLong()
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/has no long run/)
+    const r = repairMissingLongRuns(plan, sk)
+    expect(validatePlanDetailed(r.plan, sk).hard).toEqual([])
+    const inWeek = r.plan.sessions.filter((s) => week.slotDates.includes(s.scheduledDate))
+    const long = inWeek.filter((s) => s.sessionType === 'long run')
+    expect(long).toHaveLength(1)
+    expect(long[0].targetDistanceM).toBe(Math.max(...inWeek.map((s) => s.targetDistanceM ?? 0)))
+    expect(weeklyRunKm(r.plan, sk)).toEqual(weeklyRunKm(plan, sk))
+    expect(r.adjustments).toHaveLength(1)
+    expect(r.sessionNotes.filter(Boolean)).toHaveLength(1)
+  })
+
+  it('does not touch a week with no run to relabel', () => {
+    const plan = stripLong()
+    for (const s of plan.sessions) if (week.slotDates.includes(s.scheduledDate)) s.sportType = 'gym'
+    const r = repairMissingLongRuns(plan, sk)
+    expect(r.adjustments).toEqual([])
+    expect(validatePlanDetailed(r.plan, sk).hard.join(' ')).toMatch(/has no long run/)
+  })
+
+  it('is a no-op for a valid plan', () => {
+    const plan = validPlanFor(sk)
+    const r = repairMissingLongRuns(plan, sk)
+    expect(r.plan.sessions).toEqual(plan.sessions)
+    expect(r.adjustments).toEqual([])
   })
 })

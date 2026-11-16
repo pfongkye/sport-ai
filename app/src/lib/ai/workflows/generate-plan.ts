@@ -28,7 +28,7 @@ import {
 } from '@/lib/plan/constraints'
 import { normalizeTrainingDays } from './plan-skeleton'
 import { WEEKDAY_NAMES } from '@/lib/plan/dates'
-import { repairPlan, sanitizePlan, TARGET_TOLERANCE, validatePlanDetailed } from './plan-guardrails'
+import { repairMissingLongRuns, repairPlan, sanitizePlan, TARGET_TOLERANCE, validatePlanDetailed } from './plan-guardrails'
 
 /** Bounded generation time (spec Req 5.1). A multi-month plan is a large output. */
 export const PLAN_TIMEOUT_MS = 90_000
@@ -219,25 +219,38 @@ export async function generateTrainingPlan(
       issues
     )
   }
-  const check = (draft: PlanDraft) => {
+  type Outcome =
+    | { ok: true; plan: PlanDraft; adjustments: string[]; notes: (string | null)[] }
+    | { ok: false; issues: string[]; hard: boolean }
+  const check = (draft: PlanDraft): Outcome => {
     const clean = sanitizePlan(draft)
-    const { hard, soft } = validatePlanDetailed(clean, skeleton)
-    if (hard.length) throw rejected([...hard, ...soft], false)
-    if (!soft.length) return { ok: true as const, plan: clean, adjustments: [] as string[], notes: [] as (string | null)[] }
-    const repaired = repairPlan(clean, skeleton)
+    const relabelled = repairMissingLongRuns(clean, skeleton)
+    const first = validatePlanDetailed(relabelled.plan, skeleton)
+    // Hard issues that remain after the deterministic repair go to the one retry, never to the database.
+    if (first.hard.length) return { ok: false, issues: [...first.hard, ...first.soft], hard: true }
+    const merge = (a: (string | null)[], b: (string | null)[]) => a.map((n, i) => [n, b[i]].filter(Boolean).join(' | ') || null)
+    if (!first.soft.length) {
+      return { ok: true, plan: relabelled.plan, adjustments: relabelled.adjustments, notes: relabelled.sessionNotes }
+    }
+    const repaired = repairPlan(relabelled.plan, skeleton)
     const after = validatePlanDetailed(repaired.plan, skeleton)
     if (after.hard.length || after.soft.length) {
-      return { ok: false as const, issues: [...after.hard, ...after.soft] }
+      return { ok: false, issues: [...after.hard, ...after.soft], hard: after.hard.length > 0 }
     }
-    return { ok: true as const, plan: repaired.plan, adjustments: repaired.adjustments, notes: repaired.sessionNotes }
+    return {
+      ok: true,
+      plan: repaired.plan,
+      adjustments: [...relabelled.adjustments, ...repaired.adjustments],
+      notes: merge(relabelled.sessionNotes, repaired.sessionNotes),
+    }
   }
 
   let outcome = check(await callModel(null))
   if (!outcome.ok) {
     console.warn('[plan/generate] repair insufficient, retrying once with feedback', outcome.issues)
-    if (PLAN_TOTAL_BUDGET_MS - (Date.now() - startedAt) < MIN_RETRY_MS) throw rejected(outcome.issues, true)
+    if (PLAN_TOTAL_BUDGET_MS - (Date.now() - startedAt) < MIN_RETRY_MS) throw rejected(outcome.issues, !outcome.hard)
     outcome = check(await callModel(outcome.issues))
-    if (!outcome.ok) throw rejected(outcome.issues, true)
+    if (!outcome.ok) throw rejected(outcome.issues, !outcome.hard)
   }
   // Durations from the athlete's pace and bpm ranges from max HR, after the volumes are final.
   const clean = applyRecapTargets(outcome.plan, recap)
@@ -262,6 +275,23 @@ export async function generateTrainingPlan(
   }
 }
 
+type DbError = { code?: string; message?: string; details?: string; hint?: string } | null
+
+/**
+ * Log a failed persist step. PostgREST only logs 5xx, so a 4xx (RLS, check
+ * constraint, missing column) is otherwise invisible. Server logs only: the
+ * client always gets the generic PERSIST_FAILED message.
+ */
+function logPersistError(step: string, error: DbError | unknown) {
+  const e = (error ?? {}) as NonNullable<DbError>
+  console.error(`[plan/persist] ${step} failed`, {
+    code: e.code,
+    message: e.message,
+    details: e.details,
+    hint: e.hint,
+  })
+}
+
 /**
  * Archive the active plan(s), insert the new plan, then its sessions. If the
  * session insert fails the new plan row is deleted and the previously active
@@ -277,12 +307,20 @@ export async function persistPlan(
   recap: TrainingRecap | null = null,
   constraints: PlanConstraints | null = null
 ): Promise<{ planId: string; archivedPlanIds: string[] }> {
+  // Migration 004: CHECK (end_date > start_date). Fail before touching the active plan.
+  if (!(plan.endDate > plan.startDate)) {
+    console.error('[plan/persist] invalid plan window', { start: plan.startDate, end: plan.endDate })
+    throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  }
   const { data: active, error: activeErr } = await supabase
     .from('training_plans')
     .select('id')
     .eq('user_id', userId)
     .eq('status', 'active')
-  if (activeErr) throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  if (activeErr) {
+    logPersistError('select active plans', activeErr)
+    throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  }
   const archivedPlanIds = (active ?? []).map((p) => p.id)
 
   if (archivedPlanIds.length) {
@@ -291,16 +329,20 @@ export async function persistPlan(
       .update({ status: 'archived' })
       .eq('user_id', userId)
       .in('id', archivedPlanIds)
-    if (error) throw new PlanGenerationError('PERSIST_FAILED', 'Could not archive the previous plan.')
+    if (error) {
+      logPersistError('archive previous plans', error)
+      throw new PlanGenerationError('PERSIST_FAILED', 'Could not archive the previous plan.')
+    }
   }
 
   const restoreArchived = async () => {
     if (!archivedPlanIds.length) return
-    await supabase
+    const { error } = await supabase
       .from('training_plans')
       .update({ status: 'active' })
       .eq('user_id', userId)
       .in('id', archivedPlanIds)
+    if (error) logPersistError('restore archived plans', error)
   }
 
   const { data: inserted, error: planErr } = await supabase
@@ -321,6 +363,7 @@ export async function persistPlan(
     .select('id')
     .single()
   if (planErr || !inserted) {
+    logPersistError('insert training_plans', planErr)
     await restoreArchived()
     throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
   }
@@ -329,8 +372,13 @@ export async function persistPlan(
     .from('planned_sessions')
     .insert(planToRows(plan, userId, inserted.id, aiNotes))
   if (sessionsErr) {
-    console.error('[plan/generate] session insert failed, cleaning up', sessionsErr)
-    await supabase.from('training_plans').delete().eq('id', inserted.id).eq('user_id', userId)
+    logPersistError('insert planned_sessions', sessionsErr)
+    const { error: cleanupErr } = await supabase
+      .from('training_plans')
+      .delete()
+      .eq('id', inserted.id)
+      .eq('user_id', userId)
+    if (cleanupErr) logPersistError('delete orphan training_plans row', cleanupErr)
     await restoreArchived()
     throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan sessions.')
   }
@@ -454,7 +502,7 @@ export function buildPrompt(args: {
     'For every week, the sum of the run session distances (targetDistanceM / 1000) must not exceed that week\'s maxRunKm. Check each week\'s sum before answering.',
     ...(args.feedback?.length
       ? [
-          'YOUR PREVIOUS ATTEMPT WAS REJECTED for these reasons. Fix them (reduce the volume of the listed weeks and keep every other week within its maxRunKm):',
+          'YOUR PREVIOUS ATTEMPT WAS REJECTED for these reasons. Fix every one (reduce the volume of the listed weeks, add any missing long run, use only slot dates, and keep every other week within its maxRunKm):',
           ...args.feedback.map((f) => `- ${f}`),
         ]
       : []),

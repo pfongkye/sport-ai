@@ -164,7 +164,8 @@ services:
       PGRST_DB_EXTRA_SEARCH_PATH: ${PGRST_DB_EXTRA_SEARCH_PATH:-public}
       PGRST_DB_ANON_ROLE: anon
       PGRST_ADMIN_SERVER_PORT: 3001
-      PGRST_ADMIN_SERVER_HOST: localhost
+      # 0.0.0.0 so Envoy can reach /ready on the docker network. Never publish 3001.
+      PGRST_ADMIN_SERVER_HOST: 0.0.0.0
       PGRST_JWT_SECRET: ${JWT_JWKS:-${JWT_SECRET}}
       PGRST_DB_USE_LEGACY_GUCS: "false"
       PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}

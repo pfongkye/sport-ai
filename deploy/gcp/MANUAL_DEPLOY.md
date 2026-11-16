@@ -113,7 +113,8 @@ cp docker/.env.prod.example docker/.env.prod
 ### 4a. Generate fresh secrets
 Generate NEW values for prod (do **not** reuse dev), e.g.:
 ```bash
-openssl rand -hex 32     # good for JWT_SECRET / *_ENC_KEY / SECRET_KEY_BASE / passwords
+openssl rand -hex 32     # JWT_SECRET / SECRET_KEY_BASE / passwords
+openssl rand -hex 16     # VAULT_ENC_KEY: must be EXACTLY 32 chars (-hex 32 gives 64 and crash-loops the pooler)
 ```
 Fill these in `docker/.env.prod`:
 
@@ -122,7 +123,8 @@ Fill these in `docker/.env.prod`:
 | `POSTGRES_PASSWORD` | fresh random |
 | `JWT_SECRET` | fresh random (≥32 chars) |
 | `ANON_KEY`, `SERVICE_ROLE_KEY` | **regenerate from the new `JWT_SECRET`** — see README “Regenerating Secrets”. They are signed JWTs; they must match `JWT_SECRET` or auth breaks. |
-| `VAULT_ENC_KEY`, `REALTIME_DB_ENC_KEY`, `PG_META_CRYPTO_KEY`, `SECRET_KEY_BASE` | fresh random |
+| `VAULT_ENC_KEY` | `openssl rand -hex 16` (exactly 32 chars; script 03 refuses anything else) |
+| `REALTIME_DB_ENC_KEY`, `PG_META_CRYPTO_KEY`, `SECRET_KEY_BASE` | fresh random (Supabase's default `REALTIME_DB_ENC_KEY` is 16 chars) |
 | `DASHBOARD_PASSWORD` | fresh random (Studio basic-auth, admin profile only) |
 
 ### 4b. Set the URLs (use your nip.io host from step 2)
