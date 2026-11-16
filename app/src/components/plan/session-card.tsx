@@ -4,6 +4,7 @@ import { useId, useState } from 'react'
 import Link from 'next/link'
 import { http } from '@/lib/http'
 import { isEditableUpcoming } from '@/lib/plan/session-guard'
+import { isDeletable } from '@/lib/plan/delete-session'
 import type { PlanSessionRow } from '@/lib/plan/load-plan'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,8 @@ interface Props {
   maxDate: string
   /** Called after a successful move with a screen-reader message. */
   onMoved: (message: string) => void
+  /** Called after a successful delete with a screen-reader message. */
+  onDeleted: (message: string) => void
 }
 
 /**
@@ -36,7 +39,7 @@ interface Props {
  * Past/completed/skipped sessions show no control. The server re-checks
  * the guard on PATCH (Req 2a.4); this check only decides whether to show the UI.
  */
-export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props) {
+export function SessionCard({ session, today, minDate, maxDate, onMoved, onDeleted }: Props) {
   const inputId = useId()
   const errorId = useId()
   const [moving, setMoving] = useState(false)
@@ -45,6 +48,11 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props
   const [error, setError] = useState<string | null>(null)
 
   const canMove = isEditableUpcoming(session, today)
+  const canDelete = isDeletable(session)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const deleteErrId = useId()
   const badge = STATUS_BADGE[session.status]
   const typeLabel =
     SESSION_TYPE_LABELS[(session.session_type ?? '').toLowerCase()] ??
@@ -76,6 +84,24 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props
       setError('Network error. Try again.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function remove() {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const res = await http(`/api/plan/sessions/${session.id}`, { method: 'DELETE' })
+      const json = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        setDeleteError(json.error ?? 'Could not delete the session.')
+        return
+      }
+      onDeleted(`${typeLabel} on ${dayLabel(session.scheduled_date)} deleted.`)
+    } catch {
+      setDeleteError('Network error. Try again.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -167,6 +193,59 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved }: Props
             </Button>
           </div>
         </form>
+      )}
+
+      {canDelete && !moving && !confirmingDelete && (
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11 w-full text-[var(--destructive)]"
+          onClick={() => {
+            setDeleteError(null)
+            setConfirmingDelete(true)
+          }}
+          aria-label={`Delete ${typeLabel} on ${dayLabel(session.scheduled_date)}`}
+        >
+          Delete
+        </Button>
+      )}
+
+      {canDelete && confirmingDelete && (
+        <div
+          role="alertdialog"
+          aria-label={`Confirm deleting ${typeLabel}`}
+          className="space-y-2 rounded-md border border-[var(--destructive)] p-2"
+        >
+          <p className="text-xs text-[var(--foreground)]">
+            Delete this session from your plan? This cannot be undone.
+          </p>
+          {deleteError && (
+            <p id={deleteErrId} role="alert" className="text-xs text-[var(--destructive)]">
+              {deleteError}
+            </p>
+          )}
+          <div className="flex flex-col gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-h-11 w-full whitespace-normal"
+              disabled={deleting}
+              onClick={() => void remove()}
+            >
+              {deleting ? 'Deleting…' : 'Delete session'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 w-full"
+              disabled={deleting}
+              autoFocus
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Keep
+            </Button>
+          </div>
+        </div>
       )}
     </article>
   )

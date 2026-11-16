@@ -93,6 +93,7 @@ export function PlanView({ active, defaultGoal }: Props) {
         <div className="rounded-lg border border-[var(--border)] p-4">
           <GeneratePlanForm
             defaultGoal={plan.goal ?? defaultGoal}
+            defaultConstraints={plan.constraints}
             replacing
             onDone={(m, n) => {
               setAnnounce(n ? `${m} ${n}` : m)
@@ -181,6 +182,10 @@ export function PlanView({ active, defaultGoal }: Props) {
                         minDate={minDate}
                         maxDate={plan.end_date}
                         onMoved={(m) => {
+                          setAnnounce(m)
+                          router.refresh()
+                        }}
+                        onDeleted={(m) => {
                           setAnnounce(m)
                           router.refresh()
                         }}

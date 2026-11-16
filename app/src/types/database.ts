@@ -209,6 +209,8 @@ export type _Database = {
           status: PlanStatus
           /** Training recap snapshot (migration 016); null for older plans. */
           recap: Json | null
+          /** Athlete constraints (migration 017); null when none. */
+          constraints: Json | null
           created_at: string
         }
         Insert: {
@@ -220,6 +222,7 @@ export type _Database = {
           end_date: string
           status?: PlanStatus
           recap?: Json | null
+          constraints?: Json | null
           created_at?: string
         }
         Update: {
@@ -228,6 +231,7 @@ export type _Database = {
           end_date?: string
           status?: PlanStatus
           recap?: Json | null
+          constraints?: Json | null
         }
       }
       planned_sessions: {
@@ -480,6 +484,8 @@ export interface TrainingPlan {
   status: PlanStatus
   /** Training recap snapshot (migration 016); null for plans created before it. */
   recap: Json | null
+  /** Athlete constraints (migration 017); null when none. */
+  constraints: Json | null
   created_at: string
 }
 

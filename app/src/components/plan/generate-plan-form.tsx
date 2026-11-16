@@ -4,20 +4,29 @@ import { useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { http } from '@/lib/http'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { WEEKDAY_NAMES } from '@/lib/plan/dates'
+import { MAX_NOTES_LENGTH, NO_CONSTRAINTS, type PlanConstraints } from '@/lib/plan/constraints'
 
 interface Props {
   defaultGoal: string
   /** True when an active plan exists: generating replaces (archives) it. */
   replacing: boolean
+  /** Constraints of the plan being replaced, to pre-fill the form on regeneration. */
+  defaultConstraints?: PlanConstraints
   onDone?: (message: string, note?: string) => void
 }
 
 /** Goal + optional goal date → POST /api/plan/generate, then refresh the page data. */
-export function GeneratePlanForm({ defaultGoal, replacing, onDone }: Props) {
+export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = NO_CONSTRAINTS, onDone }: Props) {
   const router = useRouter()
   const goalId = useId()
   const dateId = useId()
   const errId = useId()
+  const notesId = useId()
+  const notesHelpId = useId()
+  const [unavailable, setUnavailable] = useState<string[]>(defaultConstraints.unavailableWeekdays)
+  const [notes, setNotes] = useState(defaultConstraints.notes ?? '')
   const [goal, setGoal] = useState(defaultGoal)
   const [goalDate, setGoalDate] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,6 +43,7 @@ export function GeneratePlanForm({ defaultGoal, replacing, onDone }: Props) {
         body: JSON.stringify({
           goal: goal.trim() || null,
           goalDate: goalDate || null,
+          constraints: { unavailableWeekdays: WEEKDAY_NAMES.filter((d) => unavailable.includes(d)), notes: notes.trim() || null },
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       })
@@ -98,6 +108,62 @@ export function GeneratePlanForm({ defaultGoal, replacing, onDone }: Props) {
         />
         <p className="text-xs text-[var(--muted-foreground)]">
           With a date the plan builds to it and tapers. Without one you get a general 12-week block.
+        </p>
+      </div>
+      <fieldset className="space-y-1" disabled={busy}>
+        <legend className="block text-sm font-medium text-[var(--foreground)]">
+          Days you cannot train (optional)
+        </legend>
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+          {WEEKDAY_NAMES.map((day) => {
+            const checked = unavailable.includes(day)
+            return (
+              <label
+                key={day}
+                className={cn(
+                  'flex min-h-11 cursor-pointer items-center justify-center rounded-md border px-2 text-sm capitalize',
+                  checked
+                    ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'border-[var(--border)] text-[var(--foreground)]',
+                  'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)]'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={checked}
+                  onChange={() =>
+                    setUnavailable((cur) =>
+                      cur.includes(day) ? cur.filter((d) => d !== day) : [...cur, day]
+                    )
+                  }
+                  aria-label={day}
+                />
+                <span aria-hidden>{day.slice(0, 3)}</span>
+              </label>
+            )
+          })}
+        </div>
+        <p className="text-xs text-[var(--muted-foreground)]">No sessions are scheduled on the selected days.</p>
+      </fieldset>
+      <div className="space-y-1">
+        <label htmlFor={notesId} className="block text-sm font-medium text-[var(--foreground)]">
+          Other constraints (optional)
+        </label>
+        <textarea
+          id={notesId}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="e.g. 1 leisure session per week, no hard runs in May, travelling 12 to 16 June"
+          maxLength={MAX_NOTES_LENGTH}
+          rows={3}
+          disabled={busy}
+          aria-describedby={notesHelpId}
+          className="w-full rounded-md border border-[var(--border)] bg-transparent px-3 py-2 text-base text-[var(--foreground)]"
+        />
+        <p id={notesHelpId} className="text-xs text-[var(--muted-foreground)]">
+          The coach follows these as closely as it can. Selected days above are strictly enforced; free text is best effort.{' '}
+          {notes.length}/{MAX_NOTES_LENGTH}
         </p>
       </div>
       {error && (

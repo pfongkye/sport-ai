@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
 import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
+import { buildSkeleton } from './plan-skeleton'
 
 // No network, no paid API: mock the AI SDK call and the provider/readiness layers.
 const generateObjectMock = vi.fn()
@@ -252,5 +253,69 @@ describe('training recap in the workflow', () => {
     expect(prompt).toMatch(/HISTORY IS SPARSE/)
     expect(r.recap.baseline).toMatchObject({ weeklyKm: 12, source: 'fallback' })
     expect((tables.training_plans[0].recap as { sparse: boolean }).sparse).toBe(true)
+  })
+})
+
+describe('athlete constraints in the workflow', () => {
+  const HISTORY = {
+    activities: ['2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'].flatMap((monday) =>
+      ['T07:00:00Z', 'T17:00:00Z'].map((t) => ({
+        user_id: USER, sport_type: 'run', started_at: `${monday}${t}`, distance_m: 15000, duration_s: 5400,
+      }))
+    ),
+  }
+  // Wednesday is unavailable: training days become monday, friday, saturday.
+  const constraints = { unavailableWeekdays: ['wednesday'], notes: '1 leisure session per week' }
+  const constrainedSkeleton = () =>
+    buildSkeleton({ today: '2026-10-12', goalDate: GOAL_DATE, trainingDays: ['monday', 'friday', 'saturday'], baselineWeeklyKm: 30 })
+
+  beforeEach(() => {
+    generateObjectMock.mockReset()
+  })
+
+  it('removes the unavailable day from the slots, puts the notes in the prompt, and stores the constraints', async () => {
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(constrainedSkeleton()) })
+    const { client, tables } = seed(HISTORY)
+    await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW, constraints })
+    const { prompt, system } = generateObjectMock.mock.calls[0][0] as { prompt: string; system: string }
+    expect(prompt).toMatch(/=== ATHLETE CONSTRAINTS ===/)
+    expect(prompt).toContain('1 leisure session per week')
+    expect(prompt).toMatch(/Unavailable weekdays[^\n]*wednesday/)
+    expect(system).toMatch(/ATHLETE CONSTRAINTS/)
+    const weeks = JSON.parse(prompt.split('Weekly skeleton (JSON):\n')[1].split('\n')[0]) as { slotDates: string[] }[]
+    const wednesdays = weeks.flatMap((w) => w.slotDates).filter((d) => new Date(`${d}T00:00:00Z`).getUTCDay() === 3)
+    expect(wednesdays).toEqual([])
+    expect(tables.planned_sessions.some((s) => new Date(`${s.scheduled_date}T00:00:00Z`).getUTCDay() === 3)).toBe(false)
+    expect(tables.training_plans[0].constraints).toEqual(constraints)
+  })
+
+  it('rejects (and writes nothing) when the model still schedules on the unavailable day', async () => {
+    // A plan built for the UNconstrained 4-day skeleton contains Wednesday sessions.
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(makeSkeleton({ goalDate: GOAL_DATE, baseline: 30 })) })
+    const { client, tables } = seed(HISTORY)
+    const err = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW, constraints }).catch((e) => e)
+    expect(err.code).toBe('INVALID_PLAN')
+    expect(err.issues.join(' ')).toMatch(/not one of the athlete's training days/)
+    expect(tables.training_plans).toHaveLength(0)
+    expect(tables.planned_sessions).toHaveLength(0)
+  })
+
+  it('fails with CONSTRAINTS_INVALID, before calling the model, when no training day is left', async () => {
+    const { client, tables } = seed()
+    const all = { unavailableWeekdays: ['monday', 'wednesday', 'friday', 'saturday'], notes: null }
+    await expect(
+      generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW, constraints: all })
+    ).rejects.toMatchObject({ code: 'CONSTRAINTS_INVALID' })
+    expect(generateObjectMock).not.toHaveBeenCalled()
+    expect(tables.training_plans).toHaveLength(0)
+  })
+
+  it('omits the constraints block and column when none are given', async () => {
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })) })
+    const { client, tables } = seed()
+    await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+    const { prompt } = generateObjectMock.mock.calls[0][0] as { prompt: string }
+    expect(prompt).not.toMatch(/ATHLETE CONSTRAINTS ===/)
+    expect('constraints' in tables.training_plans[0]).toBe(false)
   })
 })
