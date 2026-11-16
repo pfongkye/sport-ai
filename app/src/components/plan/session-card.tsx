@@ -224,11 +224,11 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
               {deleteError}
             </p>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
             <Button
               type="button"
               variant="destructive"
-              className="min-h-11 flex-1"
+              className="min-h-11 w-full whitespace-normal"
               disabled={deleting}
               onClick={() => void remove()}
             >
@@ -237,7 +237,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
             <Button
               type="button"
               variant="ghost"
-              className="min-h-11"
+              className="min-h-11 w-full"
               disabled={deleting}
               autoFocus
               onClick={() => setConfirmingDelete(false)}

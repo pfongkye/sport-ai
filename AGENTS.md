@@ -87,6 +87,17 @@ best-effort from BOTH `insertManualActivity` and `insertNormalizedActivity`. Gua
 (structure: window, days, rest day, long run, empty: always reject) vs SOFT (weekly volume/ramp: repaired, see #47). Not
 verified against a live LLM: if repair + the single feedback retry still reject often, loosen `TARGET_TOLERANCE`.
 
+### 46. Plan constraints + session delete: hard vs soft, and the migration-017 dependency
+Constraints: `training_plans.constraints` (migration 017, applied MANUALLY, apply BEFORE deploying: the plan page selects the column).
+`lib/plan/constraints.ts`: unavailable weekdays are HARD (removed from the skeleton's training days before the LLM call, so the
+existing "sessions only on slot dates" guardrail rejects violations; all days unavailable -> `CONSTRAINTS_INVALID` 400). Free-text notes
+are SOFT (prompt block only, max 500 chars, cannot override HARD RULES); there is no way to validate free text deterministically.
+The column is only written when constraints are non-empty. Delete: `DELETE /api/plan/sessions/[id]` (`lib/plan/delete-session.ts`)
+refuses completed sessions (409), is owner-scoped (404 for other users) and re-checks status in the DELETE statement.
+`suggested_routes.planned_session_id` is ON DELETE SET NULL, so a deleted session's routes are kept but become eligible for the
+015 prune sweep after the retention window. E2E: the stub serves a plan only for access tokens starting `e2e-plan-` and remembers
+deletes per token (parallel projects stay isolated).
+
 ### 45. Vitest test fails with an error the code already caught: `beforeEach(() => mock.mockReset())`
 Symptom: a test asserting a mocked `generateObject` rejection is handled passes all its expects, then fails with
 the mock's own error (`→ boom`). Cause: a function RETURNED from `beforeEach` is run as a teardown hook, and

@@ -66,3 +66,53 @@ export const SUGGESTED_ROUTE = {
     coordinates: [[-0.5792, 44.8378], [-0.57, 44.84], [-0.565, 44.835], [-0.575, 44.83], [-0.5792, 44.8378]],
   },
 }
+
+// ── Plan fixtures (opt-in: only for access tokens starting with `e2e-plan-`) ─────────────────────
+// Built relative to the current date because the Plan page highlights "the week containing today".
+const iso = (d) => d.toISOString().slice(0, 10)
+const addDaysIso = (date, n) => iso(new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000))
+
+export function planFixtures(now = new Date()) {
+  const today = iso(now)
+  const dow = (now.getUTCDay() + 6) % 7 // Monday = 0
+  const monday = addDaysIso(today, -dow)
+  const planId = '00000000-0000-4000-8000-0000000002aa'
+  const session = (n, offset, over) => ({
+    id: `00000000-0000-4000-8000-0000000003${String(n).padStart(2, '0')}`,
+    plan_id: planId,
+    user_id: USER.id,
+    scheduled_date: addDaysIso(monday, offset),
+    sport_type: 'run',
+    session_type: 'easy',
+    description: 'Steady aerobic run.',
+    target_distance_m: 8000,
+    target_duration_s: 2880,
+    target_hr_zone: 2,
+    status: 'pending',
+    completed_activity_id: null,
+    ai_notes: null,
+    ...over,
+  })
+  return {
+    training_plans: [
+      {
+        id: planId,
+        user_id: USER.id,
+        title: 'Marathon build',
+        goal: 'Run a sub-4h marathon',
+        start_date: addDaysIso(monday, -7),
+        end_date: addDaysIso(monday, 7 * 8 + 6),
+        status: 'active',
+        recap: null,
+        constraints: { unavailableWeekdays: ['tuesday', 'thursday'], notes: '1 leisure session per week' },
+        created_at: '2025-06-01T00:00:00Z',
+      },
+    ],
+    planned_sessions: [
+      session(1, 0, { status: 'completed', completed_activity_id: ACTIVITIES[0].id }),
+      session(2, 2, { session_type: 'tempo', target_distance_m: 10000, target_hr_zone: 4 }),
+      session(3, 4, { session_type: 'easy', sport_type: 'cycle', description: 'Leisure ride, keep it social.' }),
+      session(4, 5, { session_type: 'long run', target_distance_m: 18000, target_duration_s: 6480, target_hr_zone: 2 }),
+    ],
+  }
+}

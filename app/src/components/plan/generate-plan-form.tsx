@@ -43,7 +43,7 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
         body: JSON.stringify({
           goal: goal.trim() || null,
           goalDate: goalDate || null,
-          constraints: { unavailableWeekdays: unavailable, notes: notes.trim() || null },
+          constraints: { unavailableWeekdays: WEEKDAY_NAMES.filter((d) => unavailable.includes(d)), notes: notes.trim() || null },
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       })
