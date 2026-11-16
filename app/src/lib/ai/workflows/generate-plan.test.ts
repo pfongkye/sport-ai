@@ -205,6 +205,35 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
   })
 })
 
+describe('persist failure logging', () => {
+  beforeEach(() => {
+    generateObjectMock.mockReset()
+  })
+
+  it.each([
+    ['training_plans.select', '[plan/persist] select active plans failed'],
+    ['training_plans.update', '[plan/persist] archive previous plans failed'],
+    ['training_plans.insert', '[plan/persist] insert training_plans failed'],
+    ['planned_sessions.insert', '[plan/persist] insert planned_sessions failed'],
+  ])('logs code, message, details and hint when %s fails, and keeps the client error generic', async (failOn, prefix) => {
+    const sk = makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(sk) })
+    const { client } = seed({ training_plans: [{ id: 'old', user_id: USER, status: 'active' }] }, [failOn])
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const err = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW }).catch((e) => e)
+      expect(err.code).toBe('PERSIST_FAILED')
+      expect(err.message).not.toMatch(/failed$/)
+      const call = spy.mock.calls.find((c) => c[0] === prefix)
+      expect(call).toBeDefined()
+      expect(Object.keys(call![1] as object).sort()).toEqual(['code', 'details', 'hint', 'message'])
+      expect((call![1] as { message: string }).message).toBe(`${failOn} failed`)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
 describe('training recap in the workflow', () => {
   // 4 qualifying weeks, 2 easy runs each (pace 6:00/km, HR 140, max HR 190) + a long run.
   const acts = ['2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'].flatMap((m) => [

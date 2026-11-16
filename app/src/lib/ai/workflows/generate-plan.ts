@@ -275,6 +275,23 @@ export async function persistPlan(
   goal: string,
   aiNotes: (string | null)[] = [],
   recap: TrainingRecap | null = null,
+type DbError = { code?: string; message?: string; details?: string; hint?: string } | null
+
+/**
+ * Log a failed persist step. PostgREST only logs 5xx, so a 4xx (RLS, check
+ * constraint, missing column) is otherwise invisible. Server logs only: the
+ * client always gets the generic PERSIST_FAILED message.
+ */
+function logPersistError(step: string, error: DbError | unknown) {
+  const e = (error ?? {}) as NonNullable<DbError>
+  console.error(`[plan/persist] ${step} failed`, {
+    code: e.code,
+    message: e.message,
+    details: e.details,
+    hint: e.hint,
+  })
+}
+
   constraints: PlanConstraints | null = null
 ): Promise<{ planId: string; archivedPlanIds: string[] }> {
   const { data: active, error: activeErr } = await supabase
@@ -282,7 +299,10 @@ export async function persistPlan(
     .select('id')
     .eq('user_id', userId)
     .eq('status', 'active')
-  if (activeErr) throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  if (activeErr) {
+    logPersistError('select active plans', activeErr)
+    throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  }
   const archivedPlanIds = (active ?? []).map((p) => p.id)
 
   if (archivedPlanIds.length) {
@@ -290,13 +310,21 @@ export async function persistPlan(
       .from('training_plans')
       .update({ status: 'archived' })
       .eq('user_id', userId)
+  // Migration 004: CHECK (end_date > start_date). Fail before touching the active plan.
+  if (!(plan.endDate > plan.startDate)) {
+    console.error('[plan/persist] invalid plan window', { start: plan.startDate, end: plan.endDate })
+    throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan.')
+  }
       .in('id', archivedPlanIds)
-    if (error) throw new PlanGenerationError('PERSIST_FAILED', 'Could not archive the previous plan.')
+    if (error) {
+      logPersistError('archive previous plans', error)
+      throw new PlanGenerationError('PERSIST_FAILED', 'Could not archive the previous plan.')
+    }
   }
 
   const restoreArchived = async () => {
     if (!archivedPlanIds.length) return
-    await supabase
+    const { error } = await supabase
       .from('training_plans')
       .update({ status: 'active' })
       .eq('user_id', userId)
@@ -314,6 +342,7 @@ export async function persistPlan(
       status: 'active',
       recap: recap as unknown as Json | null,
       // Only sent when set, so plans without constraints still save before migration 017 is applied.
+    if (error) logPersistError('restore archived plans', error)
       ...(constraints && constraintsForStorage(constraints)
         ? { constraints: constraints as unknown as Json }
         : {}),
@@ -329,11 +358,17 @@ export async function persistPlan(
     .from('planned_sessions')
     .insert(planToRows(plan, userId, inserted.id, aiNotes))
   if (sessionsErr) {
-    console.error('[plan/generate] session insert failed, cleaning up', sessionsErr)
-    await supabase.from('training_plans').delete().eq('id', inserted.id).eq('user_id', userId)
+    logPersistError('insert planned_sessions', sessionsErr)
+    const { error: cleanupErr } = await supabase
+      .from('training_plans')
+      .delete()
+      .eq('id', inserted.id)
+      .eq('user_id', userId)
+    if (cleanupErr) logPersistError('delete orphan training_plans row', cleanupErr)
     await restoreArchived()
     throw new PlanGenerationError('PERSIST_FAILED', 'Could not save the plan sessions.')
   }
+    logPersistError('insert training_plans', planErr)
 
   return { planId: inserted.id, archivedPlanIds }
 }
