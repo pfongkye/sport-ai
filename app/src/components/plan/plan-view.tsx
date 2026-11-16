@@ -17,11 +17,6 @@ interface Props {
   defaultGoal: string
 }
 
-/**
- * Week-grouped plan calendar. Mobile-first: one week at a time, days stacked in
- * a single column on a phone; 2 columns from `sm`, a 7-column week grid from
- * `lg`. Week navigation uses 44px buttons (no horizontal scroll, no clipped cells).
- */
 function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
   return (
     <svg
@@ -40,6 +35,11 @@ function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
   )
 }
 
+/**
+ * Week-grouped plan calendar. Mobile-first: one week at a time, days stacked in
+ * a single column on a phone; 2 columns from `sm`, 4 columns from `lg`, 7 from `2xl`.
+ * Week navigation uses 44px buttons (no horizontal scroll, no clipped cells).
+ */
 export function PlanView({ active, defaultGoal }: Props) {
   const router = useRouter()
   const [announce, setAnnounce] = useState('')
