@@ -175,3 +175,32 @@ export function repairPlan(plan: PlanDraft, sk: Skeleton): PlanRepair {
   })
   return { plan: { ...plan, sessions }, adjustments, sessionNotes }
 }
+
+const hasLongRun = (sessionType: string) => /long/i.test(sessionType)
+
+/**
+ * Deterministic structural repair: a full base/build/peak week with 3+ slots and
+ * no long run gets its longest run session relabelled "long run". Only the label
+ * changes, so caps and the ramp are unaffected. Weeks with no run are left alone
+ * (validation still reports them).
+ */
+export function repairMissingLongRuns(plan: PlanDraft, sk: Skeleton): PlanRepair {
+  const sessions = plan.sessions.map((s) => ({ ...s }))
+  const sessionNotes: (string | null)[] = sessions.map(() => null)
+  const adjustments: string[] = []
+  for (const w of sk.weeks) {
+    if (!w.full || !['base', 'build', 'peak'].includes(w.phase) || w.slotDates.length < 3) continue
+    const end = addDays(w.weekStart, 6)
+    const inWeek = sessions
+      .map((s, idx) => ({ s, idx }))
+      .filter(({ s }) => s.scheduledDate >= w.weekStart && s.scheduledDate <= end)
+    if (inWeek.some(({ s }) => hasLongRun(s.sessionType))) continue
+    const runs = inWeek.filter(({ s }) => isRun(s.sportType) && (s.targetDistanceM ?? 0) > 0)
+    if (!runs.length) continue
+    const longest = runs.reduce((a, b) => ((b.s.targetDistanceM ?? 0) > (a.s.targetDistanceM ?? 0) ? b : a))
+    longest.s.sessionType = 'long run'
+    sessionNotes[longest.idx] = 'Relabelled as the long run automatically because the week had none.'
+    adjustments.push(`Week of ${w.weekStart}: the longest run was relabelled as the long run`)
+  }
+  return { plan: { ...plan, sessions }, adjustments, sessionNotes }
+}

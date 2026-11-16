@@ -155,15 +155,47 @@ describe('generateTrainingPlan (mocked generateObject)', () => {
       expect(week.every((s) => typeof s.ai_notes === 'string')).toBe(true)
     })
 
-    it('still rejects hard (structural) violations without retrying', async () => {
+    it('retries once on a hard (structural) violation, then rejects and saves nothing', async () => {
       const bad = planWithWeeklyKm(sk(), NEAR_MISS)
       bad.sessions.push({ ...bad.sessions[0], scheduledDate: '2027-03-01' })
       generateObjectMock.mockResolvedValue({ object: bad })
-      const { client, tables } = seed()
+      const { client, tables, calls } = seed(ACTS)
       const err = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW }).catch((e) => e)
       expect(err.code).toBe('INVALID_PLAN')
-      expect(generateObjectMock).toHaveBeenCalledTimes(1)
+      expect(generateObjectMock).toHaveBeenCalledTimes(2)
+      const second = (generateObjectMock.mock.calls[1][0] as { prompt: string }).prompt
+      expect(second).toMatch(/PREVIOUS ATTEMPT WAS REJECTED/)
+      expect(second).toMatch(/outside the plan window/)
       expect(tables.training_plans).toHaveLength(0)
+      expect(calls.some((c) => c.op === 'insert')).toBe(false)
+    })
+
+    it('saves the plan when the retry fixes a hard violation', async () => {
+      const bad = validPlanFor(sk())
+      bad.sessions.push({ ...bad.sessions[0], scheduledDate: '2027-03-01' })
+      generateObjectMock
+        .mockResolvedValueOnce({ object: bad })
+        .mockResolvedValueOnce({ object: validPlanFor(sk()) })
+      const { client, tables } = seed(ACTS)
+      await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+      expect(generateObjectMock).toHaveBeenCalledTimes(2)
+      expect(tables.training_plans).toHaveLength(1)
+    })
+
+    it('relabels the longest run when a week has no long run, without a retry', async () => {
+      const plan = validPlanFor(sk())
+      const w = sk().weeks[2]
+      for (const s of plan.sessions) {
+        if (w.slotDates.includes(s.scheduledDate)) s.sessionType = 'easy'
+      }
+      generateObjectMock.mockResolvedValue({ object: plan })
+      const { client, tables } = seed(ACTS)
+      const r = await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+      expect(generateObjectMock).toHaveBeenCalledTimes(1)
+      expect(r.adjustments.join(' ')).toMatch(new RegExp(`Week of ${w.weekStart}: the longest run was relabelled`))
+      const longs = tables.planned_sessions.filter((s) => w.slotDates.includes(s.scheduled_date as string) && s.session_type === 'long run')
+      expect(longs).toHaveLength(1)
+      expect(longs[0].ai_notes).toMatch(/Relabelled/)
     })
 
     it('retries exactly once with the violations as feedback, then rejects', async () => {
