@@ -169,7 +169,7 @@ describe('buildCoachTools', () => {
       data?: { confirmed: unknown; goal: unknown; goalDate: unknown }
     }
     expect(r.success).toBe(true)
-    expect(r.data).toEqual({ confirmed: false, goal: null, goalDate: null })
+    expect(r.data).toEqual({ confirmed: false, goal: null, goalDate: null, unavailableWeekdays: null, notes: null })
     // A non-ISO date must not reject the call at the schema; execute() handles it.
     expect(schema.safeParse!({ confirmed: true, goal: 'marathon', goalDate: 'November' }).success).toBe(true)
   })
@@ -182,6 +182,16 @@ describe('buildCoachTools', () => {
     const r = await tools.generatePlan.execute({ confirmed: true, goal: null, goalDate: 'November' })
     expect(r.created).toBe(false)
     expect(r.error).toMatch(/YYYY-MM-DD/)
+  })
+
+  it('generatePlan.execute rejects an unknown weekday before generating (no throw)', async () => {
+    const tools = buildCoachTools(stubSupabase, 'user-1') as unknown as Record<
+      string,
+      { execute: (input: unknown) => Promise<{ created: boolean; error?: string }> }
+    >
+    const r = await tools.generatePlan.execute({ confirmed: true, goal: null, goalDate: null, unavailableWeekdays: ['funday'], notes: null })
+    expect(r.created).toBe(false)
+    expect(r.error).toMatch(/weekday/i)
   })
 
   it('adjustUpcomingSessions schema accepts non-UUID ids and omitted optional fields (gotcha #36)', () => {

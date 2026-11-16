@@ -17,6 +17,7 @@ import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/ge
 import { adjustUpcomingSessions as adjustUpcomingSessionsSvc } from '@/lib/plan/adjust'
 import { getAthleteToday } from '@/lib/plan/session-guard'
 import { addDays, isIsoDate } from '@/lib/plan/dates'
+import { parseConstraints, hasConstraints } from '@/lib/plan/constraints'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -550,6 +551,7 @@ export function buildCoachTools(
       'Build a periodized multi-week training plan toward the athlete\'s goal and save it (it appears on the Plan page). ' +
       'TWO-STEP CONFIRMATION: first call with confirmed=false to get what would be created (goal, goal date, whether it replaces an existing plan), ' +
       'read that back and ask the athlete to confirm. Only after they say yes, call again with confirmed=true. Generation takes up to a minute. ' +
+      'Ask whether they have constraints (days they cannot train, e.g. "not Tuesdays", or wishes like "1 leisure session per week") and pass them as unavailableWeekdays / notes. ' +
       'Pass goalDate as YYYY-MM-DD when the athlete gave a target date or race (resolve "November" etc. against today\'s date, and confirm it); null if none. ' +
       'After it succeeds, summarise briefly (title, dates, number of weeks and sessions). Do NOT list every session; point them to the Plan page.',
     // gotcha #36: nullable+default(null), never bare .optional(); no refinements.
@@ -565,6 +567,16 @@ export function buildCoachTools(
         .nullable()
         .default(null)
         .describe('Goal/race date as YYYY-MM-DD; null = a general 12-week block.'),
+      unavailableWeekdays: z
+        .array(z.string())
+        .nullable()
+        .default(null)
+        .describe('Weekdays the athlete cannot train, lowercase English names (e.g. ["tuesday"]); null = none. Strictly enforced.'),
+      notes: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe('Other constraints in the athlete\'s words (e.g. "1 leisure session per week", "no hard runs in May"); null = none. Best effort.'),
     }),
     execute: async (inputData) => {
       const goal =
@@ -576,6 +588,12 @@ export function buildCoachTools(
       if (goalDate && !isIsoDate(goalDate)) {
         return { created: false, error: 'goalDate must be a real date formatted YYYY-MM-DD. Ask the athlete for the date.' }
       }
+      const parsedConstraints = parseConstraints({
+        unavailableWeekdays: inputData.unavailableWeekdays,
+        notes: inputData.notes,
+      })
+      if (!parsedConstraints.ok) return { created: false, error: parsedConstraints.error }
+      const constraints = parsedConstraints.value
 
       if (!inputData.confirmed) {
         const { data: existing } = await supabase
@@ -588,7 +606,8 @@ export function buildCoachTools(
         return {
           created: false,
           needsConfirmation: true,
-          willCreate: { goal: goal ?? 'the goal saved on the athlete profile', goalDate: goalDate ?? 'none (general 12-week block)' },
+          willCreate: { goal: goal ?? 'the goal saved on the athlete profile', goalDate: goalDate ?? 'none (general 12-week block)',
+            constraints: hasConstraints(constraints) ? constraints : 'none' },
           replacesActivePlan: existing ? { title: existing.title, endDate: existing.end_date } : null,
           message:
             'Read this back to the athlete and ask them to confirm. Mention that an existing active plan would be archived. Then call again with confirmed=true.',
@@ -596,7 +615,7 @@ export function buildCoachTools(
       }
 
       try {
-        const r = await generateTrainingPlan(supabase, userId, { goal, goalDate, timeZone })
+        const r = await generateTrainingPlan(supabase, userId, { goal, goalDate, timeZone, constraints })
         return {
           created: true,
           planId: r.planId,

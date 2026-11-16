@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { isValidTimeZone, tzFromCookieHeader } from '@/lib/plan/timezone'
+import { parseConstraints } from '@/lib/plan/constraints'
 import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/generate-plan'
 
 export const runtime = 'nodejs'
@@ -10,6 +11,7 @@ export const maxDuration = 180
 const STATUS_BY_CODE: Record<PlanGenerationError['code'], number> = {
   GOAL_DATE_INVALID: 400,
   GOAL_TOO_SOON: 400,
+  CONSTRAINTS_INVALID: 400,
   AI_NOT_CONFIGURED: 503,
   TIMEOUT: 504,
   GENERATION_FAILED: 502,
@@ -19,7 +21,8 @@ const STATUS_BY_CODE: Record<PlanGenerationError['code'], number> = {
 
 /**
  * POST /api/plan/generate
- * Body: { goal?: string, goalDate?: 'YYYY-MM-DD', timeZone?: IANA zone }
+ * Body: { goal?: string, goalDate?: 'YYYY-MM-DD', timeZone?: IANA zone,
+ *         constraints?: { unavailableWeekdays?: string[], notes?: string } }
  * A valid `timeZone` wins over the `tz` cookie and the stored setting for this request.
  * Generates a plan with the same workflow the chat tool uses and archives the
  * previous active plan. Returns { planId, sessionCount, ... }.
@@ -31,7 +34,7 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { goal?: unknown; goalDate?: unknown; timeZone?: unknown } = {}
+  let body: { goal?: unknown; goalDate?: unknown; timeZone?: unknown; constraints?: unknown } = {}
   try {
     const text = await request.text()
     if (text.trim()) body = JSON.parse(text) as typeof body
@@ -43,11 +46,14 @@ export async function POST(request: Request) {
   const goalDate =
     typeof body.goalDate === 'string' && body.goalDate.trim() ? body.goalDate.trim() : null
 
+  const parsed = parseConstraints(body.constraints)
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error, code: 'CONSTRAINTS_INVALID' }, { status: 400 })
+
   const timeZone = isValidTimeZone(body.timeZone)
     ? body.timeZone
     : tzFromCookieHeader(request.headers.get('cookie'))
   try {
-    const result = await generateTrainingPlan(supabase, user.id, { goal, goalDate, timeZone })
+    const result = await generateTrainingPlan(supabase, user.id, { goal, goalDate, timeZone, constraints: parsed.value })
     return NextResponse.json(result, { status: 201 })
   } catch (err) {
     if (err instanceof PlanGenerationError) {

@@ -25,7 +25,7 @@ export default async function PlanPage() {
       <div>
         <h1 className="text-2xl font-bold text-[var(--foreground)]">Training Plan</h1>
         <p className="text-sm text-[var(--muted-foreground)] mt-1">
-          Your week-by-week plan toward your goal. Move an upcoming session if life gets in the way.
+          Your week-by-week plan toward your goal. Move or delete a session if life gets in the way.
         </p>
       </div>
       <PlanView active={active} defaultGoal={profile.data?.primary_goal ?? ''} />
