@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { repairMissingLongRuns, repairPlan, sanitizePlan, validatePlan, validatePlanDetailed, weeklyRunKm } from './plan-guardrails'
+import { repairLongRuns, repairMissingLongRuns, repairPlan, repairRaceDay, sanitizePlan, validatePlan, validatePlanDetailed, weeklyRunKm } from './plan-guardrails'
 import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
 
 describe('plan guardrails', () => {
@@ -182,5 +182,156 @@ describe('repairMissingLongRuns', () => {
     const r = repairMissingLongRuns(plan, sk)
     expect(r.plan.sessions).toEqual(plan.sessions)
     expect(r.adjustments).toEqual([])
+  })
+})
+
+describe('race day guardrails', () => {
+  // Race on Sunday 2027-03-21; profile days are mon/wed/fri/sat so Sunday is NOT a training day.
+  const race = { distance: '10k' as const, distanceKm: 10, targetTimeS: 2400 }
+  const sk = makeSkeleton({ today: '2026-10-12', goalDate: '2027-03-21', race, baseline: 40 })
+  const RACE = '2027-03-21'
+  const lastWeek = sk.weeks[sk.weeks.length - 1]
+  const raceSessions = (p: ReturnType<typeof validPlanFor>) => p.sessions.filter((s) => s.scheduledDate === RACE)
+
+  it('accepts a plan that follows the race skeleton', () => {
+    const plan = validPlanFor(sk)
+    expect(validatePlanDetailed(plan, sk)).toEqual({ hard: [], soft: [] })
+    expect(raceSessions(plan)).toHaveLength(1)
+  })
+
+  it('inserts the race session when the model left the date empty', () => {
+    const plan = validPlanFor(sk)
+    plan.sessions = plan.sessions.filter((s) => s.scheduledDate !== RACE)
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/exactly one session, the race/)
+    const fixed = repairRaceDay(plan, sk)
+    const r = raceSessions(fixed.plan)
+    expect(r).toHaveLength(1)
+    expect(r[0]).toMatchObject({
+      sportType: 'run',
+      sessionType: 'race',
+      targetDistanceM: 10000,
+      targetDurationS: 2400,
+      targetHrZone: null,
+      description: 'Race day: 10 km. Target 40:00 (4:00/km).',
+    })
+    expect(fixed.sessionNotes).toHaveLength(fixed.plan.sessions.length)
+    expect(fixed.adjustments.join(' ')).toMatch(/race \(10 km\) was added/)
+    expect(validatePlanDetailed(fixed.plan, sk).hard).toEqual([])
+  })
+
+  it('describes a race without a target time as run by feel', () => {
+    const noTime = makeSkeleton({
+      today: '2026-10-12',
+      goalDate: '2027-03-21',
+      race: { ...race, targetTimeS: null },
+    })
+    const plan = validPlanFor(noTime)
+    plan.sessions = plan.sessions.filter((s) => s.scheduledDate !== RACE)
+    const r = raceSessions(repairRaceDay(plan, noTime).plan)[0]
+    expect(r.description).toBe('Race day: 10 km. Run it by feel, start controlled.')
+    expect(r.targetDurationS).toBeNull()
+  })
+
+  it('corrects a wrong race distance and duration, and relabels a run on the date', () => {
+    const plan = validPlanFor(sk)
+    const r = raceSessions(plan)[0]
+    r.targetDistanceM = 15000
+    r.targetDurationS = 100
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/race session distance must be 10 km/)
+    const fixed = repairRaceDay(plan, sk)
+    expect(raceSessions(fixed.plan)[0]).toMatchObject({ targetDistanceM: 10000, targetDurationS: 2400 })
+
+    const easy = validPlanFor(sk)
+    easy.sessions = easy.sessions.map((s) => (s.scheduledDate === RACE ? { ...s, sessionType: 'easy', targetDistanceM: 5000 } : s))
+    const relabelled = repairRaceDay(easy, sk)
+    expect(raceSessions(relabelled.plan)).toHaveLength(1)
+    expect(raceSessions(relabelled.plan)[0].sessionType).toBe('race')
+    expect(relabelled.adjustments.join(' ')).toMatch(/relabelled as the race/)
+  })
+
+  it('removes the day before the race and extra sessions on race day', () => {
+    const plan = validPlanFor(sk)
+    plan.sessions.push({ ...plan.sessions[0], scheduledDate: '2027-03-20', sessionType: 'easy' })
+    plan.sessions.push({ ...plan.sessions[0], scheduledDate: RACE, sportType: 'gym', sessionType: 'strength' })
+    const issues = validatePlanDetailed(plan, sk).hard.join(' ')
+    expect(issues).toMatch(/day before the race/)
+    expect(issues).toMatch(/exactly one session/)
+    const fixed = repairRaceDay(plan, sk)
+    expect(fixed.plan.sessions.some((s) => s.scheduledDate === '2027-03-20')).toBe(false)
+    expect(raceSessions(fixed.plan)).toHaveLength(1)
+    expect(validatePlanDetailed(fixed.plan, sk).hard).toEqual([])
+  })
+
+  it('is a no-op without a race', () => {
+    const g = makeSkeleton({ goalDate: '2027-01-31' })
+    const plan = validPlanFor(g)
+    expect(repairRaceDay(plan, g).plan).toBe(plan)
+  })
+
+  it('scales a 40 km long run down to the 10 km cap, and rejects it when left unrepaired', () => {
+    const plan = validPlanFor(sk)
+    const i = plan.sessions.findIndex((s) => /long/i.test(s.sessionType) && s.scheduledDate >= sk.weeks[2].weekStart)
+    plan.sessions[i] = { ...plan.sessions[i], targetDistanceM: 40000, targetDurationS: 14400 }
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/longest-run limit/)
+    const fixed = repairLongRuns(plan, sk)
+    const w = sk.weeks.find((x) => plan.sessions[i].scheduledDate >= x.weekStart && plan.sessions[i].scheduledDate <= x.slotDates[x.slotDates.length - 1])!
+    expect(fixed.plan.sessions[i].targetDistanceM).toBeLessThanOrEqual(w.maxLongRunKm * 1000)
+    expect(fixed.plan.sessions[i].targetDurationS).toBeLessThan(14400)
+    expect(fixed.sessionNotes[i]).toMatch(/reduced automatically/)
+    expect(fixed.adjustments).toHaveLength(1)
+    expect(validatePlanDetailed(fixed.plan, sk).hard).toEqual([])
+  })
+
+  it('flags a race week run above the race week cap and repairs it without touching the race', () => {
+    const plan = validPlanFor(sk)
+    plan.sessions.push({
+      ...plan.sessions[0],
+      scheduledDate: lastWeek.slotDates[0],
+      sessionType: 'easy',
+      targetDistanceM: 12000,
+      targetDurationS: 4000,
+    })
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/race week is above the 6 km limit/)
+    const fixed = repairLongRuns(plan, sk)
+    const run = fixed.plan.sessions.filter((s) => s.scheduledDate === lastWeek.slotDates[0])
+    expect(run.every((s) => (s.targetDistanceM ?? 0) <= 6000)).toBe(true)
+    expect(raceSessions(fixed.plan)[0].targetDistanceM).toBe(10000)
+  })
+
+  it('repairPlan never scales the race distance', () => {
+    const plan = validPlanFor(sk)
+    for (const s of plan.sessions) {
+      if (s.scheduledDate >= lastWeek.weekStart && s.sessionType !== 'race') s.targetDistanceM = 6000
+    }
+    const out = repairPlan(plan, sk)
+    expect(raceSessions(out.plan)[0].targetDistanceM).toBe(10000)
+    expect(validatePlanDetailed(out.plan, sk).hard).toEqual([])
+  })
+
+  it('does not apply the ramp check to race and taper weeks', () => {
+    const issues = validatePlanDetailed(validPlanFor(sk), sk).soft.join(' ')
+    expect(issues).not.toMatch(/jumps more than/)
+  })
+
+  it('rejects a full taper week far below its target', () => {
+    const plan = validPlanFor(sk)
+    const taper = sk.weeks.find((w) => w.phase === 'taper')!
+    for (const s of plan.sessions) {
+      if (taper.slotDates.includes(s.scheduledDate)) s.targetDistanceM = 1000
+    }
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/Taper week .* below 40%/)
+  })
+
+  it('still checks a partial final week (race on a Tuesday after the plan starts mid-week)', () => {
+    const tue = makeSkeleton({ today: '2026-10-12', goalDate: '2027-03-23', race })
+    const last = tue.weeks[tue.weeks.length - 1]
+    expect(last.phase).toBe('race')
+    expect(last.full).toBe(false)
+    const plan = validPlanFor(tue)
+    expect(validatePlanDetailed(plan, tue).hard).toEqual([])
+    plan.sessions.push({ ...plan.sessions[0], scheduledDate: '2027-03-22', sessionType: 'easy', targetDistanceM: 20000 })
+    const hard = validatePlanDetailed(plan, tue).hard.join(' ')
+    expect(hard).toMatch(/day before the race/)
+    expect(hard).toMatch(/race week is above/)
   })
 })

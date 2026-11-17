@@ -24,6 +24,16 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 54. Race goal: the race date is always a slot, code owns the race session, limits come from the distance
+Symptom: a 10 km plan had marathon-sized long runs, no session on a race that fell on a non-training weekday (e.g. Sunday), and a day-before run.
+Cause: the skeleton only knew weekday slots and general caps (110 km/week, 32 km long run), and the model could copy the athlete's history.
+Fix: `PlanConstraints.race` (distance picker, target time) and `limits` (overrides) live in `training_plans.constraints` (no migration).
+`lib/plan/race-goal.ts` has the per-distance defaults (coaching rules of thumb, not a sourced table; have a coach review them) and clamps overrides
+to [0.4, 1.3] x default. `buildSkeleton` adds the goal date to the last week's slots (phase `race`), sizes the taper from `taperDays`, and sets a
+per-week `maxLongRunKm`. `repairRaceDay` inserts or corrects the race session (distance and time come from the goal, never the model) and removes
+the day before; `repairLongRuns` scales runs above the cap. Free text is never parsed for distances or times. A Monday race tapers one week more
+than a Sunday race for the same distance (the rule counts Sundays on or after race date minus `taperDays`).
+
 ### 53. Debugging the Supabase stack in prod: PostgREST hides 4xx, logs to stderr; Postgres logs only FATAL
 - PostgREST at its default log level logs only 5xx. An RLS denial or check violation (4xx) leaves no trace. `PGRST_LOG_LEVEL=info` would
   log every request, so it is NOT enabled; reproduce the failing write in SQL instead (below).

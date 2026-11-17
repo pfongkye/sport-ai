@@ -381,3 +381,87 @@ describe('athlete constraints in the workflow', () => {
     expect('constraints' in tables.training_plans[0]).toBe(false)
   })
 })
+
+describe('race goal in the workflow', () => {
+  // GOAL_DATE 2026-12-06 is a Sunday; the profile trains monday/wednesday/friday/saturday.
+  const RACE_DATE = GOAL_DATE
+  // Marathon-sized history: two 35 km runs per week.
+  const MARATHON_HISTORY = {
+    activities: ['2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'].flatMap((monday) =>
+      ['T07:00:00Z', 'T17:00:00Z'].map((t) => ({
+        user_id: USER, sport_type: 'run', started_at: `${monday}${t}`, distance_m: 35000, duration_s: 12600,
+      }))
+    ),
+  }
+  const race = { distance: '10k' as const, distanceKm: 10, targetTimeS: 2400 }
+  const constraints = { ...NO_CONSTRAINTS, race, limits: { maxLongRunKm: 16 } }
+  const raceSkeleton = () => makeSkeleton({ goalDate: RACE_DATE, baseline: 70, race })
+
+  beforeEach(() => {
+    generateObjectMock.mockReset()
+  })
+
+  it('puts exactly one 10 km race on a non-training Sunday, caps every run, and stores race and limits', async () => {
+    const sk = raceSkeleton()
+    const draft = validPlanFor(sk)
+    // The model forgot the race, scheduled the day before the race, and wrote a marathon-sized long run.
+    draft.sessions = draft.sessions.filter((s) => s.scheduledDate !== RACE_DATE)
+    draft.sessions.push({ ...draft.sessions[0], scheduledDate: '2026-12-05', sessionType: 'easy' })
+    const longIdx = draft.sessions.findIndex((s) => /long/i.test(s.sessionType) && s.scheduledDate > '2026-10-20')
+    draft.sessions[longIdx] = { ...draft.sessions[longIdx], targetDistanceM: 32000, targetDurationS: 12000 }
+    generateObjectMock.mockResolvedValue({ object: draft })
+    const { client, tables } = seed(MARATHON_HISTORY)
+
+    const r = await generateTrainingPlan(client, USER, { goalDate: RACE_DATE, now: NOW, constraints })
+
+    const onRaceDay = tables.planned_sessions.filter((s) => s.scheduled_date === RACE_DATE)
+    expect(onRaceDay).toHaveLength(1)
+    expect(onRaceDay[0]).toMatchObject({ session_type: 'race', sport_type: 'run', target_distance_m: 10000, target_duration_s: 2400 })
+    expect(tables.planned_sessions.some((s) => s.scheduled_date === '2026-12-05')).toBe(false)
+    const nonRace = tables.planned_sessions.filter((s) => s.session_type !== 'race' && s.sport_type === 'run')
+    expect(Math.max(...nonRace.map((s) => Number(s.target_distance_m)))).toBeLessThanOrEqual(16000)
+    expect(r.race).toMatchObject({ distance: '10k', targetTimeS: 2400 })
+    expect(r.limits).toMatchObject({ maxWeeklyKm: 55, maxLongRunKm: 16, taperDays: 8 })
+    expect(r.adjustments.join(' ')).toMatch(/race \(10 km\) was added/)
+    expect(tables.training_plans[0].constraints).toEqual(constraints)
+  })
+
+  it('tells the model about the race, the caps and the longer history', async () => {
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(raceSkeleton()) })
+    const { client } = seed(MARATHON_HISTORY)
+    await generateTrainingPlan(client, USER, { goalDate: RACE_DATE, now: NOW, constraints })
+    const { prompt, system } = generateObjectMock.mock.calls[0][0] as { prompt: string; system: string }
+    expect(prompt).toContain('Race: 10 km on 2026-12-06 (sunday), target 40:00 (4:00/km)')
+    expect(prompt).toMatch(/Limits for this plan: peak weekly 55 km, longest run 16 km/)
+    expect(prompt).toMatch(/shorter than the athlete's longest recent run \(35 km\)/)
+    const weeks = JSON.parse(prompt.split('Weekly skeleton (JSON):\n')[1].split('\n')[0]) as {
+      phase: string
+      maxLongRunKm: number
+      slotDates: string[]
+    }[]
+    expect(weeks.every((w) => typeof w.maxLongRunKm === 'number' && w.maxLongRunKm <= 16)).toBe(true)
+    const last = weeks[weeks.length - 1]
+    expect(last.phase).toBe('race')
+    expect(last.slotDates).not.toContain(RACE_DATE)
+    expect(system).toMatch(/RACE:/)
+    expect(system).toMatch(/maxLongRunKm/)
+  })
+
+  it('needs a goal date when a race is given', async () => {
+    const { client, tables } = seed()
+    await expect(generateTrainingPlan(client, USER, { now: NOW, constraints })).rejects.toMatchObject({
+      code: 'GOAL_DATE_INVALID',
+      message: 'Pick the race date.',
+    })
+    expect(generateObjectMock).not.toHaveBeenCalled()
+    expect(tables.training_plans).toHaveLength(0)
+  })
+
+  it('says there is no race for a general block', async () => {
+    generateObjectMock.mockResolvedValue({ object: validPlanFor(makeSkeleton({ goalDate: GOAL_DATE, baseline: 12 })) })
+    const { client } = seed()
+    await generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW })
+    const { prompt } = generateObjectMock.mock.calls[0][0] as { prompt: string }
+    expect(prompt).toContain('No race session')
+  })
+})

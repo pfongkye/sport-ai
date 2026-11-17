@@ -23,8 +23,14 @@ export const planSchema = z.object({
   sessions: z.array(plannedSessionSchema).min(1).max(400),
 })
 
+/** sessionType of the race itself. The race session is inserted and owned by code, never by the model. */
+export const RACE_SESSION_TYPE = 'race'
+
 export type PlannedSessionDraft = z.infer<typeof plannedSessionSchema>
 export type PlanDraft = z.infer<typeof planSchema>
+
+export const isRaceSession = (s: Pick<PlannedSessionDraft, 'sportType' | 'sessionType'>): boolean =>
+  s.sportType === 'run' && s.sessionType.trim().toLowerCase() === RACE_SESSION_TYPE
 
 type PlannedSessionInsert = Database['public']['Tables']['planned_sessions']['Insert']
 
