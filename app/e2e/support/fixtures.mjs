@@ -104,7 +104,12 @@ export function planFixtures(now = new Date()) {
         end_date: addDaysIso(monday, 7 * 8 + 6),
         status: 'active',
         recap: null,
-        constraints: { unavailableWeekdays: ['tuesday', 'thursday'], notes: '1 leisure session per week' },
+        constraints: {
+          unavailableWeekdays: ['tuesday', 'thursday'],
+          notes: '1 leisure session per week',
+          race: { distance: '10k', distanceKm: 10, targetTimeS: 2400 },
+          limits: { maxWeeklyKm: 40 },
+        },
         created_at: '2025-06-01T00:00:00Z',
       },
     ],
@@ -112,6 +117,14 @@ export function planFixtures(now = new Date()) {
       session(1, 0, { status: 'completed', completed_activity_id: ACTIVITIES[0].id }),
       session(2, 2, { session_type: 'tempo', target_distance_m: 10000, target_hr_zone: 4 }),
       session(3, 4, { session_type: 'easy', sport_type: 'cycle', description: 'Leisure ride, keep it social.' }),
+      // Race day: the plan's end date is a Sunday, which is not a training day but is always a slot.
+      session(5, 7 * 8 + 6, {
+        session_type: 'race',
+        description: 'Race day: 10 km. Target 40:00 (4:00/km).',
+        target_distance_m: 10000,
+        target_duration_s: 2400,
+        target_hr_zone: null,
+      }),
       session(4, 5, { session_type: 'long run', target_distance_m: 18000, target_duration_s: 6480, target_hr_zone: 2 }),
     ],
   }

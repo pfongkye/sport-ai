@@ -112,6 +112,7 @@ export function PlanView({ active, defaultGoal }: Props) {
           <GeneratePlanForm
             defaultGoal={plan.goal ?? defaultGoal}
             defaultConstraints={plan.constraints}
+            defaultGoalDate={plan.end_date}
             replacing
             onDone={(m, n) => {
               setAnnounce(n ? `${m} ${n}` : m)
