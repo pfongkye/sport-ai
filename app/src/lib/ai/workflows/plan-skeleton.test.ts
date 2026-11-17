@@ -239,3 +239,36 @@ describe('buildSkeleton with a race', () => {
     expect(raceDayBefore(g)).toBeNull()
   })
 })
+
+describe('longest-run cap for weeks with 1-2 training days', () => {
+  it('lets each run of a 2-day week reach its share of the week, with or without a race', () => {
+    const days = ['tuesday', 'saturday']
+    const noRace = buildSkeleton({ today: '2026-10-12', goalDate: null, trainingDays: days, baselineWeeklyKm: 20 })
+    const r: RaceGoal = { distance: '10k', distanceKm: 10, targetTimeS: null }
+    const withRace = buildSkeleton({
+      today: '2026-10-12',
+      goalDate: '2027-01-03',
+      trainingDays: days,
+      baselineWeeklyKm: 20,
+      race: r,
+      limits: resolveLimits(r, null),
+    })
+    for (const sk of [noRace, withRace]) {
+      for (const w of sk.weeks.filter((x) => x.full && x.phase !== 'race')) {
+        expect(w.maxLongRunKm).toBeGreaterThanOrEqual(Math.min((w.targetKm / 2) * 1.2, sk.limits.maxLongRunKm) - 0.1)
+        expect(w.maxLongRunKm).toBeLessThanOrEqual(sk.limits.maxLongRunKm)
+      }
+    }
+  })
+})
+
+describe('Monday race taper', () => {
+  it('has one more taper week than a Sunday race (taper is counted by week-end date)', () => {
+    const r: RaceGoal = { distance: 'marathon', distanceKm: 42.195, targetTimeS: null }
+    const mk = (goalDate: string) =>
+      buildSkeleton({ today: '2026-10-12', goalDate, trainingDays: DAYS, baselineWeeklyKm: 40, race: r, limits: resolveLimits(r, null) })
+    expect(mk('2027-03-21').taperWeeks).toBe(2) // Sunday
+    expect(mk('2027-03-22').taperWeeks).toBe(3) // Monday
+  })
+})
+

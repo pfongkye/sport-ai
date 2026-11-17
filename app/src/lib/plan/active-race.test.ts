@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { summarizeActiveRace } from './active-race'
+import { describe, it, expect, vi } from 'vitest'
+import { loadActiveRace, summarizeActiveRace } from './active-race'
 import { buildCoachSystemPrompt } from '@/lib/ai/prompts/coach'
 
 describe('summarizeActiveRace', () => {
@@ -39,5 +39,18 @@ describe('coach prompt active race block', () => {
     expect(p).toContain('Race: 10 km on 2026-12-06 (sunday), goal time 40:00 (4:00/km)')
     expect(p).toContain('peak weekly 55 km, longest run 18 km, taper about 8 days')
     expect(p).toMatch(/MUST fit THIS distance/)
+  })
+})
+
+describe('loadActiveRace', () => {
+  it('logs and returns null when the lookup fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const chain: Record<string, unknown> = {}
+    for (const m of ['select', 'eq', 'order', 'limit']) chain[m] = () => chain
+    chain.maybeSingle = async () => ({ data: null, error: { message: 'boom' } })
+    const supabase = { from: () => chain } as never
+    expect(await loadActiveRace(supabase, 'u1')).toBeNull()
+    expect(spy).toHaveBeenCalledWith('[active-race] lookup failed', 'boom')
+    spy.mockRestore()
   })
 })

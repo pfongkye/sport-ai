@@ -27,6 +27,10 @@ export function sanitizePlan(plan: PlanDraft): PlanDraft {
 
 const isRun = (sport: string) => sport === 'run'
 
+/** The race is the session typed 'race' ON the race date. A 'race' label anywhere else is a normal run. */
+const isRaceDayRace = (s: PlannedSessionDraft, sk: Skeleton): boolean =>
+  isRaceSession(s) && sk.race != null && s.scheduledDate === sk.race.date
+
 /** Run km per skeleton week index (sessions assigned by date). */
 export function weeklyRunKm(plan: PlanDraft, sk: Skeleton): number[] {
   return sk.weeks.map((w) => {
@@ -101,14 +105,17 @@ export function validatePlanDetailed(plan: PlanDraft, sk: Skeleton): PlanIssues 
       )
       if (!hasLong) issues.push(`Week of ${w.weekStart} has no long run.`)
     }
-    if (w.phase === 'taper' && w.full && km[i] < w.targetKm * MIN_TAPER_SHARE) {
+    // Code removes the day before the race; when it falls in this taper week, judge the week on the slots left.
+    const dayBefore = raceDayBefore(sk)
+    const keptShare = dayBefore && w.slotDates.includes(dayBefore) ? (w.slotDates.length - 1) / w.slotDates.length : 1
+    if (w.phase === 'taper' && w.full && km[i] < w.targetKm * MIN_TAPER_SHARE * keptShare) {
       issues.push(
         `Taper week of ${w.weekStart} totals ${km[i].toFixed(1)} km, below ${Math.round(MIN_TAPER_SHARE * 100)}% of its ${w.targetKm} km target.`
       )
     }
     // Longest non-race run of the week (the race week uses the race-week run cap as its maxLongRunKm).
     for (const s of plan.sessions) {
-      if (!isRun(s.sportType) || isRaceSession(s) || s.scheduledDate < w.weekStart || s.scheduledDate > end) continue
+      if (!isRun(s.sportType) || isRaceDayRace(s, sk) || s.scheduledDate < w.weekStart || s.scheduledDate > end) continue
       const runKm = (s.targetDistanceM ?? 0) / 1000
       if (runKm > w.maxLongRunKm * LONG_RUN_TOLERANCE + RAMP_SLACK_KM) {
         issues.push(
@@ -199,7 +206,7 @@ export function repairPlan(plan: PlanDraft, sk: Skeleton): PlanRepair {
     // Race sessions are fixed: only the other runs of the week are scaled, to what is left of the limit.
     const fixedKm =
       sessions
-        .filter((s) => isRaceSession(s) && s.scheduledDate >= w.weekStart && s.scheduledDate <= end)
+        .filter((s) => isRaceDayRace(s, sk) && s.scheduledDate >= w.weekStart && s.scheduledDate <= end)
         .reduce((sum, s) => sum + (s.targetDistanceM ?? 0), 0) / 1000
     const scalableKm = km[i] - fixedKm
     if (scalableKm <= 0) return
@@ -207,7 +214,7 @@ export function repairPlan(plan: PlanDraft, sk: Skeleton): PlanRepair {
     if (!(factor >= MIN_REPAIR_SCALE) || factor >= 1) return
     const before = km[i]
     sessions.forEach((s, idx) => {
-      if (!isRun(s.sportType) || isRaceSession(s) || s.scheduledDate < w.weekStart || s.scheduledDate > end) return
+      if (!isRun(s.sportType) || isRaceDayRace(s, sk) || s.scheduledDate < w.weekStart || s.scheduledDate > end) return
       if (s.targetDistanceM != null) s.targetDistanceM = Math.floor(s.targetDistanceM * factor)
       if (s.targetDurationS != null) s.targetDurationS = Math.floor(s.targetDurationS * factor)
       sessionNotes[idx] = `Distance reduced ${Math.round((1 - factor) * 100)}% automatically to keep the weekly volume within safe limits.`
@@ -288,6 +295,7 @@ export function repairRaceDay(plan: PlanDraft, sk: Skeleton): PlanRepair {
   const adjustments: string[] = []
   let removedBefore = 0
   let removedOnDay = 0
+  let relabelled = 0
   for (const s of plan.sessions) {
     if (before && s.scheduledDate === before) {
       removedBefore++
@@ -307,6 +315,13 @@ export function repairRaceDay(plan: PlanDraft, sk: Skeleton): PlanRepair {
       sessionNotes.push(unchanged ? null : 'Set to the race (distance and time) automatically.')
       continue
     }
+    if (isRaceSession(s)) {
+      // A 'race' anywhere else would skip the volume and length caps: it is a normal run.
+      sessions.push({ ...s, sessionType: 'easy' })
+      sessionNotes.push('Relabelled from race: the only race is on the race date.')
+      relabelled++
+      continue
+    }
     sessions.push(s)
     sessionNotes.push(null)
   }
@@ -317,6 +332,7 @@ export function repairRaceDay(plan: PlanDraft, sk: Skeleton): PlanRepair {
   } else if (!isRaceSession(keep)) {
     adjustments.push(`${race.date}: the run was relabelled as the race (${km} km)`)
   }
+  if (relabelled) adjustments.push(`${relabelled} session(s) labelled race on another date were relabelled as easy runs`)
   if (removedBefore) adjustments.push(`${before}: ${removedBefore} session(s) removed, the day before the race stays free`)
   if (removedOnDay) adjustments.push(`${race.date}: ${removedOnDay} extra session(s) removed, race day has only the race`)
   return { plan: { ...plan, sessions }, adjustments, sessionNotes }
@@ -331,7 +347,7 @@ export function repairLongRuns(plan: PlanDraft, sk: Skeleton): PlanRepair {
   const sessionNotes: (string | null)[] = sessions.map(() => null)
   const adjustments: string[] = []
   sessions.forEach((s, idx) => {
-    if (!isRun(s.sportType) || isRaceSession(s) || !s.targetDistanceM) return
+    if (!isRun(s.sportType) || isRaceDayRace(s, sk) || !s.targetDistanceM) return
     const w = sk.weeks.find((x) => s.scheduledDate >= x.weekStart && s.scheduledDate <= addDays(x.weekStart, 6))
     if (!w) return
     const runKm = s.targetDistanceM / 1000

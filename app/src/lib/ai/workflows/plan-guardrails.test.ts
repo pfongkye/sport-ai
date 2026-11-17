@@ -335,3 +335,51 @@ describe('race day guardrails', () => {
     expect(hard).toMatch(/race week is above/)
   })
 })
+
+describe('race label only counts on the race date', () => {
+  const race = { distance: '10k' as const, distanceKm: 10, targetTimeS: 2400 }
+  const sk = makeSkeleton({ today: '2026-10-12', goalDate: '2027-03-21', race, baseline: 40 })
+
+  it('relabels a model-emitted race on another date so the caps apply to it', () => {
+    const plan = validPlanFor(sk)
+    const idx = plan.sessions.findIndex((s) => s.scheduledDate < '2026-11-10' && s.sessionType !== 'long run')
+    plan.sessions[idx] = { ...plan.sessions[idx], sessionType: 'race', targetDistanceM: 40000 }
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/longest-run limit/)
+    const fixed = repairRaceDay(plan, sk)
+    expect(fixed.plan.sessions[idx].sessionType).toBe('easy')
+    expect(fixed.plan.sessions.filter((s) => s.sessionType === 'race')).toHaveLength(1)
+    const capped = repairLongRuns(fixed.plan, sk)
+    expect(capped.plan.sessions[idx].targetDistanceM!).toBeLessThan(40000)
+  })
+
+  it('does not exempt a "race" run from the caps in a plan without a race', () => {
+    const none = makeSkeleton({ today: '2026-10-12', goalDate: null })
+    const plan = validPlanFor(none)
+    plan.sessions[0] = { ...plan.sessions[0], sessionType: 'race', targetDistanceM: 60000 }
+    expect(validatePlanDetailed(plan, none).hard.join(' ')).toMatch(/longest-run limit/)
+    expect(repairLongRuns(plan, none).plan.sessions[0].targetDistanceM!).toBeLessThan(60000)
+  })
+})
+
+describe('taper share with the day before a Monday race', () => {
+  it('judges the taper week on the slots left after the day before the race is removed', () => {
+    const race = { distance: 'half' as const, distanceKm: 21.0975, targetTimeS: null }
+    const sk = makeSkeleton({
+      today: '2026-10-12',
+      goalDate: '2027-03-22',
+      race,
+      baseline: 40,
+      trainingDays: ['monday', 'wednesday', 'friday', 'saturday', 'sunday'],
+    })
+    const taper = sk.weeks.filter((w) => w.phase === 'taper').pop()!
+    expect(taper.slotDates).toContain('2027-03-21')
+    const plan = repairRaceDay(validPlanFor(sk), sk).plan
+    const inTaper = plan.sessions.filter((s) => taper.slotDates.includes(s.scheduledDate))
+    // 4 remaining runs at 36% of target in total: under 40%, but over 40% x 4/5.
+    for (const s of inTaper) s.targetDistanceM = Math.round((taper.targetKm * 0.36 * 1000) / inTaper.length)
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).not.toMatch(/Taper week/)
+    for (const s of inTaper) s.targetDistanceM = Math.round((taper.targetKm * 0.25 * 1000) / inTaper.length)
+    expect(validatePlanDetailed(plan, sk).hard.join(' ')).toMatch(/Taper week/)
+  })
+})
+

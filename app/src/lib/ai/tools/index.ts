@@ -18,7 +18,7 @@ import { adjustUpcomingSessions as adjustUpcomingSessionsSvc } from '@/lib/plan/
 import { getAthleteToday } from '@/lib/plan/session-guard'
 import { addDays, isIsoDate, weekdayIndex, WEEKDAY_NAMES } from '@/lib/plan/dates'
 import { parseConstraints, hasConstraints } from '@/lib/plan/constraints'
-import { formatRaceKm, formatTargetTime, RACE_DISTANCES, resolveLimits } from '@/lib/plan/race-goal'
+import { baselineReducedNote, formatRaceKm, formatTargetTime, RACE_DISTANCES, resolveLimits } from '@/lib/plan/race-goal'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -689,6 +689,7 @@ export function buildCoachTools(
           race: r.race
             ? { distanceKm: formatRaceKm(r.race.distanceKm), targetTime: r.race.targetTimeS ? formatTargetTime(r.race.targetTimeS) : 'none', date: r.endDate }
             : null,
+          baselineReduced: baselineReducedNote(r.recap.baseline.weeklyKm, r.limits.maxWeeklyKm) !== '',
           limits: { maxWeeklyKm: r.limits.maxWeeklyKm, maxLongRunKm: r.limits.maxLongRunKm, taperDays: r.race ? r.limits.taperDays : null },
           basedOn: {
             weeksUsed: r.recap.qualifyingWeeks,
@@ -697,6 +698,7 @@ export function buildCoachTools(
             historySparse: r.recap.sparse,
           },
           message:
+            baselineReducedNote(r.recap.baseline.weeklyKm, r.limits.maxWeeklyKm) +
             (r.adjustments.length
               ? `Adjusted ${r.adjustments.length} ${r.adjustments.length === 1 ? 'week' : 'weeks'} to keep weekly increases under 10%; mention this briefly. `
               : '') + (r.recap.sparse

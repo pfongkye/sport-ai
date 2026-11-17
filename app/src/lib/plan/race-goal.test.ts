@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  baselineReducedNote,
   DISTANCE_PROFILES,
   formatTargetTime,
   goalPaceLabel,
@@ -123,5 +124,13 @@ describe('formatting', () => {
     expect(formatTargetTime(2400)).toBe('40:00')
     expect(formatTargetTime(12600)).toBe('3:30:00')
     expect(goalPaceLabel(2400, 10)).toBe('4:00')
+  })
+})
+
+describe('baselineReducedNote', () => {
+  it('tells the coach when the baseline is above the weekly limit', () => {
+    expect(baselineReducedNote(60, 50)).toMatch(/60 km\/week.*50 km\/week.*starts at 50/)
+    expect(baselineReducedNote(40, 50)).toBe('')
+    expect(baselineReducedNote(50, 50)).toBe('')
   })
 })

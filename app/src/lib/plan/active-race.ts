@@ -43,9 +43,13 @@ export async function loadActiveRace(
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if (error) return null
+    if (error) {
+      console.error('[active-race] lookup failed', error.message)
+      return null
+    }
     return summarizeActiveRace(data)
-  } catch {
+  } catch (err) {
+    console.error('[active-race] lookup failed', err)
     return null
   }
 }

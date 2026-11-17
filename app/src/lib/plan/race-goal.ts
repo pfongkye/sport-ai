@@ -218,6 +218,13 @@ export function goalPaceLabel(targetTimeS: number, distanceKm: number): string {
   return `${Math.floor(p / 60)}:${String(p % 60).padStart(2, '0')}`
 }
 
+/** Coach-facing sentence when the athlete's recent volume is above the weekly limit (the plan starts lower); '' otherwise. */
+export function baselineReducedNote(baselineKm: number, maxWeeklyKm: number): string {
+  return baselineKm > maxWeeklyKm
+    ? `The athlete's recent volume (${baselineKm} km/week) is above the ${maxWeeklyKm} km/week limit for this goal, so the plan starts at ${maxWeeklyKm}; say so. `
+    : ''
+}
+
 /** '10', '21.1', '42.2': at most one decimal. */
 export function formatRaceKm(km: number): string {
   return String(round1(km))

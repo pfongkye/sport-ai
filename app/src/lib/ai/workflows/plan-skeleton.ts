@@ -215,7 +215,10 @@ export function buildSkeleton(input: SkeletonInput): Skeleton {
     const targetKm = isRaceWeek ? round1(load) : round1(load * scale)
     const longRunKm =
       !isRaceWeek && regularSlots >= 3 ? round1(loadCapKm * Math.min(1, scale + 0.25)) : 0
-    const maxLongRunKm = isRaceWeek ? raceCap : round1(loadCapKm)
+    // With 3+ runs the longest is about a third of the week. With 1-2 runs each run is naturally
+    // 50-100% of the week, so the cap follows the per-run share (still bounded by the hard limit).
+    const perRunKm = regularSlots > 0 && regularSlots < 3 ? Math.min((targetKm / regularSlots) * 1.2, limits.maxLongRunKm) : 0
+    const maxLongRunKm = isRaceWeek ? raceCap : round1(Math.max(loadCapKm, perRunKm))
     weeks.push({ index: i, weekStart, phase, targetKm, longRunKm, maxLongRunKm, slotDates, full })
   }
 
