@@ -1,4 +1,11 @@
 import { formatDistance, formatDuration } from '@/lib/utils'
+import { diffDays } from '@/lib/plan/dates'
+import { MIN_GOAL_LEAD_DAYS } from '@/lib/ai/workflows/plan-skeleton'
+
+/** Race date to pre-fill when regenerating: the old end date, unless it is too close or past (submit would fail). */
+export function prefillGoalDate(endDate: string, today: string): string {
+  return diffDays(today, endDate) >= MIN_GOAL_LEAD_DAYS ? endDate : ''
+}
 
 /** `2026-10-12` → "Mon 12 Oct". UTC-based so the label never shifts with the viewer's timezone. */
 export function dayLabel(iso: string): string {

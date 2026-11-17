@@ -12,8 +12,9 @@ import {
   weekdayIndex,
   WEEKDAY_NAMES,
 } from '@/lib/plan/dates'
+import { resolveLimits, type RaceGoal, type ResolvedLimits } from '@/lib/plan/race-goal'
 
-export type Phase = 'base' | 'build' | 'peak' | 'recovery' | 'taper'
+export type Phase = 'base' | 'build' | 'peak' | 'recovery' | 'taper' | 'race'
 
 export const MIN_GOAL_LEAD_DAYS = 7
 export const MAX_PLAN_WEEKS = 24
@@ -45,6 +46,8 @@ export interface SkeletonWeek {
   targetKm: number
   /** Target long-run length in km (0 when the week has no long run slot). */
   longRunKm: number
+  /** Longest a single non-race run may be this week (the race week uses the race-week run cap). */
+  maxLongRunKm: number
   /** Dates in the plan window that fall on an available training day. */
   slotDates: string[]
   /** True when every training-day slot of the week is inside the window. */
@@ -59,6 +62,10 @@ export interface Skeleton {
   taperWeeks: number
   trainingDayIndexes: number[]
   weeks: SkeletonWeek[]
+  /** The race on the goal date (always a slot date), or null for a general block. */
+  race: { date: string; distanceKm: number; targetTimeS: number | null } | null
+  /** Effective per-distance limits used to build the weeks. */
+  limits: ResolvedLimits
 }
 
 /** Map profile `training_days` ('monday'…) to weekday indexes; defaults when empty. */
@@ -105,27 +112,60 @@ export function taperWeeksFor(totalWeeks: number, hasGoalDate: boolean): number 
 
 const round1 = (n: number) => Math.round(n * 10) / 10
 
+/** Taper load factors (applied to the peak load) by number of taper weeks. */
+const TAPER_FACTORS: Record<number, number[]> = { 1: [0.7], 2: [0.75, 0.55], 3: [0.8, 0.65, 0.5] }
+const MAX_TAPER_WEEKS = 3
+
+/**
+ * Taper weeks for a race: the weeks BEFORE the race week whose Sunday is on or after
+ * raceDate - taperDays, at most 3, and always leaving at least one build week.
+ */
+export function raceTaperWeeks(
+  firstMonday: string,
+  totalWeeks: number,
+  raceDate: string,
+  taperDays: number
+): number {
+  const threshold = addDays(raceDate, -taperDays)
+  let n = 0
+  for (let i = 0; i < totalWeeks - 1; i++) {
+    if (addDays(firstMonday, i * 7 + 6) >= threshold) n++
+  }
+  return Math.max(0, Math.min(n, MAX_TAPER_WEEKS, totalWeeks - 2))
+}
+
 export interface SkeletonInput {
   today: string
   goalDate: string | null
   trainingDays: string[] | null | undefined
   /** Starting weekly run km, from `computeTrainingRecap().baseline.weeklyKm`. */
   baselineWeeklyKm: number
+  /** The race on the goal date; null/undefined = general block (legacy behavior). */
+  race?: RaceGoal | null
+  /** Resolved limits; defaults to resolveLimits(race, null). */
+  limits?: ResolvedLimits
 }
 
 export function buildSkeleton(input: SkeletonInput): Skeleton {
   const { startDate, endDate, hasGoalDate } = computeWindow(input.today, input.goalDate)
   const trainingDayIndexes = normalizeTrainingDays(input.trainingDays)
+  const goalRace = hasGoalDate ? (input.race ?? null) : null
+  const limits = input.limits ?? resolveLimits(goalRace, null)
+  const raceKm = goalRace?.distanceKm ?? 0
+  const raceCap = limits.raceWeekRunCapKm ?? 0
 
   // Monday-aligned calendar weeks overlapping [startDate, endDate].
   const firstMonday = mondayOf(startDate)
   const totalWeeks = Math.floor(diffDays(firstMonday, mondayOf(endDate)) / 7) + 1
-  const taperWeeks = taperWeeksFor(totalWeeks, hasGoalDate)
-  const buildWeeks = totalWeeks - taperWeeks
+  const taperWeeks = goalRace
+    ? raceTaperWeeks(firstMonday, totalWeeks, endDate, limits.taperDays)
+    : taperWeeksFor(totalWeeks, hasGoalDate)
+  // With a race the last week is the race week, which is neither build nor taper.
+  const buildWeeks = totalWeeks - taperWeeks - (goalRace ? 1 : 0)
   const baseWeeks = Math.ceil(buildWeeks * 0.3)
 
   // Weekly "full" volume per week (before partial-week scaling).
-  const startKm = Math.max(input.baselineWeeklyKm, MIN_START_KM)
+  const startKm = Math.min(Math.max(input.baselineWeeklyKm, MIN_START_KM), limits.maxWeeklyKm)
   let lastLoad = startKm // last non-recovery load
   let peak = startKm
   const weeks: SkeletonWeek[] = []
@@ -137,14 +177,21 @@ export function buildSkeleton(input: SkeletonInput): Skeleton {
       const d = addDays(weekStart, dayIdx)
       if (d >= startDate && d <= endDate) slotDates.push(d)
     }
+    // `full` is judged on the regular training days; the race date is added on top below.
     const full = slotDates.length === trainingDayIndexes.length
+    const isRaceWeek = goalRace != null && i === totalWeeks - 1
+    if (isRaceWeek && !slotDates.includes(endDate)) slotDates.push(endDate)
+    const regularSlots = slotDates.filter((d) => d !== endDate || !isRaceWeek).length
 
     let phase: Phase
     let load: number
-    if (i >= buildWeeks) {
+    if (isRaceWeek) {
+      phase = 'race'
+      load = raceKm + round1(Math.min(0.3 * peak, 2 * raceCap))
+    } else if (i >= buildWeeks) {
       // Taper: step down from the peak load.
       const k = i - buildWeeks // 0-based within taper
-      const factors = taperWeeks === 2 ? [0.7, 0.5] : [0.6]
+      const factors = goalRace ? TAPER_FACTORS[taperWeeks] : taperWeeks === 2 ? [0.7, 0.5] : [0.6]
       phase = 'taper'
       load = peak * factors[k]
     } else if (i % 4 === 3 && i !== buildWeeks - 1 && buildWeeks > 4) {
@@ -153,26 +200,48 @@ export function buildSkeleton(input: SkeletonInput): Skeleton {
     } else {
       // First build week stays at the athlete's baseline; then +10% per build week.
       const prev = i === 0 ? null : lastLoad
-      load = prev == null ? startKm : Math.min(prev * (1 + RAMP_RATE), MAX_WEEKLY_KM)
+      load = prev == null ? startKm : Math.min(prev * (1 + RAMP_RATE), limits.maxWeeklyKm)
       // After a recovery week resume modestly from the pre-recovery peak.
-      if (weeks[i - 1]?.phase === 'recovery') load = Math.min(lastLoad * (1 + RAMP_RATE / 2), MAX_WEEKLY_KM)
+      if (weeks[i - 1]?.phase === 'recovery') load = Math.min(lastLoad * (1 + RAMP_RATE / 2), limits.maxWeeklyKm)
       phase = i < baseWeeks ? 'base' : 'build'
-      if (hasGoalDate && taperWeeks > 0 && i === buildWeeks - 1 && buildWeeks >= 4) phase = 'peak'
+      if (hasGoalDate && (taperWeeks > 0 || goalRace) && i === buildWeeks - 1 && buildWeeks >= 4) phase = 'peak'
       lastLoad = load
       peak = Math.max(peak, load)
     }
 
-    const scale = trainingDayIndexes.length ? slotDates.length / trainingDayIndexes.length : 0
-    const targetKm = round1(load * scale)
+    const scale = trainingDayIndexes.length ? regularSlots / trainingDayIndexes.length : 0
+    const loadCapKm = Math.min(load * limits.longRunShare, limits.maxLongRunKm)
+    // The race week's volume is the race plus a short shake-out, not a share of the training load.
+    const targetKm = isRaceWeek ? round1(load) : round1(load * scale)
     const longRunKm =
-      slotDates.length >= 3 ? round1(Math.min(load * 0.35, 32) * Math.min(1, scale + 0.25)) : 0
-    weeks.push({ index: i, weekStart, phase, targetKm, longRunKm, slotDates, full })
+      !isRaceWeek && regularSlots >= 3 ? round1(loadCapKm * Math.min(1, scale + 0.25)) : 0
+    // With 3+ runs the longest is about a third of the week. With 1-2 runs each run is naturally
+    // 50-100% of the week, so the cap follows the per-run share (still bounded by the hard limit).
+    const perRunKm = regularSlots > 0 && regularSlots < 3 ? Math.min((targetKm / regularSlots) * 1.2, limits.maxLongRunKm) : 0
+    const maxLongRunKm = isRaceWeek ? raceCap : round1(Math.max(loadCapKm, perRunKm))
+    weeks.push({ index: i, weekStart, phase, targetKm, longRunKm, maxLongRunKm, slotDates, full })
   }
 
-  return { startDate, endDate, hasGoalDate, totalWeeks, taperWeeks, trainingDayIndexes, weeks }
+  return {
+    startDate,
+    endDate,
+    hasGoalDate,
+    totalWeeks,
+    taperWeeks,
+    trainingDayIndexes,
+    weeks,
+    race: goalRace ? { date: endDate, distanceKm: goalRace.distanceKm, targetTimeS: goalRace.targetTimeS } : null,
+    limits,
+  }
+}
+
+/** The day before the race (no training session may be scheduled there), or null without a race. */
+export function raceDayBefore(sk: Skeleton): string | null {
+  return sk.race ? addDays(sk.race.date, -1) : null
 }
 
 /** Slot weekday check used by guardrails. */
 export function isSlotDate(sk: Skeleton, date: string): boolean {
+  if (sk.race && date === sk.race.date) return true
   return sk.trainingDayIndexes.includes(weekdayIndex(date))
 }

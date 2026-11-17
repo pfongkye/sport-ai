@@ -10,7 +10,7 @@ import type { ActivePlan } from '@/lib/plan/load-plan'
 import { GeneratePlanForm } from './generate-plan-form'
 import { PlanRecap } from './plan-recap'
 import { SessionCard } from './session-card'
-import { dayLabel, weekLabel } from './plan-format'
+import { dayLabel, prefillGoalDate, weekLabel } from './plan-format'
 
 interface Props {
   active: ActivePlan | null
@@ -112,6 +112,7 @@ export function PlanView({ active, defaultGoal }: Props) {
           <GeneratePlanForm
             defaultGoal={plan.goal ?? defaultGoal}
             defaultConstraints={plan.constraints}
+            defaultGoalDate={prefillGoalDate(plan.end_date, today)}
             replacing
             onDone={(m, n) => {
               setAnnounce(n ? `${m} ${n}` : m)

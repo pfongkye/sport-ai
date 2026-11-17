@@ -863,6 +863,24 @@ npx supabase gen types typescript \
 
 See full spec: `.kiro/specs/sportai-coaching-app/`
 
+## Plan form inputs
+
+The Plan page form takes structured inputs, so nothing is parsed out of free text:
+
+- **Race distance** (5 km, 10 km, half, marathon, other 3 to 100 km), **Race date** and an optional **Target time** (h / min / sec). The race date is always scheduled, even on a Sunday or an unticked weekday.
+- **Adjust limits**: peak weekly km, longest run km and taper days. Empty means use the suggestion for the distance; values are clamped to 0.4x to 1.3x of it.
+- **Goal** and **Other constraints** are context for the coach and do not set numbers.
+
+| Distance | Peak weekly km | Longest run km | Taper days |
+|---|---|---|---|
+| 5 km | 50 | 14 | 5 |
+| 10 km | 55 | 18 | 8 |
+| Half marathon | 70 | 22 | 12 |
+| Marathon | 100 | 32 | 18 |
+| Ultra (other, over 42.2 km) | 110 | 40 | 18 |
+
+These are rules of thumb pending coach review. Tune them in `DISTANCE_PROFILES` in `app/src/lib/plan/race-goal.ts`.
+
 ## End-to-end / screenshot tests (Playwright)
 
 Purpose: catch layout bugs (horizontal overflow, displaced bottom nav) that otherwise only show on a real phone.

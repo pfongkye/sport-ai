@@ -24,6 +24,21 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 54. Race goal: the race date is always a slot, code owns the race session, limits come from the distance
+Symptom: a 10 km plan had marathon-sized long runs, no session on a race that fell on a non-training weekday (e.g. Sunday), and a day-before run.
+Cause: the skeleton only knew weekday slots and general caps (110 km/week, 32 km long run), and the model could copy the athlete's history.
+Fix: `PlanConstraints.race` (distance picker, target time) and `limits` (overrides) live in `training_plans.constraints` (no migration).
+`lib/plan/race-goal.ts` has the per-distance defaults (coaching rules of thumb, not a sourced table; have a coach review them) and clamps overrides
+to [0.4, 1.3] x default. `buildSkeleton` adds the goal date to the last week's slots (phase `race`), sizes the taper from `taperDays`, and sets a
+per-week `maxLongRunKm`. `repairRaceDay` inserts or corrects the race session (distance and time come from the goal, never the model) and removes
+the day before; `repairLongRuns` scales runs above the cap. Free text is never parsed for distances or times. A Monday race tapers one week more
+than a Sunday race for the same distance (the rule counts Sundays on or after race date minus `taperDays`).
+UI: `components/plan/generate-plan-form.tsx` has the Race distance select, Race date, h/min/sec target time and a collapsible "Adjust limits" section whose
+placeholders and ranges come from `resolveLimits` (same table as the server); empty field = use the suggestion, regenerate pre-fills from the stored constraints.
+Tune the numbers only in `DISTANCE_PROFILES` (`lib/plan/race-goal.ts`). History is context for the model, never a source of limits. Suggested defaults
+(weekly km / long run km / taper days), rules of thumb pending coach review: 5 km 50/14/5, 10 km 55/18/8, half 70/22/12, marathon 100/32/18, ultra 110/40/18, no race 110/32/0.
+In e2e, click the visible weekday chip, not the sr-only checkbox (it can sit under the mobile nav after scrolling).
+
 ### 53. Debugging the Supabase stack in prod: PostgREST hides 4xx, logs to stderr; Postgres logs only FATAL
 - PostgREST at its default log level logs only 5xx. An RLS denial or check violation (4xx) leaves no trace. `PGRST_LOG_LEVEL=info` would
   log every request, so it is NOT enabled; reproduce the failing write in SQL instead (below).

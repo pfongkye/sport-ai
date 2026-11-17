@@ -7,6 +7,7 @@ import { buildCoachSystemPrompt } from '../prompts/coach'
 import { resolveModel } from '../provider'
 import { localDateInTz } from '@/lib/plan/dates'
 import { resolveAthleteTimeZone } from '@/lib/plan/timezone'
+import { loadActiveRace } from '@/lib/plan/active-race'
 
 interface BuildCoachAgentParams {
   supabase: SupabaseClient<Database>
@@ -47,7 +48,10 @@ export async function buildCoachAgent(params: BuildCoachAgentParams): Promise<Ag
 
   const tools = buildCoachTools(supabase, userId, admin, timeZone)
 
+  const activeRace = await loadActiveRace(supabase, userId)
+
   const instructions = buildCoachSystemPrompt({
+    activeRace,
     profile,
     settings,
     readiness,

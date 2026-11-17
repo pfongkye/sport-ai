@@ -6,11 +6,23 @@
  *  - `unavailableWeekdays` is STRUCTURED and HARD. It is removed from the skeleton's
  *    training days before the model runs, so no session can land there (the existing
  *    guardrail rejects any session on a non-slot date).
+ *  - `race` and `limits` are STRUCTURED (distance picker, target time, numeric overrides). The
+ *    skeleton and guardrails enforce them; they are never parsed out of free text.
  *  - `notes` is FREE TEXT and SOFT. It goes into the prompt ("1 leisure session per
  *    week", "no hard runs the week of 12 May"), where the model honors it on a best
  *    effort basis. Free text cannot be validated deterministically.
  */
 import { WEEKDAY_NAMES } from './dates'
+import {
+  formatRaceKm,
+  formatTargetTime,
+  goalPaceLabel,
+  parseLimitOverrides,
+  parseRaceGoal,
+  resolveLimits,
+  type LimitOverrides,
+  type RaceGoal,
+} from './race-goal'
 
 export const MAX_NOTES_LENGTH = 500
 
@@ -19,9 +31,13 @@ export interface PlanConstraints {
   unavailableWeekdays: string[]
   /** Trimmed free text or null. */
   notes: string | null
+  /** The race the plan builds towards (its date is the plan's goal date), or null. */
+  race: RaceGoal | null
+  /** Athlete overrides of the per-distance limits (clamped when resolved), or null. */
+  limits: LimitOverrides | null
 }
 
-export const NO_CONSTRAINTS: PlanConstraints = { unavailableWeekdays: [], notes: null }
+export const NO_CONSTRAINTS: PlanConstraints = { unavailableWeekdays: [], notes: null, race: null, limits: null }
 
 export type ConstraintsParse =
   | { ok: true; value: PlanConstraints }
@@ -39,7 +55,7 @@ export function parseConstraints(input: unknown): ConstraintsParse {
   if (typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, error: 'constraints must be an object.' }
   }
-  const { unavailableWeekdays, notes } = input as Record<string, unknown>
+  const { unavailableWeekdays, notes, race, limits } = input as Record<string, unknown>
 
   let days: string[] = []
   if (unavailableWeekdays != null) {
@@ -69,7 +85,15 @@ export function parseConstraints(input: unknown): ConstraintsParse {
       return { ok: false, error: `Notes are too long (max ${MAX_NOTES_LENGTH} characters).` }
     }
   }
-  return { ok: true, value: { unavailableWeekdays: days, notes: text } }
+
+  const raceResult = parseRaceGoal(race)
+  if (!raceResult.ok) return { ok: false, error: raceResult.error }
+  const limitsResult = parseLimitOverrides(limits)
+  if (!limitsResult.ok) return { ok: false, error: limitsResult.error }
+  return {
+    ok: true,
+    value: { unavailableWeekdays: days, notes: text, race: raceResult.value, limits: limitsResult.value },
+  }
 }
 
 /** Read a stored `training_plans.constraints` value; anything malformed becomes "none". */
@@ -79,7 +103,7 @@ export function asConstraints(value: unknown): PlanConstraints {
 }
 
 export function hasConstraints(c: PlanConstraints): boolean {
-  return c.unavailableWeekdays.length > 0 || c.notes != null
+  return c.unavailableWeekdays.length > 0 || c.notes != null || c.race != null || c.limits != null
 }
 
 /** Store null rather than an empty object. */
@@ -108,6 +132,19 @@ export function buildConstraintsBlock(c: PlanConstraints): string | null {
     lines.push(
       `Unavailable weekdays (already removed from the slot dates, never schedule on them): ${c.unavailableWeekdays.join(', ')}.`
     )
+  }
+  if (c.race) {
+    const r = c.race
+    const l = resolveLimits(r, c.limits)
+    lines.push(
+      `Race goal: ${formatRaceKm(r.distanceKm)} km (${r.distance}), target time ${
+        r.targetTimeS ? `${formatTargetTime(r.targetTimeS)} (${goalPaceLabel(r.targetTimeS, r.distanceKm)}/km)` : 'none'
+      }. The race is scheduled by the system on the goal date.`,
+      `Limits enforced by the system: peak weekly ${l.maxWeeklyKm} km, longest run ${l.maxLongRunKm} km, taper about ${l.taperDays} days.`
+    )
+  } else if (c.limits) {
+    const l = resolveLimits(null, c.limits)
+    lines.push(`Limits enforced by the system: peak weekly ${l.maxWeeklyKm} km, longest run ${l.maxLongRunKm} km.`)
   }
   if (c.notes) {
     lines.push(
