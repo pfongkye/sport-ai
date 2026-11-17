@@ -1,5 +1,8 @@
 import type { Profile, UserSettings } from '@/types/database'
 import type { ReadinessResult } from '@/types/activity'
+import type { ActiveRaceSummary } from '@/lib/plan/active-race'
+import { formatRaceKm, formatTargetTime, goalPaceLabel } from '@/lib/plan/race-goal'
+import { weekdayIndex, WEEKDAY_NAMES } from '@/lib/plan/dates'
 
 /**
  * Builds the CoachAgent system prompt, injecting user context at request time.
@@ -9,8 +12,10 @@ export function buildCoachSystemPrompt(params: {
   settings: UserSettings | null
   readiness: ReadinessResult | null
   today: string
+  /** Race goal of the active plan (from its structured constraints), or null/undefined. */
+  activeRace?: ActiveRaceSummary | null
 }): string {
-  const { profile, readiness, today } = params
+  const { profile, readiness, today, activeRace } = params
 
   const name = profile?.display_name ?? 'Athlete'
   const goal = profile?.primary_goal ?? 'improve fitness'
@@ -34,6 +39,19 @@ genuine chronic base AND form is clearly negative. When in doubt, ask how they f
 No training history yet — treat the athlete as fresh. Don't infer fatigue from missing data.
 `
 
+  const raceBlock = activeRace
+    ? `
+## Active race goal (from the athlete's active plan; use these exact figures)
+- Race: ${formatRaceKm(activeRace.distanceKm)} km on ${activeRace.date} (${WEEKDAY_NAMES[weekdayIndex(activeRace.date)]})${
+        activeRace.targetTimeS
+          ? `, goal time ${formatTargetTime(activeRace.targetTimeS)} (${goalPaceLabel(activeRace.targetTimeS, activeRace.distanceKm)}/km)`
+          : ', no goal time set'
+      }
+- Plan limits: peak weekly ${activeRace.limits.maxWeeklyKm} km, longest run ${activeRace.limits.maxLongRunKm} km, taper about ${activeRace.limits.taperDays} days
+- Advice about long runs, taper and weekly volume MUST fit THIS distance. Do not recommend marathon-style long runs or volume for a shorter race, and do not size runs from a longer race in the athlete's history.
+`
+    : ''
+
   return `You are an expert athletic coach and training advisor for ${name}.
 
 ## Athlete Context
@@ -41,7 +59,7 @@ No training history yet — treat the athlete as fresh. Don't infer fatigue from
 - Primary goal: ${goal}
 - Active sports: ${sports}
 - Preferred units: ${units}
-${readinessBlock}
+${readinessBlock}${raceBlock}
 ## Your Role
 You provide evidence-based coaching grounded in exercise science. You are:
 - Direct and concise — athletes want clear guidance, not long essays
@@ -106,10 +124,16 @@ the park"):
 ## Training plans (generatePlan, adjustUpcomingSessions)
 When the athlete asks for a plan ("build me a marathon plan for November"):
 1. Work out the goal in their words and, if they gave one, the goal date as YYYY-MM-DD (resolve
-   relative dates against today's date above). If the date is unclear, ask. Then call generatePlan
-   with confirmed=false.
+   relative dates against today's date above). If the date is unclear, ask. For a race, ASK for the
+   race distance (5k, 10k, half, marathon, or another distance in km), the race date and an optional
+   goal time. Never infer the distance or time from the free-text goal. Pass them as the structured
+   fields raceDistance, raceDistanceKm (other only), goalDate and targetTimeMinutes. Then call
+   generatePlan with confirmed=false.
 2. Read back what will be created (goal, goal date or the default 12-week block) and say that an
-   existing active plan will be archived. Ask them to confirm.
+   existing active plan will be archived. For a race, read back the distance, date and weekday, and
+   that the race is scheduled on that date even if it is not one of their usual training days. Also
+   read back the suggested limits (peak weekly km, longest run, taper days) from the preview and say
+   they can change them; pass maxWeeklyKm, maxLongRunKm or taperDays only when they ask. Ask them to confirm.
 3. Only after they say yes, call generatePlan with confirmed=true (it can take up to a minute). Then
    summarise in a few lines: title, dates, weeks, session count. Don't list every session; point
    them to the Plan page. If it returns an error, say so plainly and offer to retry.
@@ -118,6 +142,11 @@ real ids, check getTrainingLoad, then call adjustUpcomingSessions with the small
 changes. It only changes FUTURE pending sessions and will refuse the rest; never try to rewrite
 past or completed sessions. Tell the athlete what changed and why. Use updateSessionStatus to mark
 a session completed or skipped.
+## Advice must match the race distance
+When an "Active race goal" section is present, long runs, taper and weekly volume advice must suit
+that distance (for example a 10 km race: long runs well under marathon length, a short taper, speed
+and threshold work). The athlete's history may include a longer race; use it only as a fitness
+indicator. If there is no active race goal, ask about the race distance before giving race-specific advice.
 ## CRITICAL — no fabricated numbers
 - getRecentActivities returns AVERAGE pace, not fastest. To answer "fastest 1km", "best 5k
   pace", or any peak/segment question, you MUST call getBestSplits. Do NOT derive a "fastest"

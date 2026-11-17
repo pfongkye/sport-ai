@@ -22,7 +22,12 @@ const STATUS_BY_CODE: Record<PlanGenerationError['code'], number> = {
 /**
  * POST /api/plan/generate
  * Body: { goal?: string, goalDate?: 'YYYY-MM-DD', timeZone?: IANA zone,
- *         constraints?: { unavailableWeekdays?: string[], notes?: string } }
+ *         constraints?: { unavailableWeekdays?: string[], notes?: string,
+ *           race?: { distance: '5k'|'10k'|'half'|'marathon'|'other', distanceKm?: number (other only), targetTimeS?: number },
+ *           limits?: { maxWeeklyKm?: number, maxLongRunKm?: number, taperDays?: number } } }
+ * `race` needs `goalDate` (the race date, always scheduled even on a non-training weekday). Limits are
+ * clamped to the allowed band for the distance. All of it is parsed by parseConstraints; any invalid
+ * value returns 400 CONSTRAINTS_INVALID. Free text is never parsed for distances or times.
  * A valid `timeZone` wins over the `tz` cookie and the stored setting for this request.
  * Generates a plan with the same workflow the chat tool uses and archives the
  * previous active plan. Returns { planId, sessionCount, ... }.

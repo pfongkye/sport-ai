@@ -16,8 +16,9 @@ import { ORS_LOOP_TOO_FAR } from '@/lib/integrations/ors/client'
 import { generateTrainingPlan, PlanGenerationError } from '@/lib/ai/workflows/generate-plan'
 import { adjustUpcomingSessions as adjustUpcomingSessionsSvc } from '@/lib/plan/adjust'
 import { getAthleteToday } from '@/lib/plan/session-guard'
-import { addDays, isIsoDate } from '@/lib/plan/dates'
+import { addDays, isIsoDate, weekdayIndex, WEEKDAY_NAMES } from '@/lib/plan/dates'
 import { parseConstraints, hasConstraints } from '@/lib/plan/constraints'
+import { formatRaceKm, formatTargetTime, RACE_DISTANCES, resolveLimits } from '@/lib/plan/race-goal'
 import { suggestRoute as suggestRouteSvc, NO_LOCATION, type Terrain } from '@/lib/integrations/ors/suggest'
 
 /**
@@ -552,6 +553,9 @@ export function buildCoachTools(
       'TWO-STEP CONFIRMATION: first call with confirmed=false to get what would be created (goal, goal date, whether it replaces an existing plan), ' +
       'read that back and ask the athlete to confirm. Only after they say yes, call again with confirmed=true. Generation takes up to a minute. ' +
       'Ask whether they have constraints (days they cannot train, e.g. "not Tuesdays", or wishes like "1 leisure session per week") and pass them as unavailableWeekdays / notes. ' +
+      'RACE: ask for the race DISTANCE (5k, 10k, half, marathon or other with its km), the race DATE and an optional goal time, and pass them as raceDistance, raceDistanceKm (other only), goalDate and targetTimeMinutes (total minutes). ' +
+      'Never work out the distance or time from the free-text goal; if the athlete has not said them, ask. The race always lands on the race date, even a weekday they do not normally train. ' +
+      'The tool applies suggested limits for the distance (peak weekly km, longest run, taper days); read them back and pass maxWeeklyKm, maxLongRunKm or taperDays only when the athlete asks to change them. ' +
       'Pass goalDate as YYYY-MM-DD when the athlete gave a target date or race (resolve "November" etc. against today\'s date, and confirm it); null if none. ' +
       'After it succeeds, summarise briefly (title, dates, number of weeks and sessions). Do NOT list every session; point them to the Plan page.',
     // gotcha #36: nullable+default(null), never bare .optional(); no refinements.
@@ -577,6 +581,24 @@ export function buildCoachTools(
         .nullable()
         .default(null)
         .describe('Other constraints in the athlete\'s words (e.g. "1 leisure session per week", "no hard runs in May"); null = none. Best effort.'),
+      raceDistance: z
+        .enum(RACE_DISTANCES)
+        .nullable()
+        .default(null)
+        .describe('Race distance the athlete chose: 5k, 10k, half, marathon or other; null = no specific race. Never guess it from free text.'),
+      raceDistanceKm: z
+        .number()
+        .nullable()
+        .default(null)
+        .describe('Race length in km, only when raceDistance is "other" (3 to 100); null otherwise.'),
+      targetTimeMinutes: z
+        .number()
+        .nullable()
+        .default(null)
+        .describe('Goal finish time as TOTAL minutes (e.g. 40 for 40:00, 210 for 3:30:00); null = no goal time.'),
+      maxWeeklyKm: z.number().nullable().default(null).describe('Athlete override of the peak weekly km; null = use the suggested value.'),
+      maxLongRunKm: z.number().nullable().default(null).describe('Athlete override of the longest run in km; null = use the suggested value.'),
+      taperDays: z.number().nullable().default(null).describe('Athlete override of the taper length in days; null = use the suggested value.'),
     }),
     execute: async (inputData) => {
       const goal =
@@ -588,12 +610,33 @@ export function buildCoachTools(
       if (goalDate && !isIsoDate(goalDate)) {
         return { created: false, error: 'goalDate must be a real date formatted YYYY-MM-DD. Ask the athlete for the date.' }
       }
+      if (inputData.raceDistance == null && (inputData.raceDistanceKm != null || inputData.targetTimeMinutes != null)) {
+        return { created: false, error: 'Ask the athlete which race distance this is (5k, 10k, half, marathon or other).' }
+      }
+      const race =
+        inputData.raceDistance == null
+          ? null
+          : {
+              distance: inputData.raceDistance,
+              distanceKm: inputData.raceDistanceKm,
+              targetTimeS: inputData.targetTimeMinutes != null ? Math.round(inputData.targetTimeMinutes * 60) : null,
+            }
       const parsedConstraints = parseConstraints({
         unavailableWeekdays: inputData.unavailableWeekdays,
         notes: inputData.notes,
+        race,
+        limits: {
+          maxWeeklyKm: inputData.maxWeeklyKm,
+          maxLongRunKm: inputData.maxLongRunKm,
+          taperDays: inputData.taperDays,
+        },
       })
       if (!parsedConstraints.ok) return { created: false, error: parsedConstraints.error }
       const constraints = parsedConstraints.value
+      if (constraints.race && !goalDate) {
+        return { created: false, error: 'Ask the athlete for the race date (YYYY-MM-DD).' }
+      }
+      const limits = resolveLimits(constraints.race, constraints.limits)
 
       if (!inputData.confirmed) {
         const { data: existing } = await supabase
@@ -607,7 +650,24 @@ export function buildCoachTools(
           created: false,
           needsConfirmation: true,
           willCreate: { goal: goal ?? 'the goal saved on the athlete profile', goalDate: goalDate ?? 'none (general 12-week block)',
-            constraints: hasConstraints(constraints) ? constraints : 'none' },
+            constraints: hasConstraints(constraints) ? constraints : 'none',
+            race: constraints.race
+              ? {
+                  distance: constraints.race.distance,
+                  distanceKm: formatRaceKm(constraints.race.distanceKm),
+                  targetTime: constraints.race.targetTimeS ? formatTargetTime(constraints.race.targetTimeS) : 'none',
+                  raceDate: goalDate,
+                  raceWeekday: goalDate ? WEEKDAY_NAMES[weekdayIndex(goalDate)] : null,
+                  note: 'The race is scheduled on this date even if it is not one of the athlete\'s usual training days.',
+                }
+              : 'none',
+            limits: {
+              maxWeeklyKm: limits.maxWeeklyKm,
+              maxLongRunKm: limits.maxLongRunKm,
+              taperDays: constraints.race ? limits.taperDays : 'not used without a race',
+              suggestedDefaults: limits.defaults,
+              allowedRange: limits.bounds,
+            } },
           replacesActivePlan: existing ? { title: existing.title, endDate: existing.end_date } : null,
           message:
             'Read this back to the athlete and ask them to confirm. Mention that an existing active plan would be archived. Then call again with confirmed=true.',
@@ -626,6 +686,10 @@ export function buildCoachTools(
           sessionCount: r.sessionCount,
           replacedPreviousPlan: r.archivedPlanIds.length > 0,
           adjustments: r.adjustments,
+          race: r.race
+            ? { distanceKm: formatRaceKm(r.race.distanceKm), targetTime: r.race.targetTimeS ? formatTargetTime(r.race.targetTimeS) : 'none', date: r.endDate }
+            : null,
+          limits: { maxWeeklyKm: r.limits.maxWeeklyKm, maxLongRunKm: r.limits.maxLongRunKm, taperDays: r.race ? r.limits.taperDays : null },
           basedOn: {
             weeksUsed: r.recap.qualifyingWeeks,
             weeksAnalysed: r.recap.weeks.length,

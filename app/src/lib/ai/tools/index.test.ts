@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { buildCoachTools } from './index'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
 
 /**
  * Wiring guard: buildCoachTools must expose all expected typed tools, each with
@@ -169,7 +170,21 @@ describe('buildCoachTools', () => {
       data?: { confirmed: unknown; goal: unknown; goalDate: unknown }
     }
     expect(r.success).toBe(true)
-    expect(r.data).toEqual({ confirmed: false, goal: null, goalDate: null, unavailableWeekdays: null, notes: null })
+    expect(r.data).toEqual({
+      confirmed: false,
+      goal: null,
+      goalDate: null,
+      unavailableWeekdays: null,
+      notes: null,
+      raceDistance: null,
+      raceDistanceKm: null,
+      targetTimeMinutes: null,
+      maxWeeklyKm: null,
+      maxLongRunKm: null,
+      taperDays: null,
+    })
+    expect(schema.safeParse!({ raceDistance: '10k', targetTimeMinutes: 40 }).success).toBe(true)
+    expect(schema.safeParse!({ raceDistance: '7k' }).success).toBe(false)
     // A non-ISO date must not reject the call at the schema; execute() handles it.
     expect(schema.safeParse!({ confirmed: true, goal: 'marathon', goalDate: 'November' }).success).toBe(true)
   })
@@ -192,6 +207,34 @@ describe('buildCoachTools', () => {
     const r = await tools.generatePlan.execute({ confirmed: true, goal: null, goalDate: null, unavailableWeekdays: ['funday'], notes: null })
     expect(r.created).toBe(false)
     expect(r.error).toMatch(/weekday/i)
+  })
+
+  describe('generatePlan race inputs', () => {
+    type Exec = (input: unknown) => Promise<Record<string, unknown> & { created: boolean; error?: string }>
+    const run = async (input: Record<string, unknown>) => {
+      const fake = makeFakeSupabase({ tables: { training_plans: [] } })
+      const tools = buildCoachTools(fake.client, 'user-1') as unknown as Record<string, { execute: Exec }>
+      return tools.generatePlan.execute({
+        confirmed: false, goal: null, goalDate: null, unavailableWeekdays: null, notes: null,
+        raceDistance: null, raceDistanceKm: null, targetTimeMinutes: null, maxWeeklyKm: null, maxLongRunKm: null, taperDays: null,
+        ...input,
+      })
+    }
+
+    it('previews the race, its weekday and the effective limits', async () => {
+      const r = await run({ raceDistance: '10k', targetTimeMinutes: 40, goalDate: '2026-12-06', maxLongRunKm: 500 })
+      expect(r.needsConfirmation).toBe(true)
+      const w = r.willCreate as { race: Record<string, unknown>; limits: Record<string, unknown> }
+      expect(w.race).toMatchObject({ distanceKm: '10', targetTime: '40:00', raceDate: '2026-12-06', raceWeekday: 'sunday' })
+      expect(w.limits).toMatchObject({ maxWeeklyKm: 55, maxLongRunKm: 23, taperDays: 8 })
+    })
+
+    it('asks for the distance, the date and a valid other-distance instead of guessing', async () => {
+      expect((await run({ targetTimeMinutes: 40 })).error).toMatch(/race distance/i)
+      expect((await run({ raceDistance: '10k' })).error).toMatch(/race date/i)
+      expect((await run({ raceDistance: 'other', goalDate: '2026-12-06' })).error).toMatch(/km/)
+      expect((await run({ raceDistance: '10k', goalDate: '2026-12-06', targetTimeMinutes: 5 })).error).toMatch(/realistic/)
+    })
   })
 
   it('adjustUpcomingSessions schema accepts non-UUID ids and omitted optional fields (gotcha #36)', () => {
