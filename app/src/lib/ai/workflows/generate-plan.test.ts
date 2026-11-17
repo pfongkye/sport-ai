@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
 import { makeSkeleton, planWithWeeklyKm, validPlanFor } from './plan-fixtures'
 import { buildSkeleton } from './plan-skeleton'
+import { NO_CONSTRAINTS } from '@/lib/plan/constraints'
 
 // No network, no paid API: mock the AI SDK call and the provider/readiness layers.
 const generateObjectMock = vi.fn()
@@ -326,7 +327,7 @@ describe('athlete constraints in the workflow', () => {
     ),
   }
   // Wednesday is unavailable: training days become monday, friday, saturday.
-  const constraints = { unavailableWeekdays: ['wednesday'], notes: '1 leisure session per week' }
+  const constraints = { ...NO_CONSTRAINTS, unavailableWeekdays: ['wednesday'], notes: '1 leisure session per week' }
   const constrainedSkeleton = () =>
     buildSkeleton({ today: '2026-10-12', goalDate: GOAL_DATE, trainingDays: ['monday', 'friday', 'saturday'], baselineWeeklyKm: 30 })
 
@@ -363,7 +364,7 @@ describe('athlete constraints in the workflow', () => {
 
   it('fails with CONSTRAINTS_INVALID, before calling the model, when no training day is left', async () => {
     const { client, tables } = seed()
-    const all = { unavailableWeekdays: ['monday', 'wednesday', 'friday', 'saturday'], notes: null }
+    const all = { ...NO_CONSTRAINTS, unavailableWeekdays: ['monday', 'wednesday', 'friday', 'saturday'] }
     await expect(
       generateTrainingPlan(client, USER, { goalDate: GOAL_DATE, now: NOW, constraints: all })
     ).rejects.toMatchObject({ code: 'CONSTRAINTS_INVALID' })
