@@ -288,6 +288,7 @@ export type _Database = {
           audio_url: string | null
           metadata: Json | null
           embedding: string | null
+          session_id: string | null
           created_at: string
         }
         Insert: {
@@ -298,12 +299,62 @@ export type _Database = {
           audio_url?: string | null
           metadata?: Json | null
           embedding?: string | null
+          session_id?: string | null
           created_at?: string
         }
         Update: {
           content?: string
           metadata?: Json | null
           embedding?: string | null
+        }
+      }
+      coach_sessions: {
+        Row: {
+          id: string
+          user_id: string
+          title: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          title?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          title?: string
+          updated_at?: string
+        }
+      }
+      coach_memories: {
+        Row: {
+          id: string
+          user_id: string
+          title: string
+          summary: string
+          message_count: number | null
+          source_started_at: string | null
+          source_ended_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          title?: string
+          summary: string
+          message_count?: number | null
+          source_started_at?: string | null
+          source_ended_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          title?: string
+          summary?: string
+          updated_at?: string
         }
       }
       nutrition_logs: {
