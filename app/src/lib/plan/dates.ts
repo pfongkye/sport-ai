@@ -67,3 +67,45 @@ export const WEEKDAY_NAMES = [
   'saturday',
   'sunday',
 ] as const
+
+/** Offset (ms) of `tz` from UTC at `instant`: local wall clock minus UTC. */
+function tzOffsetMs(instant: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(instant))
+  const g = (t: string) => Number(parts.find((p) => p.type === t)?.value)
+  const asUtc = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second'))
+  return asUtc - Math.floor(instant / 1000) * 1000
+}
+
+function localMidnightMs(date: string, tz: string): number {
+  const guess = new Date(`${date}T00:00:00Z`).getTime()
+  const first = guess - tzOffsetMs(guess, tz)
+  const second = guess - tzOffsetMs(first, tz)
+  return second
+}
+
+/**
+ * `[startSec, endSec)` in epoch seconds of the athlete's local calendar day
+ * `date` in `tz`. DST-safe: a 23 or 25 hour day yields the real span. An
+ * invalid `tz` falls back to UTC.
+ */
+export function dayBoundsEpoch(date: string, tz: string | null | undefined): [number, number] {
+  let zone = tz || 'UTC'
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: zone })
+  } catch {
+    zone = 'UTC'
+  }
+  return [
+    Math.floor(localMidnightMs(date, zone) / 1000),
+    Math.floor(localMidnightMs(addDays(date, 1), zone) / 1000),
+  ]
+}

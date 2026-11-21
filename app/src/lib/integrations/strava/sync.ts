@@ -112,7 +112,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export async function importStravaActivities(
   admin: SupabaseClient<Database>,
   userId: string,
-  opts: { activityIds?: number[]; limit?: number; withStreams?: boolean } = {}
+  opts: {
+    activityIds?: number[]
+    limit?: number
+    withStreams?: boolean
+    /** Only activities started after / before these epoch seconds (list mode). */
+    after?: number
+    before?: number
+  } = {}
 ): Promise<ImportResult> {
   const withStreams = opts.withStreams ?? true
   const accessToken = await getValidAccessToken(admin, userId)
@@ -149,7 +156,12 @@ export async function importStravaActivities(
     }
   } else {
     const limit = Math.min(opts.limit ?? 10, MAX_IMPORT_BATCH)
-    targets = await listActivities(accessToken, { perPage: limit, page: 1 })
+    targets = await listActivities(accessToken, {
+      perPage: limit,
+      page: 1,
+      after: opts.after,
+      before: opts.before,
+    })
     targets = targets.slice(0, limit)
   }
 

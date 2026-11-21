@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, TrainingPlan } from '@/types/database'
 import { getAthleteTimezone } from './session-guard'
-import { localDateInTz } from './dates'
+import { addDays, localDateInTz, mondayOf } from './dates'
+import { bucketActivities, type PlanActivity, type RawActivity } from './day-items'
 import { asConstraints, type PlanConstraints } from './constraints'
 import { asRecap, type TrainingRecap } from '@/lib/ai/workflows/training-recap'
 
@@ -27,10 +28,15 @@ export interface ActivePlan {
     constraints: PlanConstraints
   }
   sessions: PlanSessionRow[]
+  /** Logged activities in the plan weeks not linked to a session, with their athlete-local date. */
+  activities: PlanActivity[]
   /** Today's date in the athlete's timezone. */
   today: string
   timezone: string
 }
+
+export const ACTIVITY_COLUMNS =
+  'id, sport_type, started_at, duration_s, distance_m, avg_pace_s_per_km, avg_hr_bpm, source'
 
 const SESSION_COLUMNS =
   'id, scheduled_date, sport_type, session_type, description, target_distance_m, target_duration_s, target_hr_zone, status, completed_activity_id, ai_notes'
@@ -65,9 +71,29 @@ export async function loadActivePlan(
   if (sErr) throw new Error(`Failed to load plan sessions: ${sErr.message}`)
 
   const timezone = await getAthleteTimezone(supabase, userId, cookieTz)
+  const rows = (sessions ?? []) as PlanSessionRow[]
+
+  // Whole plan weeks (Monday-first, as the calendar shows them), padded by a day
+  // each side so activities near local midnight are bucketed by local date below.
+  const first = rows.length ? [plan.start_date, rows[0].scheduled_date].sort()[0] : plan.start_date
+  const last = rows.length ? [plan.end_date, rows[rows.length - 1].scheduled_date].sort().slice(-1)[0] : plan.end_date
+  const from = mondayOf(first)
+  const to = addDays(mondayOf(last), 6)
+  const { data: acts, error: aErr } = await supabase
+    .from('activities')
+    .select(ACTIVITY_COLUMNS)
+    .eq('user_id', userId)
+    .gte('started_at', `${addDays(from, -1)}T00:00:00Z`)
+    .lte('started_at', `${addDays(to, 2)}T00:00:00Z`)
+    .order('started_at', { ascending: false })
+    .limit(1000)
+  if (aErr) throw new Error(`Failed to load activities: ${aErr.message}`)
+  const linked = rows.map((s) => s.completed_activity_id).filter((id): id is string => !!id)
+
   return {
     plan: { ...plan, recap: asRecap(plan.recap), constraints: asConstraints(plan.constraints) },
-    sessions: (sessions ?? []) as PlanSessionRow[],
+    sessions: rows,
+    activities: bucketActivities((acts ?? []) as RawActivity[], timezone, linked, { from, to }),
     today: localDateInTz(now, timezone),
     timezone,
   }
