@@ -11,12 +11,7 @@ import {
 } from '@/lib/integrations/strava/client'
 
 export type StravaSyncStatus =
-  | 'synced'
-  | 'not_connected'
-  | 'rate_limited'
-  | 'athlete_limit'
-  | 'unauthorized'
-  | 'error'
+  'synced' | 'not_connected' | 'rate_limited' | 'athlete_limit' | 'unauthorized' | 'error'
 
 export type SyncDayResult =
   | { ok: true; date: string; strava: StravaSyncStatus; imported: number }
@@ -52,7 +47,7 @@ export async function syncPlanDay(
         after: startSec - 1,
         before: endSec,
         limit: 10,
-              })
+      })
       imported = res.imported
       strava = res.rateLimited ? 'rate_limited' : 'synced'
     } catch (err) {
