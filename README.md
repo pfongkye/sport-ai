@@ -881,6 +881,10 @@ The Plan page form takes structured inputs, so nothing is parsed out of free tex
 
 These are rules of thumb pending coach review. Tune them in `DISTANCE_PROFILES` in `app/src/lib/plan/race-goal.ts`.
 
+## Completed activities on the plan calendar
+
+Activities you logged that are not linked to a planned session show on their day as a green "Completed" card with distance, time and a link to the activity, above that day's planned sessions. Each day up to today has a Sync button that imports that day's Strava activities (when Strava is connected). The cards are read-only; no database change is involved.
+
 ## End-to-end / screenshot tests (Playwright)
 
 Purpose: catch layout bugs (horizontal overflow, displaced bottom nav) that otherwise only show on a real phone.

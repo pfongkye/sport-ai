@@ -24,6 +24,20 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 70. Calendar shows unlinked activities as read-only "Completed" cards; per-day Sync; AI matching is a later seam
+Symptom: a run done on a day with no planned session (or a different one) never appeared on the plan calendar.
+Decision: activities not referenced by any `planned_sessions.completed_activity_id` are loaded by `loadActivePlan` (`activities` field, bucketed by the
+athlete-local date, gotcha #51) and drawn as `ActivityCard` (green, "Completed", metrics, link to `/activities/{id}`). No migration, no new column, no
+duplicate row: a linked activity is shown only through its session card. `orderDayItems` (`lib/plan/day-items.ts`) puts completed cards BEFORE planned
+sessions in a day. Cards are read-only (no move or delete); deleting a planned session leaves the card alone.
+Sync: `POST /api/plan/days/[date]/sync` (`lib/plan/sync-day.ts`) imports that local day's Strava activities (duplicates skipped) and returns
+`{ date, strava, imported, activities }`. Strava problems (not connected, rate limit, expired token) are a `strava` status with HTTP 200, never a failure,
+so saved activities still show. 400 for an invalid or future date. The Sync button exists on days up to today only.
+AI-matching seam: a later matcher should set `completed_activity_id` and `status = 'completed'` with the conditional update in `lib/plan/link-activity.ts`;
+the card disappears on the next load once linked.
+e2e: Strava runs server-side, so the browser cannot mock it. `calendar-completed.spec.ts` uses the real not-connected path (stub `strava_connections` is
+empty) and `POST /__e2e/reveal-activities` on the stub to make a hidden fixture activity appear (`planActivities` in `fixtures.mjs`).
+
 ### 54. Race goal: the race date is always a slot, code owns the race session, limits come from the distance
 Symptom: a 10 km plan had marathon-sized long runs, no session on a race that fell on a non-training weekday (e.g. Sunday), and a day-before run.
 Cause: the skeleton only knew weekday slots and general caps (110 km/week, 32 km long run), and the model could copy the athlete's history.
