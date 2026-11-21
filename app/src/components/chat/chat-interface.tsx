@@ -6,6 +6,9 @@ import remarkGfm from 'remark-gfm'
 import { http } from '@/lib/http'
 import { cn } from '@/lib/utils'
 import { VoiceRecorder } from './voice-recorder'
+import { SessionBar } from './session-bar'
+import { SessionList, type ChatSession } from './session-list'
+import { KeptNotes, type CoachMemory } from './kept-notes'
 
 interface Msg {
   id: string
@@ -43,21 +46,166 @@ export function ChatInterface() {
     autosize()
   }, [input, autosize])
 
-  // Load prior conversation
-  useEffect(() => {
-    http('/api/ai/chat/history?limit=50')
-      .then((r) => (r.ok ? r.json() : { messages: [] }))
-      .then((d) => {
-        setMessages(d.messages ?? [])
-        // Jump to the latest message instantly on first load.
-        requestAnimationFrame(() => {
-          const el = scrollRef.current
-          if (el) el.scrollTop = el.scrollHeight
-        })
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [memories, setMemories] = useState<CoachMemory[]>([])
+  const [status, setStatus] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadSeq = useRef(0)
+
+  const loadHistory = useCallback(async (id: string) => {
+    const seq = ++loadSeq.current
+    setLoadingHistory(true)
+    setMessages([])
+    try {
+      const r = await http(`/api/ai/chat/history?limit=50&sessionId=${encodeURIComponent(id)}`)
+      const d = r.ok ? await r.json() : { messages: [] }
+      if (seq !== loadSeq.current) return
+      setMessages(d.messages ?? [])
+      // Jump to the latest message instantly.
+      requestAnimationFrame(() => {
+        const el = scrollRef.current
+        if (el) el.scrollTop = el.scrollHeight
       })
-      .catch(() => setMessages([]))
-      .finally(() => setLoadingHistory(false))
+    } catch {
+      if (seq === loadSeq.current) setMessages([])
+    } finally {
+      if (seq === loadSeq.current) setLoadingHistory(false)
+    }
   }, [])
+
+  const createSession = useCallback(async (): Promise<ChatSession | null> => {
+    try {
+      const r = await http('/api/ai/chat/sessions', { method: 'POST' })
+      if (!r.ok) return null
+      return (await r.json()).session as ChatSession
+    } catch {
+      return null
+    }
+  }, [])
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const r = await http('/api/ai/chat/sessions')
+      if (r.ok) setSessions((await r.json()).sessions ?? [])
+    } catch {
+      // keep the current list
+    }
+  }, [])
+
+  // Load chats on mount; start one if the athlete has none. Then load the active chat.
+  useEffect(() => {
+    let cancelled = false
+    async function init() {
+      let list: ChatSession[] = []
+      try {
+        const r = await http('/api/ai/chat/sessions')
+        if (r.ok) list = (await r.json()).sessions ?? []
+      } catch {
+        // fall through to creating one
+      }
+      if (list.length === 0) {
+        const created = await createSession()
+        if (created) list = [created]
+      }
+      if (cancelled) return
+      setSessions(list)
+      if (list[0]) {
+        setSessionId(list[0].id)
+        void loadHistory(list[0].id)
+      } else {
+        setLoadError('Could not load your chats. Reload the page to try again.')
+        setLoadingHistory(false)
+      }
+    }
+    void init()
+    return () => {
+      cancelled = true
+    }
+  }, [createSession, loadHistory])
+
+  // Kept notes load when the panel is first opened.
+  const memoriesLoaded = useRef(false)
+  useEffect(() => {
+    if (!panelOpen || memoriesLoaded.current) return
+    memoriesLoaded.current = true
+    http('/api/ai/chat/memories')
+      .then((r) => (r.ok ? r.json() : { memories: [] }))
+      .then((d) => setMemories(d.memories ?? []))
+      .catch(() => {
+        memoriesLoaded.current = false
+      })
+  }, [panelOpen])
+
+  function selectSession(id: string) {
+    if (streaming || id === sessionId) {
+      setPanelOpen(false)
+      return
+    }
+    setSessionId(id)
+    setPanelOpen(false)
+    void loadHistory(id)
+    setStatus('Chat opened.')
+  }
+
+  async function newChat() {
+    if (streaming) return
+    const created = await createSession()
+    if (!created) {
+      setStatus('Could not start a new chat.')
+      return
+    }
+    setSessions((prev) => [created, ...prev])
+    setSessionId(created.id)
+    loadSeq.current++
+    setMessages([])
+    setLoadingHistory(false)
+    setPanelOpen(false)
+    setStatus('New chat started.')
+  }
+
+  /** Resolves to an error message, or null on success. */
+  async function deleteSession(id: string, keepSummary: boolean): Promise<string | null> {
+    setStatus(keepSummary ? 'Summarizing the chat…' : 'Deleting the chat…')
+    try {
+      const r = await http(`/api/ai/chat/sessions/${id}?keepHistory=${keepSummary}`, { method: 'DELETE' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const msg = d.error ?? 'Could not delete the chat.'
+        setStatus(keepSummary ? `Could not keep a summary. The chat was not deleted. ${msg}` : msg)
+        return keepSummary
+          ? `${msg} The chat was not deleted. You can try again or choose Delete everything.`
+          : msg
+      }
+      const remaining = sessions.filter((s) => s.id !== id)
+      setSessions(remaining)
+      if (d.memory) setMemories((prev) => [d.memory as CoachMemory, ...prev])
+      setStatus(keepSummary ? 'Chat deleted. A summary was added to Kept notes.' : 'Chat deleted.')
+      if (id === sessionId) {
+        if (remaining[0]) {
+          setSessionId(remaining[0].id)
+          void loadHistory(remaining[0].id)
+        } else {
+          const created = await createSession()
+          if (created) {
+            setSessions([created])
+            setSessionId(created.id)
+            loadSeq.current++
+            setMessages([])
+            setLoadingHistory(false)
+          } else {
+            setSessionId(null)
+            setLoadError('Could not start a new chat. Reload the page to try again.')
+          }
+        }
+      }
+      return null
+    } catch {
+      setStatus('Could not delete the chat.')
+      return 'Could not delete the chat.'
+    }
+  }
 
   // Restore read-aloud preference
   useEffect(() => {
@@ -116,7 +264,7 @@ export function ChatInterface() {
 
   async function send(text: string) {
     const trimmed = text.trim()
-    if (!trimmed || streaming) return
+    if (!trimmed || streaming || !sessionId) return
 
     // Stop any in-progress read-aloud when the user sends a new message.
     if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
@@ -136,6 +284,7 @@ export function ChatInterface() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
         }),
       })
@@ -179,6 +328,7 @@ export function ChatInterface() {
       )
     } finally {
       setStreaming(false)
+      void refreshSessions()
     }
   }
 
@@ -186,6 +336,43 @@ export function ChatInterface() {
 
   return (
     <div className="flex flex-col h-full">
+      <SessionBar
+        title={sessions.find((x) => x.id === sessionId)?.title ?? 'New chat'}
+        open={panelOpen}
+        busy={streaming}
+        canCreate={messages.length > 0}
+        onToggle={() => setPanelOpen((o) => !o)}
+        onNew={() => void newChat()}
+      />
+      <div role="status" aria-live="polite" className="sr-only">
+        {status}
+      </div>
+      {panelOpen && (
+        <div
+          id="chat-sessions-panel"
+          className="shrink-0 max-h-[55%] overflow-y-auto border-b border-[var(--border)] bg-[var(--card)] px-4 md:px-6 py-3"
+        >
+          <div className="max-w-2xl mx-auto space-y-5">
+            <section aria-label="Chats" className="space-y-2">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">Chats</h2>
+              <SessionList
+                sessions={sessions}
+                activeId={sessionId}
+                busy={streaming}
+                onSelect={selectSession}
+                onDelete={deleteSession}
+              />
+            </section>
+            <KeptNotes
+              memories={memories}
+              onChange={(next, message) => {
+                setMemories(next)
+                setStatus(message)
+              }}
+            />
+          </div>
+        </div>
+      )}
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
         <div className="max-w-2xl mx-auto space-y-4">
@@ -193,7 +380,13 @@ export function ChatInterface() {
             <p className="text-center text-sm text-[var(--muted-foreground)]">Loading…</p>
           )}
 
-          {isEmpty && (
+          {loadError && (
+            <p role="alert" className="text-center text-sm text-[var(--destructive)]">
+              {loadError}
+            </p>
+          )}
+
+          {isEmpty && !loadError && (
             <div className="text-center py-10 space-y-4">
               <p className="text-4xl" aria-hidden>
                 🤖
@@ -308,7 +501,7 @@ export function ChatInterface() {
           </button>
           <button
             type="submit"
-            disabled={streaming || !input.trim()}
+            disabled={streaming || !sessionId || !input.trim()}
             className="shrink-0 flex items-center justify-center size-10 rounded-xl bg-[var(--primary)] text-white disabled:opacity-40 transition-opacity"
             aria-label="Send"
           >
