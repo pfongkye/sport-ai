@@ -5,6 +5,14 @@ import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { computeReadiness } from '@/lib/ai/readiness'
 import { retrieveRelevantContext, embedForStorage } from '@/lib/ai/memory'
+import {
+  createChatSession,
+  DEFAULT_SESSION_TITLE,
+  getNewestChatSession,
+  getOwnedChatSession,
+  titleFromMessage,
+} from '@/lib/ai/chat-sessions/sessions'
+import { formatCoachMemories, listCoachMemories } from '@/lib/ai/chat-sessions/memories'
 
 export const runtime = 'nodejs' // Mastra + MCP need Node APIs
 export const maxDuration = 60
@@ -40,7 +48,7 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser()
   if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
 
-  let body: { messages?: ChatMessage[] }
+  let body: { messages?: ChatMessage[]; sessionId?: string }
   try {
     body = await request.json()
   } catch {
@@ -55,6 +63,19 @@ export async function POST(request: Request) {
   if (!lastUser) {
     return new Response(JSON.stringify({ error: 'No user message' }), { status: 400 })
   }
+
+  // Resolve the chat session: explicit id (must be owned), else newest, else create.
+  let session
+  if (typeof body.sessionId === 'string' && body.sessionId) {
+    session = await getOwnedChatSession(supabase, user.id, body.sessionId)
+    if (!session) return new Response(JSON.stringify({ error: 'Chat not found.' }), { status: 404 })
+  } else {
+    session = (await getNewestChatSession(supabase, user.id)) ?? (await createChatSession(supabase, user.id))
+    if (!session) {
+      return new Response(JSON.stringify({ error: 'Could not create the chat.' }), { status: 500 })
+    }
+  }
+  const sessionId = session.id
 
   // Safety net: only send the most recent window to the LLM. Always keep the
   // final message (the current user turn). Real long-term memory comes from RAG
@@ -113,21 +134,43 @@ export async function POST(request: Request) {
     role: 'user',
     content: lastUser.content,
     metadata: { kind: 'chat' },
+    session_id: sessionId,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     embedding: userEmbedding as any,
   })
 
+  // Title from the first user message; always bump updated_at so the list sorts by activity.
+  await supabase
+    .from('coach_sessions')
+    .update({
+      updated_at: new Date().toISOString(),
+      ...(session.title === DEFAULT_SESSION_TITLE ? { title: titleFromMessage(lastUser.content) } : {}),
+    })
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+
+  // Kept summaries from deleted chats (best-effort, never fails the chat).
+  let memoriesText = ''
+  try {
+    memoriesText = formatCoachMemories(await listCoachMemories(supabase, user.id, 5))
+  } catch (err) {
+    console.error('[ai/chat] could not load coach memories', err)
+  }
+
   // Prepend retrieved memory as a system message so the agent can recall
   // things from outside the recent window.
-  const llmMessages: ModelMessage[] = retrievedContext
-    ? [
-        {
-          role: 'system',
-          content: `Relevant context from this athlete's past conversations and session notes (use if helpful, don't force it):\n${retrievedContext}`,
-        },
-        ...messages.map((m) => ({ role: m.role, content: m.content }) as ModelMessage),
-      ]
-    : (messages.map((m) => ({ role: m.role, content: m.content })) as ModelMessage[])
+  const systemMessages: ModelMessage[] = []
+  if (memoriesText) systemMessages.push({ role: 'system', content: memoriesText })
+  if (retrievedContext) {
+    systemMessages.push({
+      role: 'system',
+      content: `Relevant context from this athlete's past conversations and session notes (use if helpful, don't force it):\n${retrievedContext}`,
+    })
+  }
+  const llmMessages: ModelMessage[] = [
+    ...systemMessages,
+    ...(messages.map((m) => ({ role: m.role, content: m.content })) as ModelMessage[]),
+  ]
 
   // Stream the agent reply via Mastra 1.x standard agent.stream() (v5 models).
   let result
@@ -165,6 +208,7 @@ export async function POST(request: Request) {
             role: 'assistant',
             content: full,
             metadata: { kind: 'chat' },
+            session_id: sessionId,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             embedding: assistantEmbedding as any,
           })

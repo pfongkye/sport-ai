@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getNewestChatSession, getOwnedChatSession } from '@/lib/ai/chat-sessions/sessions'
 
 /**
- * GET /api/ai/chat/history?limit=50
+ * GET /api/ai/chat/history?limit=50&sessionId=<uuid>
+ * No sessionId = newest session; no sessions = empty list; foreign/unknown id = 404.
  * Returns recent coaching messages (oldest→newest) for the current user.
  */
 export async function GET(request: Request) {
@@ -15,6 +17,13 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const limit = Math.min(Number(searchParams.get('limit') ?? 50), 200)
 
+  const sessionId = searchParams.get('sessionId')
+  const session = sessionId
+    ? await getOwnedChatSession(supabase, user.id, sessionId)
+    : await getNewestChatSession(supabase, user.id)
+  if (sessionId && !session) return NextResponse.json({ error: 'Chat not found.' }, { status: 404 })
+  if (!session) return NextResponse.json({ messages: [], sessionId: null })
+
   // Chat history shows ONLY chat-kind messages. Other kinds live in the same
   // coaching_messages table for RAG (post_session_insight, session_voice_note,
   // future nutrition_insight, ...) and must NOT surface in the chat feed.
@@ -26,6 +35,7 @@ export async function GET(request: Request) {
     .from('coaching_messages')
     .select('id, role, content, metadata, created_at')
     .eq('user_id', user.id)
+    .eq('session_id', session.id)
     .in('role', ['user', 'assistant'])
     .eq('metadata->>kind', 'chat')
     .order('created_at', { ascending: false })
@@ -35,5 +45,5 @@ export async function GET(request: Request) {
 
   // Return chronological order for display
   const messages = (data ?? []).reverse()
-  return NextResponse.json({ messages })
+  return NextResponse.json({ messages, sessionId: session.id })
 }
