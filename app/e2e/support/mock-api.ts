@@ -12,9 +12,20 @@ export async function mockBrowserApis(page: Page) {
   await page.route(/tile\.openstreetmap\.org/, (r) =>
     r.fulfill({ status: 200, contentType: 'image/png', body: PNG })
   )
+  await page.route('**/api/ai/chat/sessions', (r) =>
+    r.fulfill({
+      json: {
+        sessions: [
+          { id: 's1', title: 'Weekly check-in', created_at: '2025-06-20T08:00:00Z', updated_at: '2025-06-20T08:00:05Z' },
+        ],
+      },
+    })
+  )
+  await page.route('**/api/ai/chat/memories', (r) => r.fulfill({ json: { memories: [] } }))
   await page.route('**/api/ai/chat/history*', (r) =>
     r.fulfill({
       json: {
+        sessionId: 's1',
         messages: [
           { id: 'm1', role: 'user', content: 'How was my week?', created_at: '2025-06-20T08:00:00Z' },
           {
