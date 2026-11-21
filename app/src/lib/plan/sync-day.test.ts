@@ -35,11 +35,10 @@ describe('syncPlanDay', () => {
     expect(connMock).not.toHaveBeenCalled()
   })
 
-  it('not connected: returns saved activities and skips import', async () => {
+  it('not connected: skips import', async () => {
     connMock.mockResolvedValue(null)
     const r = await syncPlanDay(db(), db(), 'u1', '2026-10-12', 'UTC', NOW)
     expect(r).toMatchObject({ ok: true, strava: 'not_connected', imported: 0 })
-    expect(r.ok && r.activities.map((a) => a.id)).toEqual(['a1'])
     expect(importMock).not.toHaveBeenCalled()
   })
 
@@ -52,10 +51,10 @@ describe('syncPlanDay', () => {
     expect(first).toMatchObject({ ok: true, strava: 'synced', imported: 1 })
     expect(second).toMatchObject({ ok: true, strava: 'synced', imported: 0 })
     const opts = importMock.mock.calls[0][2]
-    expect(opts).toMatchObject({ limit: 10, withStreams: false, after: Date.UTC(2026, 9, 12) / 1000 - 1, before: Date.UTC(2026, 9, 13) / 1000 })
+    expect(opts).toMatchObject({ limit: 10, after: Date.UTC(2026, 9, 12) / 1000 - 1, before: Date.UTC(2026, 9, 13) / 1000 })
   })
 
-  it('maps Strava failures to a status and still returns activities', async () => {
+  it('maps Strava failures to a status', async () => {
     connMock.mockResolvedValue({ user_id: 'u1' })
     importMock.mockRejectedValueOnce(new Error('STRAVA_RATE_LIMITED'))
     importMock.mockRejectedValueOnce(new Error('STRAVA_ATHLETE_LIMIT'))
@@ -64,7 +63,6 @@ describe('syncPlanDay', () => {
     const out = []
     for (let i = 0; i < 4; i++) out.push(await syncPlanDay(db(), db(), 'u1', '2026-10-12', 'UTC', NOW))
     expect(out.map((r) => r.ok && r.strava)).toEqual(['rate_limited', 'athlete_limit', 'unauthorized', 'error'])
-    expect(out.every((r) => r.ok && r.activities.length === 1)).toBe(true)
   })
 
   it('reports rate limiting flagged by a partial import', async () => {
@@ -74,10 +72,8 @@ describe('syncPlanDay', () => {
     expect(r).toMatchObject({ strava: 'rate_limited', imported: 1 })
   })
 
-  it('allows today and excludes linked activities', async () => {
+  it('allows today', async () => {
     connMock.mockResolvedValue(null)
-    const r = await syncPlanDay(db(), db(), 'u1', '2026-10-13', 'UTC', NOW)
-    expect(r.ok && r.activities).toEqual([])
     expect((await syncPlanDay(db(), db(), 'u1', '2026-10-14', 'UTC', NOW)).ok).toBe(true)
   })
 })

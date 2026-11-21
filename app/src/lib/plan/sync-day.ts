@@ -1,8 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { dayBoundsEpoch, isIsoDate, localDateInTz } from './dates'
-import { bucketActivities, type PlanActivity, type RawActivity } from './day-items'
-import { ACTIVITY_COLUMNS } from './load-plan'
 import { getConnection } from '@/lib/integrations/strava/tokens'
 import { importStravaActivities } from '@/lib/integrations/strava/sync'
 import { STRAVA_NOT_CONNECTED } from '@/lib/integrations/strava/errors'
@@ -21,13 +19,14 @@ export type StravaSyncStatus =
   | 'error'
 
 export type SyncDayResult =
-  | { ok: true; date: string; strava: StravaSyncStatus; imported: number; activities: PlanActivity[] }
+  | { ok: true; date: string; strava: StravaSyncStatus; imported: number }
   | { ok: false; status: 400; error: string }
 
 /**
  * Per-day "Sync" on the plan calendar. Imports that athlete-local day's Strava
  * activities when Strava is connected (idempotent: dedup by external_id), then
- * returns the day's saved activities. Strava problems never fail the call; they
+ * returns the outcome; the UI refreshes the page to show saved activities.
+ * Streams are fetched (limit 10), since later imports skip existing activities. Strava problems never fail the call; they
  * come back as a `strava` status so the UI can say what happened.
  */
 export async function syncPlanDay(
@@ -53,8 +52,7 @@ export async function syncPlanDay(
         after: startSec - 1,
         before: endSec,
         limit: 10,
-        withStreams: false,
-      })
+              })
       imported = res.imported
       strava = res.rateLimited ? 'rate_limited' : 'synced'
     } catch (err) {
@@ -72,28 +70,5 @@ export async function syncPlanDay(
     }
   }
 
-  const [startSec, endSec] = dayBoundsEpoch(date, tz)
-  const { data: acts } = await supabase
-    .from('activities')
-    .select(ACTIVITY_COLUMNS)
-    .eq('user_id', userId)
-    .gte('started_at', new Date(startSec * 1000).toISOString())
-    .lte('started_at', new Date(endSec * 1000).toISOString())
-    .order('started_at', { ascending: true })
-    .limit(100)
-  const { data: linkedRows } = await supabase
-    .from('planned_sessions')
-    .select('completed_activity_id')
-    .eq('user_id', userId)
-  const linked = ((linkedRows ?? []) as { completed_activity_id: string | null }[])
-    .map((r) => r.completed_activity_id)
-    .filter((id): id is string => !!id)
-
-  return {
-    ok: true,
-    date,
-    strava,
-    imported,
-    activities: bucketActivities((acts ?? []) as RawActivity[], tz, linked, { from: date, to: date }),
-  }
+  return { ok: true, date, strava, imported }
 }

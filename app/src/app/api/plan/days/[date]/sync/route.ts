@@ -10,7 +10,7 @@ export const maxDuration = 60
 /**
  * POST /api/plan/days/[date]/sync
  * Imports the athlete-local day's Strava activities (when connected; duplicates
- * skipped) and returns { date, strava, imported, activities }. 400 for an
+ * skipped) and returns { date, strava, imported }. 400 for an
  * invalid or future date. Strava errors are reported in `strava`, never as a failure.
  */
 export async function POST(

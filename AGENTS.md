@@ -31,8 +31,10 @@ athlete-local date, gotcha #51) and drawn as `ActivityCard` (green, "Completed",
 duplicate row: a linked activity is shown only through its session card. `orderDayItems` (`lib/plan/day-items.ts`) puts completed cards BEFORE planned
 sessions in a day. Cards are read-only (no move or delete); deleting a planned session leaves the card alone.
 Sync: `POST /api/plan/days/[date]/sync` (`lib/plan/sync-day.ts`) imports that local day's Strava activities (duplicates skipped) and returns
-`{ date, strava, imported, activities }`. Strava problems (not connected, rate limit, expired token) are a `strava` status with HTTP 200, never a failure,
+`{ date, strava, imported }` (the UI then `router.refresh()`es; streams are fetched, limit 10). Strava problems (not connected, rate limit, expired token) are a `strava` status with HTTP 200, never a failure,
 so saved activities still show. 400 for an invalid or future date. The Sync button exists on days up to today only.
+Auto-link: the importer already calls `linkActivityToPlannedSession` on insert, so a freshly synced activity may link itself to a matching planned session and show
+through that session instead of as a green card. Existing behavior, not changed here. `loadActivePlan` orders activities newest first (limit 1000) so truncation drops the oldest.
 AI-matching seam: a later matcher should set `completed_activity_id` and `status = 'completed'` with the conditional update in `lib/plan/link-activity.ts`;
 the card disappears on the next load once linked.
 e2e: Strava runs server-side, so the browser cannot mock it. `calendar-completed.spec.ts` uses the real not-connected path (stub `strava_connections` is

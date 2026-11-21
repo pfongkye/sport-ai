@@ -41,12 +41,11 @@ describe('POST /api/plan/days/[date]/sync', () => {
     expect((await call('2999-01-01')).status).toBe(400)
   })
 
-  it('200 with the saved activities when Strava is not connected', async () => {
+  it('200 when Strava is not connected', async () => {
     const res = await call('2020-01-02')
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toMatchObject({ date: '2020-01-02', strava: 'not_connected', imported: 0 })
-    expect(body.activities.map((a: { id: string }) => a.id)).toEqual(['a1'])
     expect((await call(today)).status).toBe(200)
   })
 })

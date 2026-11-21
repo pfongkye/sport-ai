@@ -85,7 +85,7 @@ export async function loadActivePlan(
     .eq('user_id', userId)
     .gte('started_at', `${addDays(from, -1)}T00:00:00Z`)
     .lte('started_at', `${addDays(to, 2)}T00:00:00Z`)
-    .order('started_at', { ascending: true })
+    .order('started_at', { ascending: false })
     .limit(1000)
   if (aErr) throw new Error(`Failed to load activities: ${aErr.message}`)
   const linked = rows.map((s) => s.completed_activity_id).filter((id): id is string => !!id)
