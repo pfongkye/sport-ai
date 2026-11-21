@@ -4,13 +4,27 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { http } from '@/lib/http'
 import { addDays } from '@/lib/plan/dates'
+import { orderDayItems, type PlanActivity } from '@/lib/plan/day-items'
+import type { StravaSyncStatus } from '@/lib/plan/sync-day'
 import { currentWeekIndex, groupByWeek } from '@/lib/plan/group-weeks'
 import type { ActivePlan } from '@/lib/plan/load-plan'
 import { GeneratePlanForm } from './generate-plan-form'
 import { PlanRecap } from './plan-recap'
+import { ActivityCard } from './activity-card'
 import { SessionCard } from './session-card'
 import { dayLabel, prefillGoalDate, weekLabel } from './plan-format'
+
+function syncMessage(date: string, strava: StravaSyncStatus, imported: number): string {
+  const label = dayLabel(date)
+  if (strava === 'rate_limited') return 'Strava is rate limited, showing saved activities.'
+  if (strava === 'unauthorized') return 'Strava access expired. Reconnect it in Settings. Showing saved activities.'
+  if (strava === 'athlete_limit') return 'Strava is at its connection limit, showing saved activities.'
+  if (strava === 'error') return 'Could not reach Strava, showing saved activities.'
+  if (imported > 0) return `Synced ${label}: ${imported} new ${imported === 1 ? 'activity' : 'activities'}.`
+  return strava === 'not_connected' ? `${label}: showing saved activities. Connect Strava in Settings to import.` : `${label}: No new activities.`
+}
 
 interface Props {
   active: ActivePlan | null
@@ -45,6 +59,7 @@ export function PlanView({ active, defaultGoal }: Props) {
   const [announce, setAnnounce] = useState('')
   const [note, setNote] = useState('')
   const [showRegenerate, setShowRegenerate] = useState(false)
+  const [syncing, setSyncing] = useState<string | null>(null)
 
   const weeks = useMemo(
     () => (active ? groupByWeek(active.sessions, active.plan.start_date, active.plan.end_date) : []),
@@ -80,7 +95,33 @@ export function PlanView({ active, defaultGoal }: Props) {
     )
   }
 
-  const { plan, today } = active
+  const { plan, today, timezone } = active
+  const activitiesByDate = new Map<string, PlanActivity[]>()
+  for (const a of active.activities ?? []) {
+    activitiesByDate.set(a.local_date, [...(activitiesByDate.get(a.local_date) ?? []), a])
+  }
+
+  async function syncDay(date: string) {
+    setSyncing(date)
+    try {
+      const res = await http(`/api/plan/days/${date}/sync`, { method: 'POST' })
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string
+        strava?: StravaSyncStatus
+        imported?: number
+      }
+      if (!res.ok) {
+        setAnnounce(json.error ?? 'Could not sync that day.')
+        return
+      }
+      setAnnounce(syncMessage(date, json.strava ?? 'error', json.imported ?? 0))
+      router.refresh()
+    } catch {
+      setAnnounce('Could not sync that day.')
+    } finally {
+      setSyncing(null)
+    }
+  }
   const defaultIdx = currentWeekIndex(weeks, today)
   const idx = Math.min(Math.max(picked ?? defaultIdx, 0), Math.max(weeks.length - 1, 0))
   const week = weeks[idx]
@@ -175,6 +216,7 @@ export function PlanView({ active, defaultGoal }: Props) {
           <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 short-landscape:grid-cols-2">
             {week.days.map((day) => {
               const isToday = day.date === today
+              const items = orderDayItems(activitiesByDate.get(day.date) ?? [], day.sessions)
               return (
                 <li
                   key={day.date}
@@ -190,26 +232,42 @@ export function PlanView({ active, defaultGoal }: Props) {
                     {dayLabel(day.date)}
                     {isToday && <span className="text-[var(--primary)]">Today</span>}
                   </p>
-                  {day.sessions.length === 0 ? (
+                  {items.length === 0 ? (
                     <p className="text-xs text-[var(--muted-foreground)]">Rest</p>
                   ) : (
-                    day.sessions.map((s) => (
-                      <SessionCard
-                        key={s.id}
-                        session={s}
-                        today={today}
-                        minDate={minDate}
-                        maxDate={plan.end_date}
-                        onMoved={(m) => {
-                          setAnnounce(m)
-                          router.refresh()
-                        }}
-                        onDeleted={(m) => {
-                          setAnnounce(m)
-                          router.refresh()
-                        }}
-                      />
-                    ))
+                    items.map((item) =>
+                      item.kind === 'activity' ? (
+                        <ActivityCard key={item.activity.id} activity={item.activity} timezone={timezone} />
+                      ) : (
+                        <SessionCard
+                          key={item.session.id}
+                          session={item.session}
+                          today={today}
+                          minDate={minDate}
+                          maxDate={plan.end_date}
+                          onMoved={(m) => {
+                            setAnnounce(m)
+                            router.refresh()
+                          }}
+                          onDeleted={(m) => {
+                            setAnnounce(m)
+                            router.refresh()
+                          }}
+                        />
+                      )
+                    )
+                  )}
+                  {day.date <= today && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-full"
+                      disabled={syncing !== null}
+                      aria-label={`Sync ${dayLabel(day.date)}`}
+                      onClick={() => syncDay(day.date)}
+                    >
+                      {syncing === day.date ? 'Syncing…' : 'Sync'}
+                    </Button>
                   )}
                 </li>
               )
