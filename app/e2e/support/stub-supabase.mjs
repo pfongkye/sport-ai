@@ -14,7 +14,7 @@
 // Filters are still ignored for all other tables. For planned_sessions the stub applies
 // `col=eq.x`, `col=in.(a,b)` and `col=is.null` so the app's delete guards behave like PostgREST.
 import http from 'node:http'
-import { USER, TABLES, planFixtures } from './fixtures.mjs'
+import { USER, TABLES, planFixtures, planActivities } from './fixtures.mjs'
 
 const port = Number(process.env.STUB_SUPABASE_PORT || 54321)
 
@@ -49,6 +49,14 @@ http
     if (p === '/__health') return send(res, 200, { ok: true })
     if (p === '/auth/v1/user') return send(res, 200, USER)
     if (p === '/auth/v1/logout') return send(res, 204)
+    if (p === '/__e2e/reveal-activities' && req.method === 'POST') {
+      // Test control: make the token's hidden activities visible (simulates a Strava import).
+      const token = url.searchParams.get('token') ?? ''
+      const st = planState.get(token) ?? { deleted: new Set() }
+      st.revealed = true
+      planState.set(token, st)
+      return send(res, 200, { ok: true })
+    }
     if (p.startsWith('/rest/v1/')) {
       const table = p.slice('/rest/v1/'.length)
       const token = tokenOf(req)
@@ -68,6 +76,7 @@ http
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 201)
       let rows = TABLES[table] ?? []
       if (plan && table === 'training_plans') rows = plan.training_plans
+      if (plan && table === 'activities') rows = planActivities().filter((a) => !a.hidden || state.revealed)
       if (plan && table === 'planned_sessions') rows = applyFilters(liveSessions(), url.searchParams)
       const limit = Number(url.searchParams.get('limit'))
       if (limit > 0) rows = rows.slice(0, limit)

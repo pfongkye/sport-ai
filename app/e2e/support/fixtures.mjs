@@ -129,3 +129,23 @@ export function planFixtures(now = new Date()) {
     ],
   }
 }
+
+// Activities for `e2e-plan-` tokens, relative to the same week as planFixtures. `hidden` ones only appear
+// after POST /__e2e/reveal-activities (stands in for a Strava import triggered by the day Sync button).
+export function planActivities(now = new Date()) {
+  const today = iso(now)
+  const monday = addDaysIso(today, -((now.getUTCDay() + 6) % 7))
+  const at = (offset, time) => `${addDaysIso(monday, offset)}T${time}Z`
+  const a = (n, sport, started_at, extra = {}) => ({
+    ...act(1, sport, 1),
+    id: `00000000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`,
+    started_at,
+    ...extra,
+  })
+  return [
+    { ...ACTIVITIES[0], started_at: at(0, '09:30:00') }, // linked to the completed session on Monday
+    a(10, 'run', at(2, '08:15:00')), // unlinked run on a day with a planned tempo session
+    a(11, 'cycle', at(1, '16:00:00'), { distance_m: 42000, duration_s: 5400, avg_pace_s_per_km: null }), // rest day
+    a(12, 'run', `${today}T12:00:00Z`, { hidden: true, distance_m: 5000, duration_s: 1500 }),
+  ]
+}
