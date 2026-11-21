@@ -542,6 +542,12 @@ remaining quota falls to `ORS_QUOTA_WARN_PCT` percent (default 10) and `[ors-quo
 only needs `ORS_BASE_URL` (it sends no quota headers, so nothing is logged). Old cached routes can be pruned with
 `SELECT public.prune_suggested_routes();` (migration `015`, applied manually; keeps routes attached to a plan).
 
+**Chat sessions.** The AI Coach supports several chats: use **Chats** to switch or delete one and **New chat** to
+start another. Deleting asks whether to keep a short summary so the coach remembers the key points; kept summaries are
+listed under **Kept notes**, where you can edit or delete them. This needs migration `018_coach_sessions.sql`, applied
+manually before deploying: `docker exec -i sportai-db psql -U postgres -d postgres < supabase/migrations/018_coach_sessions.sql`.
+If chats fail to load after an upgrade, the migration is the first thing to check.
+
 Set a **home location** in Settings → Location to use as the default route start. You can also
 pick "My location" (uses the browser's geolocation) or type a place on the Routes page.
 
