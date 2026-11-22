@@ -33,10 +33,14 @@ Setting: `PATCH /api/settings/language` (`setUserLanguage`, validates, updates t
 NO migration: `user_settings.language text NOT NULL DEFAULT 'en'` exists since 007. Validation is in code, not a CHECK, so a third language is a code change only.
 Existing messages, summaries and plans are NOT migrated or translated; they keep the language they were written in.
 Dates: `intlLocale()` (en-GB / fr-FR), `formatDate(..., locale)` and `dayLabel/weekLabel(..., locale)` default to English; pass the locale when a screen is translated.
-Translated: navigation (sidebar, mobile nav, header menu), login, settings, coach chat, chat sessions list/bar, kept notes, voice recorder labels.
-NOT translated (still English): dashboard, plan (view, session/activity cards, generate form, recap), activities (list, detail, uploader, notes, voice add), routes,
-nutrition, onboarding, Strava settings/import panel, home-location editor, most API error strings, page `<title>` metadata, Terms/Privacy. Plan weekday names in the AI
-prompt context stay English (they are data for the model). Add keys to BOTH dictionaries when translating more.
+Translated: navigation (sidebar, mobile nav, header menu), login, settings, coach chat, chat sessions list/bar, kept notes, voice recorder labels, dashboard, plan (view,
+session/activity cards, generate form, recap), activities (list, detail, stat labels, chart titles, insight card, session notes, file uploader), page `<title>` for
+dashboard/plan/activities. Numbers and dates: `formatDistance(m, 'metric', locale)`, `formatNumber`, `timeAgo(date, tz, locale)`, `dayLabel/weekLabel(..., locale)`,
+`targetSummary(s, locale)`, `buildRecapView(recap, locale)`; sport and session type names via `sportLabel/sessionTypeLabel(t, value)` (`lib/i18n/labels.ts`; unknown
+free-text values are shown as stored). Stored recap reasons/notes are English strings; known ones are translated by pattern in `recap-format.ts`.
+NOT translated (still English): add-by-voice/text panel on Activities, Strava settings/import panel, routes, nutrition, onboarding, home-location editor, most API
+error strings (shown as returned), `<title>` of the other pages, Terms/Privacy, plan session `description`/`ai_notes` and plan title/goal (AI-written data, they keep
+the language they were generated in), activity map. Plan weekday names in the AI prompt context stay English (they are data for the model). Add keys to BOTH dictionaries when translating more.
 e2e: the stub remembers `user_settings.language` per access token (PATCH); use a unique token per test (`e2e/i18n.spec.ts`).
 
 ### 73. AI replies follow the saved language, not the spoken or typed one

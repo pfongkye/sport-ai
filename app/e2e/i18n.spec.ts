@@ -5,7 +5,8 @@ import { expectNoHorizontalOverflow } from './support/layout'
 
 // The stub Supabase remembers user_settings.language per access token. Tests run in parallel
 // (across projects and within one), so every test gets its own token and never shares state.
-const tokenFor = (project: string, title: string) => `e2e-lang-${project}-${title.replace(/\W+/g, '-')}`
+// The `e2e-plan-` prefix makes the stub serve the plan fixtures (plan, sessions, linked activities).
+const tokenFor = (project: string, title: string) => `e2e-plan-lang-${project}-${title.replace(/\W+/g, '-')}`
 
 test.beforeEach(async ({ context, page, baseURL }, testInfo) => {
   await signIn(context, baseURL!, tokenFor(testInfo.project.name, testInfo.title))
@@ -149,10 +150,80 @@ test('voice (Web Speech, opt-in): uses the saved language and hands editable tex
   await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible()
 })
 
+// French assertions for the screens translated in the follow-up pass: dashboard, plan and activities.
+const ACTIVITY_ID = '00000000-0000-4000-8000-000000000101'
+
+test('French: dashboard, plan and activities show translated text, French dates and decimal commas', async ({ page }) => {
+  await page.goto('/settings')
+  await chooseLanguage(page, 'Language', 'fr')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'fr')
+
+  await page.goto('/dashboard')
+  await expect(page.getByRole('heading', { name: 'Salut Alex 👋' })).toBeVisible()
+  await expect(page.getByText('Objectif : Run a sub-4h marathon')).toBeVisible()
+  await expect(page.getByText('Cette semaine', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Activités récentes' })).toBeVisible()
+  await expect(page.getByText('Demandez à votre coach IA')).toBeVisible()
+  // Distances use the decimal comma, never the English point.
+  await expect(page.getByText(/\d+,\d{2} km/).first()).toBeVisible()
+  await expect(page.getByText(/\d+\.\d{2} km/)).toHaveCount(0)
+
+  await page.goto('/plan')
+  await expect(page.getByRole('heading', { name: "Plan d'entraînement", level: 1 })).toBeVisible()
+  await expect(page.getByText(/Semaine \d+ sur \d+/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Régénérer le plan' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Calendrier du plan' })).toBeVisible()
+  // Session cards: translated type and status, French weekday in the day label.
+  await expect(page.getByRole('article', { name: /Tempo, .*(lun|mar|mer|jeu|ven|sam|dim)\.?.*, Prévue/ })).toBeVisible()
+  await expect(page.getByText('Sortie longue').first()).toBeVisible()
+  await expect(page.getByText('Faite', { exact: true })).toBeVisible()
+  await expect(page.getByText('Terminée', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText(/\d+,\d{2} km/).first()).toBeVisible()
+  await expect(page.getByText('Zone 2').first()).toBeVisible()
+  await expect(page.getByText(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/)).toHaveCount(0)
+
+  // Regenerate form.
+  await page.getByRole('button', { name: 'Régénérer le plan' }).click()
+  await expect(page.getByLabel('Objectif', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Distance de la course')).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'mardi' })).toBeChecked()
+  await expect(page.getByLabel('Autres contraintes (facultatif)')).toHaveValue('1 leisure session per week')
+  await expect(page.getByRole('button', { name: 'Générer le plan' }).or(page.getByRole('button', { name: 'Régénérer le plan' }).last())).toBeVisible()
+
+  await page.goto('/activities')
+  await expect(page.getByRole('heading', { name: 'Activités', level: 1 })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Importer', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Toutes' })).toBeVisible()
+  await expect(page.getByText('Vélo').first()).toBeVisible()
+  await expect(page.getByText(/Charge \d+/).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Importer', exact: true }).click()
+  await expect(page.getByText('Déposez vos fichiers .FIT, .GPX ou .TCX ici')).toBeVisible()
+
+  await page.goto(`/activities/${ACTIVITY_ID}`)
+  await expect(page.getByText('Allure moy.')).toBeVisible()
+  await expect(page.getByText('Durée', { exact: true })).toBeVisible()
+  await expect(page.getByText('Analyse du coach')).toBeVisible()
+  await expect(page.getByText('Notes de séance')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Supprimer' })).toBeVisible()
+  // Long date in French (this activity is dated on Monday of the current week in the plan fixtures).
+  await expect(page.getByText(/^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d{1,2} \S+ \d{4}$/)).toBeVisible()
+
+  await page.goto('/settings')
+  await chooseLanguage(page, 'Langue', 'en')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+})
+
 // Screenshots in both languages for the screens that are translated or share the shell.
 // They land in e2e-screenshots/<project>/i18n-<lang>-<page>.png (gitignored); the overflow
 // check is the automated part, the images are reviewed by eye.
-const SCREENS = ['dashboard', 'coach', 'plan', 'settings', 'activities']
+const SCREENS = [
+  ['dashboard', '/dashboard'],
+  ['coach', '/coach'],
+  ['plan', '/plan'],
+  ['settings', '/settings'],
+  ['activities', '/activities'],
+  ['activity-detail', `/activities/${ACTIVITY_ID}`],
+] as const
 
 for (const lang of ['en', 'fr'] as const) {
   test(`screenshots and no horizontal overflow (${lang})`, async ({ page }, testInfo) => {
@@ -161,12 +232,26 @@ for (const lang of ['en', 'fr'] as const) {
     await expect(page.locator('html')).toHaveAttribute('lang', lang)
     const style = 'nextjs-portal { display: none !important }'
     const dir = `e2e-screenshots/${testInfo.project.name}`
-    for (const name of SCREENS) {
-      await page.goto(`/${name}`)
+    for (const [name, path] of SCREENS) {
+      await page.goto(path)
       await page.waitForLoadState('networkidle')
       await expectNoHorizontalOverflow(page)
       await page.screenshot({ path: `${dir}/i18n-${lang}-${name}.png`, style })
     }
+    // The longest French strings live in the generate form and the activity upload panel.
+    await page.goto('/plan')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: lang === 'fr' ? 'Régénérer le plan' : 'Regenerate plan' }).click()
+    await page.getByLabel(lang === 'fr' ? 'Distance de la course' : 'Race distance').selectOption('other')
+    await page.getByRole('button', { name: lang === 'fr' ? 'Ajuster les limites' : 'Adjust limits' }).click()
+    await expectNoHorizontalOverflow(page)
+    await page.screenshot({ path: `${dir}/i18n-${lang}-plan-form.png`, style, fullPage: true })
+
+    await page.goto('/activities')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: lang === 'fr' ? 'Importer' : 'Upload', exact: true }).click()
+    await expectNoHorizontalOverflow(page)
+    await page.screenshot({ path: `${dir}/i18n-${lang}-activities-upload.png`, style })
     if (lang === 'fr') {
       await page.goto('/coach')
       await page.getByRole('button', { name: 'Discussions' }).click()
