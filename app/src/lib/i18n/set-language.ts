@@ -4,7 +4,7 @@ import { isLocale, SUPPORTED_LOCALES, type Locale } from './locales'
 
 export type SetLanguageResult =
   | { ok: true; language: Locale }
-  | { ok: false; status: 400 | 500; error: string }
+  | { ok: false; status: 400 | 404 | 500; error: string }
 
 /**
  * Persist the athlete's language on their own `user_settings` row (RLS-scoped client).
@@ -19,10 +19,12 @@ export async function setUserLanguage(
   if (!isLocale(language)) {
     return { ok: false, status: 400, error: `language must be one of: ${SUPPORTED_LOCALES.join(', ')}.` }
   }
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('user_settings')
     .update({ language })
     .eq('user_id', userId)
+    .select('user_id')
   if (error) return { ok: false, status: 500, error: 'Failed to save language.' }
+  if (!data || data.length === 0) return { ok: false, status: 404, error: 'Settings not found.' }
   return { ok: true, language }
 }

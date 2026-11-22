@@ -9,14 +9,12 @@ import { isLocale, type Locale } from '@/lib/i18n/locales'
  * which makes Whisper write English-looking text for French speech (the likely cause of the
  * "voice is translated to English" report; not verified against a live recording).
  *
- * Auto-detection can misfire on very short or accented clips. The athlete's saved language
- * is therefore a FALLBACK hint: used for one retry only when the clip is very short, has
- * only a few words, or was detected as a language the app does not support.
+ * The athlete's saved language is a FALLBACK hint: used for one retry only when detection
+ * failed (empty text) or returned a language the app does not support. A short clip that was
+ * detected as en or fr is kept as is, so a French "oui" from an English-setting user is not
+ * re-run as English.
  */
 export const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions'
-/** Clips shorter than this (seconds) or with fewer words are retried with the hint. */
-export const SHORT_CLIP_SECONDS = 2
-export const SHORT_CLIP_WORDS = 3
 
 const NAME_TO_CODE: Record<string, string> = { english: 'en', french: 'fr' }
 
@@ -77,15 +75,9 @@ async function callWhisper(
   }
 }
 
-function wordCount(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length
-}
-
-/** True when the first (auto-detect) result is too weak to trust and a hint retry is worthwhile. */
+/** True when detection failed (empty text) or found a language the app does not support. */
 export function needsHintRetry(first: WhisperAttempt): boolean {
-  if (first.duration !== null && first.duration < SHORT_CLIP_SECONDS) return true
-  if (wordCount(first.text) < SHORT_CLIP_WORDS) return true
-  return !isLocale(first.language)
+  return !first.text || !isLocale(first.language)
 }
 
 export async function transcribeAudio(params: {

@@ -28,7 +28,24 @@ describe('transcribeAudio', () => {
     for (const c of f.mock.calls) expect(String(c[0])).not.toContain('translations')
   })
 
-  it('retries once with the hint for a very short clip', async () => {
+  it('keeps a short clip detected as the other supported language', async () => {
+    const f = vi.fn().mockResolvedValue(reply({ text: 'Oui', language: 'french', duration: 1 }))
+    const out = await transcribeAudio({ audio, apiKey: 'k', hint: 'en', fetchImpl: f as never })
+    expect(f).toHaveBeenCalledTimes(1)
+    expect(out).toEqual({ text: 'Oui', language: 'fr', usedHint: false })
+  })
+
+  it('retries once with the hint when the first result is empty', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(reply({ text: '', language: 'english', duration: 1 }))
+      .mockResolvedValueOnce(reply({ text: 'Merci', language: 'french', duration: 1 }))
+    const out = await transcribeAudio({ audio, apiKey: 'k', hint: 'fr', fetchImpl: f as never })
+    expect(f).toHaveBeenCalledTimes(2)
+    expect(out).toEqual({ text: 'Merci', language: 'fr', usedHint: true })
+  })
+
+  it('retries once with the hint for an unsupported language on a short clip', async () => {
     const f = vi
       .fn()
       .mockResolvedValueOnce(reply({ text: 'Merci', language: 'spanish', duration: 1 }))

@@ -84,6 +84,9 @@ http
           } catch {
             // ignore malformed bodies, like any other stubbed write
           }
+          if ((req.headers.prefer || '').includes('return=representation')) {
+            return send(res, 200, [{ user_id: USER.id }])
+          }
           send(res, 204)
         })
         return

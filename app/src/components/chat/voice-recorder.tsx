@@ -23,11 +23,15 @@ interface VoiceRecorderProps {
  */
 export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
   const { state, error, start, stop } = useRecorder()
-  const speech = useSpeechRecognition()
   const t = useT()
   const locale = useLocale()
   const [transcribing, setTranscribing] = useState(false)
   const [usingBrowser, setUsingBrowser] = useState(false)
+  // The browser can end recognition by itself; pass on what was heard and reset the button.
+  const speech = useSpeechRecognition((text) => {
+    setUsingBrowser(false)
+    onTranscript(text, locale)
+  })
 
   async function toggle() {
     if (transcribing || disabled) return

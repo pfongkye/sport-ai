@@ -87,6 +87,13 @@ describe('setUserLanguage', () => {
   })
 })
 
+describe('setUserLanguage without a settings row', () => {
+  it('returns 404 and does not report success', async () => {
+    const { client } = makeFakeSupabase({ rlsUserId: 'u1', tables: { user_settings: [] } })
+    expect(await setUserLanguage(client, 'u1', 'fr')).toMatchObject({ ok: false, status: 404 })
+  })
+})
+
 describe('reply language in AI prompts', () => {
   const base = { profile: null, readiness: null, today: '2026-10-12' }
   const settings = (language: string) => ({ language }) as never
