@@ -1,11 +1,15 @@
 import { notFound } from 'next/navigation'
+import { getT } from '@/lib/i18n/server'
 import { createClient } from '@/lib/supabase/server'
 import { ActivityDetail } from '@/components/activities/activity-detail'
 import { readTzCookie } from '@/lib/plan/request-timezone'
 import { getAthleteTimezone } from '@/lib/plan/session-guard'
 import type { Metadata } from 'next'
 
-export const metadata: Metadata = { title: 'Activity' }
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT()
+  return { title: t('act.detailTitle') }
+}
 
 export default async function ActivityDetailPage({
   params,

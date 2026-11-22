@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
-import { formatDistance, formatDuration, SPORT_EMOJI, timeAgo } from '@/lib/utils'
+import { formatDistance, formatDuration, formatNumber, SPORT_EMOJI, timeAgo } from '@/lib/utils'
+import { getT } from '@/lib/i18n/server'
+import { sportLabel } from '@/lib/i18n/labels'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
@@ -7,9 +9,13 @@ import { readTzCookie } from '@/lib/plan/request-timezone'
 import { getAthleteTimezone } from '@/lib/plan/session-guard'
 import type { Metadata } from 'next'
 
-export const metadata: Metadata = { title: 'Dashboard' }
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT()
+  return { title: t('dash.title') }
+}
 
 export default async function DashboardPage() {
+  const { t, locale } = await getT()
   const supabase = await createClient()
   const {
     data: { user },
@@ -51,11 +57,11 @@ export default async function DashboardPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-[var(--foreground)]">
-          Hey {profile?.display_name ?? 'Athlete'} 👋
+          {t('dash.greeting', { name: profile?.display_name ?? t('dash.athlete') })}
         </h1>
         {profile?.primary_goal && (
           <p className="text-sm text-[var(--muted-foreground)] mt-1">
-            Goal: {profile.primary_goal}
+            {t('dash.goal', { goal: profile.primary_goal })}
           </p>
         )}
       </div>
@@ -65,28 +71,28 @@ export default async function DashboardPage() {
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-[var(--muted-foreground)] font-medium uppercase tracking-wide">
-              This week
+              {t('dash.thisWeek')}
             </p>
-            <p className="text-2xl font-bold mt-1">{weeklyKm.toFixed(1)}</p>
-            <p className="text-xs text-[var(--muted-foreground)]">km</p>
+            <p className="text-2xl font-bold mt-1">{formatNumber(weeklyKm, 1, locale)}</p>
+            <p className="text-xs text-[var(--muted-foreground)]">{t('unit.km')}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-[var(--muted-foreground)] font-medium uppercase tracking-wide">
-              Time
+              {t('dash.time')}
             </p>
-            <p className="text-2xl font-bold mt-1">{weeklyHours.toFixed(1)}</p>
-            <p className="text-xs text-[var(--muted-foreground)]">hours</p>
+            <p className="text-2xl font-bold mt-1">{formatNumber(weeklyHours, 1, locale)}</p>
+            <p className="text-xs text-[var(--muted-foreground)]">{t('unit.hours')}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-[var(--muted-foreground)] font-medium uppercase tracking-wide">
-              Sessions
+              {t('dash.sessions')}
             </p>
             <p className="text-2xl font-bold mt-1">{weeklySessions}</p>
-            <p className="text-xs text-[var(--muted-foreground)]">workouts</p>
+            <p className="text-xs text-[var(--muted-foreground)]">{t('unit.workouts')}</p>
           </CardContent>
         </Card>
       </div>
@@ -97,12 +103,12 @@ export default async function DashboardPage() {
         <Card className="border-dashed">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-[var(--muted-foreground)]">
-              Readiness Score
+              {t('dash.readiness')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-[var(--muted-foreground)]">
-              Available after your first activity upload.
+              {t('dash.readinessHelp')}
             </p>
           </CardContent>
         </Card>
@@ -111,14 +117,14 @@ export default async function DashboardPage() {
         <Card className="border-dashed">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-[var(--muted-foreground)]">
-              Today&apos;s Session
+              {t('dash.todaySession')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-[var(--muted-foreground)]">
-              No active training plan.{' '}
+              {t('dash.noPlan')}{' '}
               <Link href="/plan" className="text-[var(--primary)] hover:underline">
-                Generate one →
+                {t('dash.generateOne')}
               </Link>
             </p>
           </CardContent>
@@ -129,9 +135,9 @@ export default async function DashboardPage() {
       <Card className="bg-[var(--primary)]/5 border-[var(--primary)]/20">
         <CardContent className="pt-4 flex items-center justify-between gap-4">
           <div>
-            <p className="font-medium text-[var(--foreground)]">Ask your AI Coach</p>
+            <p className="font-medium text-[var(--foreground)]">{t('dash.askCoach')}</p>
             <p className="text-sm text-[var(--muted-foreground)] mt-0.5">
-              Voice or text — get personalised coaching advice
+              {t('dash.askCoachHelp')}
             </p>
           </div>
           <Link
@@ -141,7 +147,7 @@ export default async function DashboardPage() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4" aria-hidden>
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
-            Chat
+            {t('dash.chat')}
           </Link>
         </CardContent>
       </Card>
@@ -149,24 +155,24 @@ export default async function DashboardPage() {
       {/* Recent activities */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-[var(--foreground)]">Recent activities</h2>
+          <h2 className="font-semibold text-[var(--foreground)]">{t('dash.recent')}</h2>
           <Link
             href="/activities"
             className="text-sm text-[var(--primary)] hover:underline"
           >
-            View all
+            {t('dash.viewAll')}
           </Link>
         </div>
 
         {!recentActivities?.length ? (
           <Card className="border-dashed">
             <CardContent className="py-8 text-center">
-              <p className="text-sm text-[var(--muted-foreground)]">No activities yet.</p>
+              <p className="text-sm text-[var(--muted-foreground)]">{t('dash.noActivities')}</p>
               <Link
                 href="/activities"
                 className="mt-2 inline-block text-sm text-[var(--primary)] hover:underline"
               >
-                Upload your first workout →
+                {t('dash.uploadFirst')}
               </Link>
             </CardContent>
           </Card>
@@ -181,16 +187,16 @@ export default async function DashboardPage() {
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium capitalize">
-                          {activity.sport_type}
+                        <span className="text-sm font-medium">
+                          {sportLabel(t, activity.sport_type)}
                         </span>
                         <span className="text-xs text-[var(--muted-foreground)]">
-                          {timeAgo(activity.started_at, timeZone)}
+                          {timeAgo(activity.started_at, timeZone, locale)}
                         </span>
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--muted-foreground)]">
                         {activity.distance_m && (
-                          <span>{formatDistance(activity.distance_m)}</span>
+                          <span>{formatDistance(activity.distance_m, 'metric', locale)}</span>
                         )}
                         {activity.duration_s && (
                           <span>{formatDuration(activity.duration_s)}</span>
@@ -202,7 +208,7 @@ export default async function DashboardPage() {
                     </div>
                     {activity.training_load && (
                       <Badge variant="secondary" className="shrink-0 text-xs">
-                        Load {Math.round(activity.training_load)}
+                        {t('dash.load', { n: Math.round(activity.training_load) })}
                       </Badge>
                     )}
                   </CardContent>

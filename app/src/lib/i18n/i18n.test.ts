@@ -15,8 +15,11 @@ import { makeFakeSupabase } from '@/lib/plan/__fixtures__/fake-supabase'
 import { buildCoachSystemPrompt } from '@/lib/ai/prompts/coach'
 import { buildSystemPrompt } from '@/lib/ai/workflows/generate-plan'
 import { buildSummaryPrompt } from '@/lib/ai/chat-sessions/summarize'
-import { dayLabel } from '@/components/plan/plan-format'
-import { formatDate } from '@/lib/utils'
+import { dayLabel, targetSummary, weekdayName, weekLabel } from '@/components/plan/plan-format'
+import { buildRecapView } from '@/components/plan/recap-format'
+import { computeTrainingRecap } from '@/lib/ai/workflows/training-recap'
+import { sessionTypeLabel, sportLabel } from './labels'
+import { formatDate, formatDistance, formatNumber, timeAgo } from '@/lib/utils'
 
 describe('resolveLocale', () => {
   it('prefers the saved preference over cookie and header', () => {
@@ -109,5 +112,42 @@ describe('locale aware date formats', () => {
     expect(dayLabel('2026-10-12', 'fr')).toMatch(/lun\.? 12 oct/)
     expect(formatDate('2026-10-12T10:00:00Z', 'short', 'UTC')).toBe('12 Oct 2026')
     expect(formatDate('2026-10-12T10:00:00Z', 'long', 'UTC', 'fr')).toContain('octobre')
+  })
+})
+
+describe('locale aware numbers, labels and recap', () => {
+  it('formats numbers with a decimal comma in French and unchanged in English', () => {
+    expect(formatDistance(10000)).toBe('10.00 km')
+    expect(formatDistance(10500, 'metric', 'fr')).toBe('10,50 km')
+    expect(formatNumber(3.25, 1, 'fr')).toBe('3,3')
+    expect(formatNumber(3.25, 1)).toBe('3.3')
+  })
+  it('translates relative times', () => {
+    const now = Date.now()
+    expect(timeAgo(new Date(now - 3 * 3600_000))).toBe('3h ago')
+    expect(timeAgo(new Date(now - 3 * 3600_000), undefined, 'fr')).toBe('il y a 3 h')
+    expect(timeAgo(new Date(now), undefined, 'fr')).toBe("à l'instant")
+  })
+  it('translates sport and session labels, and keeps unknown values as stored', () => {
+    const fr = makeT('fr')
+    expect(sportLabel(fr, 'cycle')).toBe('Vélo')
+    expect(sessionTypeLabel(fr, 'Long Run')).toBe('Sortie longue')
+    expect(sessionTypeLabel(fr, 'hill repeats')).toBe('hill repeats')
+    expect(sportLabel(makeT('en'), 'run')).toBe('Run')
+  })
+  it('targets and week labels follow the locale', () => {
+    const s = { target_distance_m: 10500, target_duration_s: 3300, target_hr_zone: 2 }
+    expect(targetSummary(s)).toBe('10.50 km · 55:00 · Zone 2')
+    expect(targetSummary(s, 'fr')).toBe('10,50 km · 55:00 · Zone 2')
+    expect(weekLabel('2026-10-12', '2026-10-18', 'fr')).toMatch(/12 oct\.? – 18 oct\.?/)
+    expect(weekdayName(0, 'fr')).toBe('lundi')
+    expect(weekdayName(0, 'en', 'short')).toBe('Mon')
+  })
+  it('builds the recap view in French', () => {
+    const v = buildRecapView(computeTrainingRecap([], { timezone: 'UTC' }, '2026-10-12'), 'fr')
+    expect(v.summary).toMatch(/^0 semaines sur 6 récentes utilisées/)
+    expect(v.weeks[0].detail).toBe('Non utilisée : aucune activité')
+    expect(v.facts[0].label).toBe('Volume hebdomadaire de départ')
+    expect(v.notes).toContain('Aucune semaine éligible sur les 6 dernières semaines')
   })
 })

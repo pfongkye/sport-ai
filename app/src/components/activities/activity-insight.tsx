@@ -6,11 +6,13 @@ import remarkGfm from 'remark-gfm'
 import { http } from '@/lib/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/lib/i18n/client'
 
 const MD_CLASSES =
   'markdown text-sm [&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:list-disc [&_strong]:font-semibold'
 
 export function ActivityInsight({ activityId }: { activityId: string }) {
+  const t = useT()
   const [insight, setInsight] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -31,7 +33,7 @@ export function ActivityInsight({ activityId }: { activityId: string }) {
       const res = await http(`/api/activities/${activityId}/insight`, { method: 'POST' })
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({ error: 'Failed' }))
-        setInsight(`⚠️ ${err.error ?? 'Could not generate insight'}`)
+        setInsight(`⚠️ ${err.error ?? t('act.insight.failed')}`)
         return
       }
       const reader = res.body.getReader()
@@ -44,7 +46,7 @@ export function ActivityInsight({ activityId }: { activityId: string }) {
         setInsight(acc)
       }
     } catch (err) {
-      setInsight(`⚠️ ${err instanceof Error ? err.message : 'Network error'}`)
+      setInsight(`⚠️ ${err instanceof Error ? err.message : t('common.networkError')}`)
     } finally {
       setGenerating(false)
     }
@@ -55,24 +57,24 @@ export function ActivityInsight({ activityId }: { activityId: string }) {
       <CardContent className="pt-6">
         <div className="flex items-center justify-between gap-3 mb-3">
           <h2 className="font-semibold text-[var(--foreground)] flex items-center gap-2">
-            <span aria-hidden>🤖</span> Coach insight
+            <span aria-hidden>🤖</span> {t('act.insight.title')}
           </h2>
           {!loading && (
             <Button variant="outline" size="sm" onClick={generate} disabled={generating}>
-              {generating ? 'Analysing…' : insight ? 'Regenerate' : 'Analyse'}
+              {generating ? t('act.insight.analysing') : insight ? t('act.insight.regenerate') : t('act.insight.analyse')}
             </Button>
           )}
         </div>
 
         {loading ? (
-          <p className="text-sm text-[var(--muted-foreground)]">Loading…</p>
+          <p className="text-sm text-[var(--muted-foreground)]">{t('common.loading')}</p>
         ) : insight ? (
           <div className={MD_CLASSES}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{insight}</ReactMarkdown>
           </div>
         ) : (
           <p className="text-sm text-[var(--muted-foreground)]">
-            Get a quick AI analysis of this session — pacing, effort, and what to focus on next.
+            {t('act.insight.help')}
           </p>
         )}
       </CardContent>

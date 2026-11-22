@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import { http } from '@/lib/http'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { weekdayName } from './plan-format'
+import type { DictKey } from '@/lib/i18n/dictionaries/en'
 import { WEEKDAY_NAMES } from '@/lib/plan/dates'
 import { MAX_NOTES_LENGTH, NO_CONSTRAINTS, type PlanConstraints } from '@/lib/plan/constraints'
 import {
@@ -18,21 +21,22 @@ import {
   type RaceGoal,
 } from '@/lib/plan/race-goal'
 
-const DISTANCE_OPTIONS: { value: RaceDistance | ''; label: string }[] = [
-  { value: '', label: 'No race (general plan)' },
-  { value: '5k', label: '5 km' },
-  { value: '10k', label: '10 km' },
-  { value: 'half', label: 'Half marathon' },
-  { value: 'marathon', label: 'Marathon' },
-  { value: 'other', label: 'Other distance' },
+const DISTANCE_OPTIONS: { value: RaceDistance | ''; key: DictKey }[] = [
+  { value: '', key: 'plan.form.noRace' },
+  { value: '5k', key: 'plan.form.d5k' },
+  { value: '10k', key: 'plan.form.d10k' },
+  { value: 'half', key: 'plan.form.dHalf' },
+  { value: 'marathon', key: 'plan.form.dMarathon' },
+  { value: 'other', key: 'plan.form.dOther' },
 ]
 
-const DISTANCE_LABEL: Record<RaceDistance, string> = {
-  '5k': '5 km',
-  '10k': '10 km',
-  half: 'a half marathon',
-  marathon: 'a marathon',
-  other: 'this distance',
+/** Name of the distance inside "Suggested for {name}". */
+const DISTANCE_NAME_KEY: Record<RaceDistance, DictKey> = {
+  '5k': 'plan.form.d5k',
+  '10k': 'plan.form.d10k',
+  half: 'plan.form.forHalf',
+  marathon: 'plan.form.forMarathon',
+  other: 'plan.form.forThisDistance',
 }
 
 const numStr = (n: number | null | undefined) => (n == null ? '' : String(n))
@@ -58,6 +62,8 @@ interface Props {
 /** Goal + optional goal date → POST /api/plan/generate, then refresh the page data. */
 export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = NO_CONSTRAINTS, defaultGoalDate = '', onDone }: Props) {
   const router = useRouter()
+  const t = useT()
+  const locale = useLocale()
   const goalId = useId()
   const dateId = useId()
   const errId = useId()
@@ -94,10 +100,19 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
     distance !== '' && raceKm != null ? { distance, distanceKm: raceKm, targetTimeS: null } : null
   const suggested = resolveLimits(suggestionRace, null)
   const distanceName =
-    distance === '' ? 'a general plan' : distance === 'other' ? (raceKm != null ? `${formatRaceKm(raceKm)} km` : 'this distance') : DISTANCE_LABEL[distance]
-  const suggestionText = `Suggested for ${distanceName}: ${suggested.defaults.maxWeeklyKm} km/week, ${suggested.defaults.maxLongRunKm} km long run${
-    distance === '' ? '' : `, ${suggested.defaults.taperDays} day taper`
-  }`
+    distance === ''
+      ? t('plan.form.forGeneral')
+      : distance === 'other'
+        ? raceKm != null
+          ? t('plan.form.forKm', { km: formatRaceKm(raceKm) })
+          : t('plan.form.forThisDistance')
+        : t(DISTANCE_NAME_KEY[distance])
+  const suggestionText =
+    t('plan.form.suggested', {
+      name: distanceName,
+      weekly: suggested.defaults.maxWeeklyKm,
+      long: suggested.defaults.maxLongRunKm,
+    }) + (distance === '' ? '' : t('plan.form.suggestedTaper', { days: suggested.defaults.taperDays }))
   const hasOverrides = maxWeekly.trim() !== '' || maxLong.trim() !== '' || taper.trim() !== ''
 
   function resetLimits() {
@@ -108,10 +123,10 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
 
   async function submit() {
     if (timeInvalid) {
-      setError('Target time takes whole numbers only.')
+      setError(t('plan.form.timeWholeNumbers'))
       return
     }
-    if (replacing && !window.confirm('This replaces your current plan (it is archived). Continue?')) return
+    if (replacing && !window.confirm(t('plan.form.confirmReplace'))) return
     setBusy(true)
     setError(null)
     const race: Record<string, unknown> | null =
@@ -149,17 +164,17 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
         adjustments?: string[]
       }
       if (!res.ok) {
-        setError(json.error ?? 'Could not generate a plan.')
+        setError(json.error ?? t('plan.form.failed'))
         return
       }
       const n = json.adjustments?.length ?? 0
       onDone?.(
-        `Plan created: ${json.sessionCount ?? 0} sessions over ${json.weeks ?? 0} weeks.`,
-        n ? `Adjusted ${n} ${n === 1 ? 'week' : 'weeks'} to keep weekly increases under 10%.` : undefined
+        t('plan.form.created', { sessions: json.sessionCount ?? 0, weeks: json.weeks ?? 0 }),
+        n ? t(n === 1 ? 'plan.form.adjustedOne' : 'plan.form.adjustedMany', { n }) : undefined
       )
       router.refresh()
     } catch {
-      setError('Network error. Try again.')
+      setError(t('common.networkError'))
     } finally {
       setBusy(false)
     }
@@ -176,26 +191,26 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
     >
       <div className="space-y-1">
         <label htmlFor={goalId} className="block text-sm font-medium text-[var(--foreground)]">
-          Goal
+          {t('plan.form.goal')}
         </label>
         <input
           id={goalId}
           type="text"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          placeholder="e.g. Marathon in 3h30"
+          placeholder={t('plan.form.goalPlaceholder')}
           maxLength={300}
           disabled={busy}
           aria-describedby={`${goalId}-help`}
           className={inputCls}
         />
         <p id={`${goalId}-help`} className="text-xs text-[var(--muted-foreground)]">
-          Context for the coach, does not set any numbers. Use the race fields below for distance and time.
+          {t('plan.form.goalHelp')}
         </p>
       </div>
       <div className="space-y-1">
         <label htmlFor={`${raceIdPrefix}-distance`} className="block text-sm font-medium text-[var(--foreground)]">
-          Race distance
+          {t('plan.form.raceDistance')}
         </label>
         <select
           id={`${raceIdPrefix}-distance`}
@@ -206,7 +221,7 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
         >
           {DISTANCE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
-              {o.label}
+              {t(o.key)}
             </option>
           ))}
         </select>
@@ -214,7 +229,7 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
       {distance === 'other' && (
         <div className="space-y-1">
           <label htmlFor={`${raceIdPrefix}-km`} className="block text-sm font-medium text-[var(--foreground)]">
-            Distance in km
+            {t('plan.form.distanceKm')}
           </label>
           <input
             id={`${raceIdPrefix}-km`}
@@ -227,14 +242,14 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
             onChange={(e) => setOtherKm(e.target.value)}
             required
             disabled={busy}
-            placeholder={`${OTHER_DISTANCE_MIN_KM} to ${OTHER_DISTANCE_MAX_KM}`}
+            placeholder={t('plan.form.rangeKm', { min: OTHER_DISTANCE_MIN_KM, max: OTHER_DISTANCE_MAX_KM })}
             className={inputCls}
           />
         </div>
       )}
       <div className="space-y-1">
         <label htmlFor={dateId} className="block text-sm font-medium text-[var(--foreground)]">
-          {distance === '' ? 'Goal date (optional)' : 'Race date'}
+          {distance === '' ? t('plan.form.goalDateOptional') : t('plan.form.raceDate')}
         </label>
         <input
           id={dateId}
@@ -247,14 +262,12 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
           className={inputCls}
         />
         <p id={`${dateId}-help`} className="text-xs text-[var(--muted-foreground)]">
-          {distance === ''
-            ? 'With a date the plan builds to it and tapers. Without one you get a general 12-week block.'
-            : 'The race is always scheduled on this date, even if it is a Sunday or a day you did not tick as a training day.'}
+          {distance === '' ? t('plan.form.goalDateHelp') : t('plan.form.raceDateHelp')}
         </p>
       </div>
       {distance !== '' && (
         <fieldset className="space-y-1" disabled={busy}>
-          <legend className="block text-sm font-medium text-[var(--foreground)]">Target time (optional)</legend>
+          <legend className="block text-sm font-medium text-[var(--foreground)]">{t('plan.form.targetTime')}</legend>
           <div className="grid grid-cols-3 gap-2">
             {(
               [
@@ -272,12 +285,12 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
                   step={1}
                   value={value}
                   onChange={(e) => set(e.target.value)}
-                  aria-label={`Target time ${unit === 'h' ? 'hours' : unit === 'min' ? 'minutes' : 'seconds'}`}
+                  aria-label={t(unit === 'h' ? 'plan.form.targetHours' : unit === 'min' ? 'plan.form.targetMinutes' : 'plan.form.targetSeconds')}
                   placeholder="0"
                   className={cn(inputCls, 'min-w-0 px-2')}
                 />
                 <span className="text-sm text-[var(--muted-foreground)]" aria-hidden>
-                  {unit}
+                  {t(unit === 'h' ? 'plan.form.unitH' : unit === 'min' ? 'plan.form.unitMin' : 'plan.form.unitSec')}
                 </span>
               </div>
             ))}
@@ -286,10 +299,10 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
       )}
       <fieldset className="space-y-1" disabled={busy}>
         <legend className="block text-sm font-medium text-[var(--foreground)]">
-          Days you cannot train (optional)
+          {t('plan.form.unavailable')}
         </legend>
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-          {WEEKDAY_NAMES.map((day) => {
+          {WEEKDAY_NAMES.map((day, dayIndex) => {
             const checked = unavailable.includes(day)
             return (
               <label
@@ -311,24 +324,24 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
                       cur.includes(day) ? cur.filter((d) => d !== day) : [...cur, day]
                     )
                   }
-                  aria-label={day}
+                  aria-label={weekdayName(dayIndex, locale)}
                 />
-                <span aria-hidden>{day.slice(0, 3)}</span>
+                <span aria-hidden>{weekdayName(dayIndex, locale, 'short')}</span>
               </label>
             )
           })}
         </div>
-        <p className="text-xs text-[var(--muted-foreground)]">No sessions are scheduled on the selected days.</p>
+        <p className="text-xs text-[var(--muted-foreground)]">{t('plan.form.unavailableHelp')}</p>
       </fieldset>
       <div className="space-y-1">
         <label htmlFor={notesId} className="block text-sm font-medium text-[var(--foreground)]">
-          Other constraints (optional)
+          {t('plan.form.constraints')}
         </label>
         <textarea
           id={notesId}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="e.g. 1 leisure session per week, no hard runs in May, travelling 12 to 16 June"
+          placeholder={t('plan.form.constraintsPlaceholder')}
           maxLength={MAX_NOTES_LENGTH}
           rows={3}
           disabled={busy}
@@ -336,7 +349,7 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
           className="w-full rounded-md border border-[var(--border)] bg-transparent px-3 py-2 text-base text-[var(--foreground)]"
         />
         <p id={notesHelpId} className="text-xs text-[var(--muted-foreground)]">
-          The coach follows these as closely as it can. Selected days above are strictly enforced; free text is best effort.{' '}
+          {t('plan.form.constraintsHelp')}{' '}
           {notes.length}/{MAX_NOTES_LENGTH}
         </p>
       </div>
@@ -349,20 +362,20 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
           aria-controls={`${raceIdPrefix}-limits`}
           onClick={() => setLimitsOpen((v) => !v)}
         >
-          <span>Adjust limits</span>
+          <span>{t('plan.form.adjustLimits')}</span>
           <span aria-hidden>{limitsOpen ? '−' : '+'}</span>
         </Button>
         {limitsOpen && (
           <fieldset id={`${raceIdPrefix}-limits`} className="space-y-3 rounded-md border border-[var(--border)] p-3" disabled={busy}>
-            <legend className="px-1 text-sm font-medium text-[var(--foreground)]">Limits</legend>
+            <legend className="px-1 text-sm font-medium text-[var(--foreground)]">{t('plan.form.limits')}</legend>
             <p className="text-xs text-[var(--muted-foreground)]">
-              {suggestionText}. Leave a field empty to use the suggestion. Values outside the allowed range are adjusted.
+              {t('plan.form.limitsHelp', { suggestion: suggestionText })}
             </p>
             {(
               [
-                ['Peak weekly km', maxWeekly, setMaxWeekly, suggested.defaults.maxWeeklyKm, suggested.bounds.maxWeeklyKm, 'km'],
-                ['Longest run km', maxLong, setMaxLong, suggested.defaults.maxLongRunKm, suggested.bounds.maxLongRunKm, 'km'],
-                ['Taper days', taper, setTaper, suggested.defaults.taperDays, suggested.bounds.taperDays, 'days'],
+                [t('plan.form.peakWeekly'), maxWeekly, setMaxWeekly, suggested.defaults.maxWeeklyKm, suggested.bounds.maxWeeklyKm, t('unit.km')],
+                [t('plan.form.longestRun'), maxLong, setMaxLong, suggested.defaults.maxLongRunKm, suggested.bounds.maxLongRunKm, t('unit.km')],
+                [t('plan.form.taperDays'), taper, setTaper, suggested.defaults.taperDays, suggested.bounds.taperDays, t('plan.form.unitDays')],
               ] as const
             ).map(([label, value, set, def, [lo, hi], unit]) => (
               <label key={label} className="block space-y-1">
@@ -381,13 +394,13 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
                     className={cn(inputCls, 'min-w-0')}
                   />
                   <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
-                    {unit}, {lo} to {hi}
+                    {t('plan.form.unitRange', { unit, lo, hi })}
                   </span>
                 </span>
               </label>
             ))}
             <Button type="button" variant="outline" className="min-h-11" disabled={!hasOverrides} onClick={resetLimits}>
-              Reset to suggested
+              {t('plan.form.reset')}
             </Button>
           </fieldset>
         )}
@@ -398,11 +411,11 @@ export function GeneratePlanForm({ defaultGoal, replacing, defaultConstraints = 
         </p>
       )}
       <Button type="submit" size="lg" className="w-full min-h-12" disabled={busy}>
-        {busy ? 'Building your plan…' : replacing ? 'Regenerate plan' : 'Generate plan'}
+        {busy ? t('plan.form.building') : replacing ? t('plan.regenerate') : t('plan.form.generate')}
       </Button>
       {busy && (
         <p role="status" className="text-xs text-[var(--muted-foreground)]">
-          This can take up to a minute. Keep this page open.
+          {t('plan.form.buildingHelp')}
         </p>
       )}
     </form>

@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { intlLocale, type Locale } from '@/lib/i18n/locales'
+import { makeT } from '@/lib/i18n/translate'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -22,14 +23,28 @@ export function formatPace(secondsPerKm: number): string {
   return `${m}:${String(s).padStart(2, '0')} /km`
 }
 
+/** Fixed-decimal number in the locale's format (decimal comma in French). English keeps `toFixed`. */
+export function formatNumber(value: number, digits = 1, locale: Locale = 'en'): string {
+  if (locale === 'en') return value.toFixed(digits)
+  return value.toLocaleString(intlLocale(locale), {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    useGrouping: false,
+  })
+}
+
 /** Format meters to km string */
-export function formatDistance(meters: number, unit: 'metric' | 'imperial' = 'metric'): string {
+export function formatDistance(
+  meters: number,
+  unit: 'metric' | 'imperial' = 'metric',
+  locale: Locale = 'en'
+): string {
   if (unit === 'imperial') {
     const miles = meters / 1609.34
-    return `${miles.toFixed(2)} mi`
+    return `${formatNumber(miles, 2, locale)} mi`
   }
   const km = meters / 1000
-  return `${km.toFixed(2)} km`
+  return `${formatNumber(km, 2, locale)} km`
 }
 
 /** Sport type → display label */
@@ -91,15 +106,16 @@ export function formatDate(
 }
 
 /** Relative time (e.g. "2 days ago") */
-export function timeAgo(date: string | Date, timeZone?: string): string {
+export function timeAgo(date: string | Date, timeZone?: string, locale: Locale = 'en'): string {
+  const t = makeT(locale)
   const d = typeof date === 'string' ? new Date(date) : date
   const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
+  if (mins < 1) return t('time.justNow')
+  if (mins < 60) return t('time.minutesAgo', { n: mins })
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return t('time.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return formatDate(d, 'short', timeZone)
+  if (days < 7) return t('time.daysAgo', { n: days })
+  return formatDate(d, 'short', timeZone, locale)
 }

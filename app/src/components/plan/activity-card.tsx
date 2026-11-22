@@ -1,7 +1,10 @@
 import Link from 'next/link'
 import type { PlanActivity } from '@/lib/plan/day-items'
 import { Badge } from '@/components/ui/badge'
-import { formatDistance, formatDuration, formatPace, SPORT_EMOJI, SPORT_LABELS } from '@/lib/utils'
+import { formatDistance, formatDuration, formatPace, SPORT_EMOJI } from '@/lib/utils'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { intlLocale } from '@/lib/i18n/locales'
+import { sportLabel } from '@/lib/i18n/labels'
 
 function CheckCircleIcon() {
   return (
@@ -31,14 +34,16 @@ interface Props {
 
 /** A logged activity on its day. Read-only: no move or delete controls. */
 export function ActivityCard({ activity, timezone }: Props) {
-  const label = SPORT_LABELS[activity.sport_type] ?? activity.sport_type
-  const time = new Date(activity.started_at).toLocaleTimeString('en-GB', {
+  const t = useT()
+  const locale = useLocale()
+  const label = sportLabel(t, activity.sport_type)
+  const time = new Date(activity.started_at).toLocaleTimeString(intlLocale(locale), {
     timeZone: timezone,
     hour: '2-digit',
     minute: '2-digit',
   })
   const stats = [
-    activity.distance_m ? formatDistance(activity.distance_m) : null,
+    activity.distance_m ? formatDistance(activity.distance_m, 'metric', locale) : null,
     activity.duration_s ? formatDuration(Math.round(activity.duration_s)) : null,
     activity.sport_type === 'run' && activity.avg_pace_s_per_km
       ? formatPace(Math.round(activity.avg_pace_s_per_km))
@@ -58,7 +63,7 @@ export function ActivityCard({ activity, timezone }: Props) {
           <span>{label}</span>
         </h4>
         <Badge variant="success" className="shrink-0">
-          Completed
+          {t('plan.completed')}
         </Badge>
       </div>
       <p className="text-xs text-[var(--muted-foreground)]">{time}</p>
@@ -67,7 +72,7 @@ export function ActivityCard({ activity, timezone }: Props) {
         href={`/activities/${activity.id}`}
         className="inline-flex min-h-11 items-center text-sm font-medium text-[var(--primary)] underline-offset-4 hover:underline"
       >
-        View activity
+        {t('plan.viewActivity')}
       </Link>
     </div>
   )
