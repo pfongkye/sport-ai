@@ -9,6 +9,7 @@ export interface ChatSession {
   title: string
   created_at: string
   updated_at: string
+  recall_other_chats?: boolean
 }
 
 interface SessionListProps {

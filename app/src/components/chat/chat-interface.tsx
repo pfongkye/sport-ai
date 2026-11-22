@@ -7,6 +7,7 @@ import { http } from '@/lib/http'
 import { cn } from '@/lib/utils'
 import { VoiceRecorder } from './voice-recorder'
 import { SessionBar } from './session-bar'
+import { RecallToggle } from './recall-toggle'
 import { SessionList, type ChatSession } from './session-list'
 import { KeptNotes, type CoachMemory } from './kept-notes'
 
@@ -163,6 +164,26 @@ export function ChatInterface() {
     setLoadingHistory(false)
     setPanelOpen(false)
     setStatus('New chat started.')
+  }
+
+  async function setRecall(next: boolean) {
+    const id = sessionId
+    if (!id) return
+    const apply = (value: boolean) =>
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, recall_other_chats: value } : s)))
+    apply(next)
+    try {
+      const r = await http(`/api/ai/chat/sessions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recallOtherChats: next }),
+      })
+      if (!r.ok) throw new Error('failed')
+      setStatus(next ? 'This chat now uses other chats as memory.' : 'This chat now starts clean.')
+    } catch {
+      apply(!next)
+      setStatus('Could not change the memory setting. Try again.')
+    }
   }
 
   /** Resolves to an error message, or null on success. */
@@ -353,6 +374,13 @@ export function ChatInterface() {
           className="shrink-0 max-h-[55%] overflow-y-auto border-b border-[var(--border)] bg-[var(--card)] px-4 md:px-6 py-3"
         >
           <div className="max-w-2xl mx-auto space-y-5">
+            {sessionId && (
+              <RecallToggle
+                checked={sessions.find((x) => x.id === sessionId)?.recall_other_chats ?? false}
+                disabled={streaming}
+                onChange={(v) => void setRecall(v)}
+              />
+            )}
             <section aria-label="Chats" className="space-y-2">
               <h2 className="text-sm font-semibold text-[var(--foreground)]">Chats</h2>
               <SessionList

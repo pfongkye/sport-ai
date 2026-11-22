@@ -8,6 +8,7 @@ interface MockSession {
   title: string
   created_at: string
   updated_at: string
+  recall_other_chats: boolean
 }
 interface MockMemory {
   id: string
@@ -17,13 +18,14 @@ interface MockMemory {
 }
 
 /** Stateful in-spec mock of the chat session, history and memory APIs. No real AI. */
-async function mockChatApis(page: Page, opts: { failSummary?: boolean } = {}) {
+async function mockChatApis(page: Page, opts: { failSummary?: boolean; failPatch?: boolean } = {}) {
   const sessions: MockSession[] = [
-    { id: 's2', title: 'Marathon pacing questions', created_at: '2025-06-21T08:00:00Z', updated_at: '2025-06-21T08:00:00Z' },
-    { id: 's1', title: 'Weekly check-in', created_at: '2025-06-20T08:00:00Z', updated_at: '2025-06-20T08:00:00Z' },
+    { id: 's2', title: 'Marathon pacing questions', created_at: '2025-06-21T08:00:00Z', updated_at: '2025-06-21T08:00:00Z', recall_other_chats: false },
+    { id: 's1', title: 'Weekly check-in', created_at: '2025-06-20T08:00:00Z', updated_at: '2025-06-20T08:00:00Z', recall_other_chats: false },
   ]
   const memories: MockMemory[] = []
   const deletes: string[] = []
+  const patches: { id: string; body: unknown }[] = []
   let counter = 0
   const history: Record<string, { id: string; role: string; content: string; created_at: string }[]> = {
     s1: [{ id: 'a1', role: 'user', content: 'How was my week?', created_at: '2025-06-20T08:00:00Z' }],
@@ -33,7 +35,7 @@ async function mockChatApis(page: Page, opts: { failSummary?: boolean } = {}) {
   await page.route('**/api/ai/chat/sessions', (r: Route) => {
     if (r.request().method() === 'POST') {
       counter++
-      const s = { id: `n${counter}`, title: 'New chat', created_at: '2025-06-22T08:00:00Z', updated_at: '2025-06-22T08:00:00Z' }
+      const s = { id: `n${counter}`, title: 'New chat', created_at: '2025-06-22T08:00:00Z', updated_at: '2025-06-22T08:00:00Z', recall_other_chats: false }
       sessions.unshift(s)
       history[s.id] = []
       return r.fulfill({ status: 201, json: { session: s } })
@@ -43,6 +45,14 @@ async function mockChatApis(page: Page, opts: { failSummary?: boolean } = {}) {
   await page.route('**/api/ai/chat/sessions/*', (r: Route) => {
     const url = new URL(r.request().url())
     const id = url.pathname.split('/').pop()!
+    if (r.request().method() === 'PATCH') {
+      const body = JSON.parse(r.request().postData() ?? '{}')
+      patches.push({ id, body })
+      if (opts.failPatch) return r.fulfill({ status: 500, json: { error: 'boom' } })
+      const target = sessions.find((s) => s.id === id)!
+      target.recall_other_chats = body.recallOtherChats
+      return r.fulfill({ json: { session: target } })
+    }
     const keep = url.searchParams.get('keepHistory') === 'true'
     deletes.push(`${id}:${keep}`)
     if (keep && opts.failSummary) return r.fulfill({ status: 502, json: { error: 'Could not summarize the chat.' } })
@@ -70,7 +80,7 @@ async function mockChatApis(page: Page, opts: { failSummary?: boolean } = {}) {
     memories.splice(i, 1)
     return r.fulfill({ json: { deleted: id } })
   })
-  return { deletes, sessions, memories }
+  return { deletes, patches, sessions, memories }
 }
 
 const STYLE = 'nextjs-portal { display: none !important }'
@@ -193,4 +203,46 @@ test('summary failure keeps the chat and still offers delete everything', async 
   await page.getByRole('button', { name: 'Delete everything' }).click()
   await expect(page.getByRole('status')).toContainText('Chat deleted.')
   expect(mock.deletes).toEqual(['s2:true', 's2:false'])
+})
+
+test('per-chat memory toggle: default off, persists, rolls back on failure', async ({ page }, testInfo) => {
+  const project = testInfo.project.name
+  const mock = await mockChatApis(page)
+  await open(page)
+  await page.getByRole('button', { name: 'Chats', exact: true }).click()
+
+  const sw = page.getByRole('switch', { name: 'Use other chats as memory' })
+  await expect(sw).not.toBeChecked()
+  await expect(page.getByText('Off: this chat starts clean. Kept notes and activity notes still apply.')).toBeVisible()
+  const box = (await sw.locator('xpath=ancestor::label').boundingBox())!
+  expect(box.height).toBeGreaterThanOrEqual(43.5)
+  await guards(page, project)
+  await shot(page, project, 'recall-off')
+
+  await sw.check()
+  await expect(sw).toBeChecked()
+  await expect(page.getByText('On: this chat can also draw on your other chats.')).toBeVisible()
+  expect(mock.patches).toEqual([{ id: 's2', body: { recallOtherChats: true } }])
+  expect(mock.sessions[0].recall_other_chats).toBe(true)
+  expect(mock.sessions[1].recall_other_chats).toBe(false)
+  await guards(page, project)
+  await shot(page, project, 'recall-on')
+
+  // The setting persists across a reload of the mocked list.
+  await page.reload()
+  await expect(page.getByText('Pacing for 42k?')).toBeVisible()
+  await page.getByRole('button', { name: 'Chats', exact: true }).click()
+  await expect(page.getByRole('switch', { name: 'Use other chats as memory' })).toBeChecked()
+})
+
+test('per-chat memory toggle rolls back when saving fails', async ({ page }) => {
+  const mock = await mockChatApis(page, { failPatch: true })
+  await open(page)
+  await page.getByRole('button', { name: 'Chats', exact: true }).click()
+  const sw = page.getByRole('switch', { name: 'Use other chats as memory' })
+  await sw.click()
+  await expect(page.getByRole('status')).toContainText('Could not change the memory setting')
+  await expect(sw).not.toBeChecked()
+  expect(mock.patches).toHaveLength(1)
+  expect(mock.sessions[0].recall_other_chats).toBe(false)
 })
