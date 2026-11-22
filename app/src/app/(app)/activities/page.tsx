@@ -1,8 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
+import { getT } from '@/lib/i18n/server'
 import { ActivitiesView } from '@/components/activities/activities-view'
 import type { Metadata } from 'next'
 
-export const metadata: Metadata = { title: 'Activities' }
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT()
+  return { title: t('act.title') }
+}
 
 export default async function ActivitiesPage() {
   const supabase = await createClient()

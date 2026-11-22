@@ -8,17 +8,24 @@ import { isDeletable } from '@/lib/plan/delete-session'
 import type { PlanSessionRow } from '@/lib/plan/load-plan'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { SESSION_TYPE_LABELS, SPORT_EMOJI, SPORT_LABELS } from '@/lib/utils'
+import { SPORT_EMOJI } from '@/lib/utils'
+import type { DictKey } from '@/lib/i18n/dictionaries/en'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { sessionTypeLabel, sportLabel } from '@/lib/i18n/labels'
 import { dayLabel, targetSummary } from './plan-format'
 
-const STATUS_BADGE: Record<
-  PlanSessionRow['status'],
-  { label: string; variant: 'secondary' | 'success' | 'warning' | 'info' }
-> = {
-  pending: { label: 'Planned', variant: 'secondary' },
-  completed: { label: 'Done', variant: 'success' },
-  skipped: { label: 'Skipped', variant: 'warning' },
-  modified: { label: 'Moved/adjusted', variant: 'info' },
+const STATUS_KEY: Record<PlanSessionRow['status'], DictKey> = {
+  pending: 'plan.status.pending',
+  completed: 'plan.status.completed',
+  skipped: 'plan.status.skipped',
+  modified: 'plan.status.modified',
+}
+
+const STATUS_VARIANT: Record<PlanSessionRow['status'], 'secondary' | 'success' | 'warning' | 'info'> = {
+  pending: 'secondary',
+  completed: 'success',
+  skipped: 'warning',
+  modified: 'info',
 }
 
 interface Props {
@@ -40,6 +47,8 @@ interface Props {
  * the guard on PATCH (Req 2a.4); this check only decides whether to show the UI.
  */
 export function SessionCard({ session, today, minDate, maxDate, onMoved, onDeleted }: Props) {
+  const t = useT()
+  const locale = useLocale()
   const inputId = useId()
   const errorId = useId()
   const [moving, setMoving] = useState(false)
@@ -53,16 +62,15 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const deleteErrId = useId()
-  const badge = STATUS_BADGE[session.status]
-  const typeLabel =
-    SESSION_TYPE_LABELS[(session.session_type ?? '').toLowerCase()] ??
-    session.session_type ??
-    SPORT_LABELS[session.sport_type]
-  const targets = targetSummary(session)
+  const badge = { label: t(STATUS_KEY[session.status]), variant: STATUS_VARIANT[session.status] }
+  const typeLabel = session.session_type
+    ? sessionTypeLabel(t, session.session_type)
+    : sportLabel(t, session.sport_type)
+  const targets = targetSummary(session, locale)
 
   async function submit() {
     if (!date || date === session.scheduled_date) {
-      setError('Pick a different date.')
+      setError(t('plan.pickDifferentDate'))
       return
     }
     setBusy(true)
@@ -75,13 +83,13 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
       })
       const json = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) {
-        setError(json.error ?? 'Could not move the session.')
+        setError(json.error ?? t('plan.moveFailed'))
         return
       }
       setMoving(false)
-      onMoved(`${typeLabel} moved to ${dayLabel(date)}.`)
+      onMoved(t('plan.moved', { type: typeLabel, day: dayLabel(date, locale) }))
     } catch {
-      setError('Network error. Try again.')
+      setError(t('common.networkError'))
     } finally {
       setBusy(false)
     }
@@ -94,12 +102,12 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
       const res = await http(`/api/plan/sessions/${session.id}`, { method: 'DELETE' })
       const json = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) {
-        setDeleteError(json.error ?? 'Could not delete the session.')
+        setDeleteError(json.error ?? t('plan.deleteFailed'))
         return
       }
-      onDeleted(`${typeLabel} on ${dayLabel(session.scheduled_date)} deleted.`)
+      onDeleted(t('plan.deleted', { type: typeLabel, day: dayLabel(session.scheduled_date, locale) }))
     } catch {
-      setDeleteError('Network error. Try again.')
+      setDeleteError(t('common.networkError'))
     } finally {
       setDeleting(false)
     }
@@ -108,7 +116,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
   return (
     <article
       className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 space-y-2"
-      aria-label={`${typeLabel}, ${dayLabel(session.scheduled_date)}, ${badge.label}`}
+      aria-label={t('plan.sessionAria', { type: typeLabel, day: dayLabel(session.scheduled_date, locale), status: badge.label })}
     >
       <div className="flex items-start justify-between gap-2">
         <h4 className="text-sm font-semibold text-[var(--foreground)] min-w-0 break-words">
@@ -131,7 +139,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
           href={`/activities/${session.completed_activity_id}`}
           className="inline-flex min-h-11 items-center text-sm font-medium text-[var(--primary)] underline-offset-4 hover:underline"
         >
-          View activity
+          {t('plan.viewActivity')}
         </Link>
       )}
 
@@ -145,9 +153,9 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
             setError(null)
             setMoving(true)
           }}
-          aria-label={`Move ${typeLabel} on ${dayLabel(session.scheduled_date)} to another date`}
+          aria-label={t('plan.moveAria', { type: typeLabel, day: dayLabel(session.scheduled_date, locale) })}
         >
-          Move to…
+          {t('plan.moveTo')}
         </Button>
       )}
 
@@ -160,7 +168,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
           }}
         >
           <label htmlFor={inputId} className="block text-xs font-medium text-[var(--foreground)]">
-            Move to date
+            {t('plan.moveToDate')}
           </label>
           <input
             id={inputId}
@@ -180,7 +188,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
           )}
           <div className="flex gap-2">
             <Button type="submit" className="min-h-11 flex-1" disabled={busy}>
-              {busy ? 'Moving…' : 'Move'}
+              {busy ? t('plan.moving') : t('plan.move')}
             </Button>
             <Button
               type="button"
@@ -189,7 +197,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
               disabled={busy}
               onClick={() => setMoving(false)}
             >
-              Cancel
+              {t('plan.cancel')}
             </Button>
           </div>
         </form>
@@ -204,20 +212,20 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
             setDeleteError(null)
             setConfirmingDelete(true)
           }}
-          aria-label={`Delete ${typeLabel} on ${dayLabel(session.scheduled_date)}`}
+          aria-label={t('plan.deleteAria', { type: typeLabel, day: dayLabel(session.scheduled_date, locale) })}
         >
-          Delete
+          {t('plan.delete')}
         </Button>
       )}
 
       {canDelete && confirmingDelete && (
         <div
           role="alertdialog"
-          aria-label={`Confirm deleting ${typeLabel}`}
+          aria-label={t('plan.confirmDeleteAria', { type: typeLabel })}
           className="space-y-2 rounded-md border border-[var(--destructive)] p-2"
         >
           <p className="text-xs text-[var(--foreground)]">
-            Delete this session from your plan? This cannot be undone.
+            {t('plan.deleteExplain')}
           </p>
           {deleteError && (
             <p id={deleteErrId} role="alert" className="text-xs text-[var(--destructive)]">
@@ -232,7 +240,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
               disabled={deleting}
               onClick={() => void remove()}
             >
-              {deleting ? 'Deleting…' : 'Delete session'}
+              {deleting ? t('plan.deleting') : t('plan.deleteSession')}
             </Button>
             <Button
               type="button"
@@ -242,7 +250,7 @@ export function SessionCard({ session, today, minDate, maxDate, onMoved, onDelet
               autoFocus
               onClick={() => setConfirmingDelete(false)}
             >
-              Keep
+              {t('plan.keep')}
             </Button>
           </div>
         </div>

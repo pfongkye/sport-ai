@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button'
 import { MetricsChart } from './metrics-chart'
 import { ActivityInsight } from './activity-insight'
 import { SessionNotes } from './session-notes'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { sportLabel } from '@/lib/i18n/labels'
 import {
   SPORT_EMOJI,
-  SPORT_LABELS,
   formatDate,
   formatDistance,
   formatDuration,
@@ -43,6 +44,8 @@ export function ActivityDetail({
   timeZone?: string
 }) {
   const router = useRouter()
+  const t = useT()
+  const locale = useLocale()
   const [deleting, setDeleting] = useState(false)
 
   const streamByType = new Map(streams.map((s) => [s.stream_type, s.data]))
@@ -50,7 +53,7 @@ export function ActivityDetail({
   const path: [number, number][] = latlng?.map((p) => p.v) ?? []
 
   async function handleDelete() {
-    if (!confirm('Delete this activity? This cannot be undone.')) return
+    if (!confirm(t('act.deleteConfirm'))) return
     setDeleting(true)
     const res = await http(`/api/activities/${activity.id}`, { method: 'DELETE' })
     if (res.ok) {
@@ -58,20 +61,20 @@ export function ActivityDetail({
       router.refresh()
     } else {
       setDeleting(false)
-      alert('Failed to delete activity.')
+      alert(t('act.deleteFailed'))
     }
   }
 
   const stats: { label: string; value: string }[] = []
-  if (activity.distance_m) stats.push({ label: 'Distance', value: formatDistance(activity.distance_m) })
-  if (activity.duration_s) stats.push({ label: 'Duration', value: formatDuration(activity.duration_s) })
-  if (activity.avg_pace_s_per_km) stats.push({ label: 'Avg Pace', value: formatPace(activity.avg_pace_s_per_km) })
-  if (activity.avg_hr_bpm) stats.push({ label: 'Avg HR', value: `${activity.avg_hr_bpm} bpm` })
-  if (activity.max_hr_bpm) stats.push({ label: 'Max HR', value: `${activity.max_hr_bpm} bpm` })
-  if (activity.avg_cadence_rpm) stats.push({ label: 'Avg Cadence', value: `${activity.avg_cadence_rpm} spm` })
-  if (activity.elevation_gain_m) stats.push({ label: 'Elevation', value: `${Math.round(activity.elevation_gain_m)} m` })
-  if (activity.calories_kcal) stats.push({ label: 'Calories', value: `${activity.calories_kcal} kcal` })
-  if (activity.training_load) stats.push({ label: 'Training Load', value: `${Math.round(activity.training_load)}` })
+  if (activity.distance_m) stats.push({ label: t('act.stat.distance'), value: formatDistance(activity.distance_m, 'metric', locale) })
+  if (activity.duration_s) stats.push({ label: t('act.stat.duration'), value: formatDuration(activity.duration_s) })
+  if (activity.avg_pace_s_per_km) stats.push({ label: t('act.stat.avgPace'), value: formatPace(activity.avg_pace_s_per_km) })
+  if (activity.avg_hr_bpm) stats.push({ label: t('act.stat.avgHr'), value: `${activity.avg_hr_bpm} bpm` })
+  if (activity.max_hr_bpm) stats.push({ label: t('act.stat.maxHr'), value: `${activity.max_hr_bpm} bpm` })
+  if (activity.avg_cadence_rpm) stats.push({ label: t('act.stat.avgCadence'), value: `${activity.avg_cadence_rpm} spm` })
+  if (activity.elevation_gain_m) stats.push({ label: t('act.stat.elevation'), value: `${Math.round(activity.elevation_gain_m)} m` })
+  if (activity.calories_kcal) stats.push({ label: t('act.stat.calories'), value: `${activity.calories_kcal} kcal` })
+  if (activity.training_load) stats.push({ label: t('act.stat.load'), value: `${Math.round(activity.training_load)}` })
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-4xl">
@@ -83,16 +86,16 @@ export function ActivityDetail({
           </span>
           <div>
             <h1 className="text-xl font-bold text-[var(--foreground)]">
-              {SPORT_LABELS[activity.sport_type] ?? activity.sport_type}
-              {activity.notes ? ` — ${activity.notes}` : ''}
+              {sportLabel(t, activity.sport_type)}
+              {activity.notes ? ` · ${activity.notes}` : ''}
             </h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              {formatDate(activity.started_at, 'long', timeZone)}
+              {formatDate(activity.started_at, 'long', timeZone, locale)}
             </p>
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={handleDelete} disabled={deleting}>
-          {deleting ? 'Deleting…' : 'Delete'}
+          {deleting ? t('act.deleting') : t('act.delete')}
         </Button>
       </div>
 
@@ -131,34 +134,34 @@ export function ActivityDetail({
       <Card>
         <CardContent className="pt-6 space-y-6">
           <MetricsChart
-            title="Heart Rate"
+            title={t('act.chart.hr')}
             points={(streamByType.get('heartrate') as { t: number; v: number }[]) ?? []}
             color="#ef4444"
             kind="hr"
             unit=""
           />
           <MetricsChart
-            title="Pace"
+            title={t('act.chart.pace')}
             points={(streamByType.get('pace') as { t: number; v: number }[]) ?? []}
             color="#f97316"
             kind="pace"
           />
           <MetricsChart
-            title="Cadence"
+            title={t('act.chart.cadence')}
             points={(streamByType.get('cadence') as { t: number; v: number }[]) ?? []}
             color="#8b5cf6"
             kind="cadence"
             unit=""
           />
           <MetricsChart
-            title="Elevation"
+            title={t('act.chart.elevation')}
             points={(streamByType.get('altitude') as { t: number; v: number }[]) ?? []}
             color="#3b82f6"
             kind="altitude"
             unit=" m"
           />
           <MetricsChart
-            title="Power"
+            title={t('act.chart.power')}
             points={(streamByType.get('power') as { t: number; v: number }[]) ?? []}
             color="#eab308"
             kind="power"

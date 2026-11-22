@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { cn } from '@/lib/utils'
+import { useT } from '@/lib/i18n/client'
 
 const itemClass =
   'flex w-full min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium outline-none cursor-pointer text-[var(--foreground)] data-[highlighted]:bg-[var(--muted)]'
@@ -12,6 +13,7 @@ const itemClass =
 /** Top bar shown below md only: logo + menu with Settings and Sign out (sidebar is hidden there). */
 export function MobileHeader() {
   const pathname = usePathname()
+  const t = useT()
   const signOutForm = useRef<HTMLFormElement>(null)
   const settingsActive = pathname === '/settings' || pathname.startsWith('/settings/')
 
@@ -28,7 +30,7 @@ export function MobileHeader() {
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
-            aria-label="Open menu"
+            aria-label={t('nav.openMenu')}
             className="-mr-2 flex size-11 items-center justify-center rounded-md text-[var(--foreground)] hover:bg-[var(--muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="size-6" aria-hidden>
@@ -54,7 +56,7 @@ export function MobileHeader() {
                   <circle cx="12" cy="12" r="3" />
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                 </svg>
-                Settings
+                {t('nav.settings')}
               </Link>
             </DropdownMenu.Item>
             <form ref={signOutForm} action="/api/auth/signout" method="POST">
@@ -72,7 +74,7 @@ export function MobileHeader() {
                     <polyline points="16 17 21 12 16 7" />
                     <line x1="21" y1="12" x2="9" y2="12" />
                   </svg>
-                  Sign out
+                  {t('nav.signOut')}
                 </button>
               </DropdownMenu.Item>
             </form>

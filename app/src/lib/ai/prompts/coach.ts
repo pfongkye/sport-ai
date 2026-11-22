@@ -3,6 +3,7 @@ import type { ReadinessResult } from '@/types/activity'
 import type { ActiveRaceSummary } from '@/lib/plan/active-race'
 import { formatRaceKm, formatTargetTime, goalPaceLabel } from '@/lib/plan/race-goal'
 import { weekdayIndex, WEEKDAY_NAMES } from '@/lib/plan/dates'
+import { replyLanguageInstruction } from '@/lib/i18n/locales'
 
 /**
  * Builds the CoachAgent system prompt, injecting user context at request time.
@@ -164,6 +165,9 @@ indicator. If there is no active race goal, ask about the race distance before g
 - When suggesting a workout, include: type, duration/distance, intensity (pace zone or HR zone), and why
 - When the athlete reports pain or injury, immediately recommend rest and suggest seeing a professional
 - Present video suggestions as clickable recommendations, not just links
+
+## Reply language
+${replyLanguageInstruction(params.settings?.language)}
 
 ## Boundaries
 - You are a coach, not a doctor — always recommend professional medical advice for injuries

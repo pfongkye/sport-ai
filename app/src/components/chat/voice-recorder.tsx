@@ -2,25 +2,46 @@
 
 import { useState } from 'react'
 import { useRecorder } from '@/hooks/use-recorder'
+import { useSpeechRecognition } from '@/hooks/use-speech-recognition'
 import { http } from '@/lib/http'
 import { cn } from '@/lib/utils'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { speechLang } from '@/lib/i18n/locales'
+import { readVoiceEngine } from '@/lib/voice/engine'
 
 interface VoiceRecorderProps {
-  /** Called with the transcript once recording is transcribed. */
-  onTranscript: (text: string) => void
+  /** Called with the transcript (and the detected language code when known) once ready. */
+  onTranscript: (text: string, language?: string | null) => void
   disabled?: boolean
 }
 
 /**
- * Mic button that records, transcribes via /api/ai/voice/transcribe, and hands
- * the text back to the parent. Tap to start, tap again to stop & transcribe.
+ * Mic button. Default engine: record, then transcribe via /api/ai/voice/transcribe
+ * (Whisper, language auto-detected). Opt-in engine: the browser's Web Speech API in the
+ * athlete's saved language (Settings > Voice input). Either way the text goes back to the
+ * parent, which shows it for editing. Tap to start, tap again to stop.
  */
 export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
   const { state, error, start, stop } = useRecorder()
+  const t = useT()
+  const locale = useLocale()
   const [transcribing, setTranscribing] = useState(false)
+  const [usingBrowser, setUsingBrowser] = useState(false)
+  // The browser can end recognition by itself; pass on what was heard and reset the button.
+  const speech = useSpeechRecognition((text) => {
+    setUsingBrowser(false)
+    onTranscript(text, locale)
+  })
 
   async function toggle() {
     if (transcribing || disabled) return
+
+    if (usingBrowser) {
+      const text = await speech.stop()
+      setUsingBrowser(false)
+      onTranscript(text, locale)
+      return
+    }
 
     if (state === 'recording') {
       const blob = await stop()
@@ -29,10 +50,12 @@ export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
       try {
         const form = new FormData()
         form.append('audio', blob, 'audio.webm')
+        // Fallback hint only: the server auto-detects the spoken language first.
+        form.append('language', locale)
         const res = await http('/api/ai/voice/transcribe', { method: 'POST', body: form })
         const json = await res.json().catch(() => ({}))
         if (res.ok && json.text) {
-          onTranscript(json.text)
+          onTranscript(json.text, json.language ?? null)
         } else {
           onTranscript('') // parent can ignore empty
           console.warn('transcription:', json.error ?? res.status)
@@ -40,12 +63,20 @@ export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
       } finally {
         setTranscribing(false)
       }
+    } else if (readVoiceEngine() === 'browser') {
+      const ok = speech.start(speechLang(locale), {
+        unsupported: t('voice.unsupported'),
+        denied: t('voice.permissionDenied'),
+        failed: t('voice.startFailed'),
+      })
+      setUsingBrowser(ok)
     } else {
       await start()
     }
   }
 
-  const recording = state === 'recording'
+  const recording = state === 'recording' || usingBrowser
+  const shownError = error ? t(error) : speech.error
 
   return (
     <div className="flex flex-col items-center">
@@ -53,7 +84,7 @@ export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
         type="button"
         onClick={toggle}
         disabled={disabled || transcribing}
-        aria-label={recording ? 'Stop recording' : 'Record voice'}
+        aria-label={recording ? t('voice.stop') : t('voice.record')}
         aria-pressed={recording}
         className={cn(
           'shrink-0 flex items-center justify-center size-10 rounded-xl transition-colors disabled:opacity-40',
@@ -80,7 +111,7 @@ export function VoiceRecorder({ onTranscript, disabled }: VoiceRecorderProps) {
           </svg>
         )}
       </button>
-      {error && <span className="text-[10px] text-red-500 mt-1 max-w-24 text-center">{error}</span>}
+      {shownError && <span className="text-[10px] text-red-500 mt-1 max-w-24 text-center">{shownError}</span>}
     </div>
   )
 }

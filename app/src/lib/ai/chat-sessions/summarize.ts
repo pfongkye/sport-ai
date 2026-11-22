@@ -1,5 +1,6 @@
 import { generateText } from 'ai'
 import { resolveUserAISettings, resolveModel } from '@/lib/ai/provider'
+import { replyLanguageInstruction } from '@/lib/i18n/locales'
 
 export const SUMMARY_TIMEOUT_MS = 40_000
 export const MAX_TRANSCRIPT_CHARS = 24_000
@@ -19,13 +20,17 @@ export function buildTranscript(messages: TranscriptMessage[]): string {
 }
 
 /** Pure prompt builder for the summary call. */
-export function buildSummaryPrompt(messages: TranscriptMessage[]): { system: string; prompt: string } {
+export function buildSummaryPrompt(
+  messages: TranscriptMessage[],
+  language?: string | null
+): { system: string; prompt: string } {
   const system = [
     'You compact a finished coaching chat into a short note the coach can reuse later.',
     'Keep ONLY durable coaching facts: goals, injuries and health limits, preferences, decisions made, constraints (schedule, equipment), and open commitments.',
     'Drop greetings, small talk, one-off questions, and anything already obvious from the training data.',
     'Never invent facts. If the chat has nothing durable, say so in one sentence.',
     `Write plain text, bullet points allowed, at most ${MAX_SUMMARY_CHARS} characters. No preamble.`,
+    replyLanguageInstruction(language),
   ].join('\n')
   return { system, prompt: `Chat transcript:\n\n${buildTranscript(messages)}` }
 }
@@ -38,7 +43,7 @@ export async function summarizeChat(userId: string, messages: TranscriptMessage[
     settings?.ai_model ?? 'gpt-4o',
     userApiKey
   )
-  const { system, prompt } = buildSummaryPrompt(messages)
+  const { system, prompt } = buildSummaryPrompt(messages, settings?.language)
   const { text } = await generateText({
     model,
     system,

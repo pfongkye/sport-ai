@@ -2,6 +2,8 @@ import { formatPace } from '@/lib/utils'
 import type { TrainingRecap } from '@/lib/ai/workflows/training-recap'
 import { weekLabel } from './plan-format'
 import { addDays } from '@/lib/plan/dates'
+import { makeT, type TFunction } from '@/lib/i18n/translate'
+import type { Locale } from '@/lib/i18n/locales'
 
 export interface RecapWeekView {
   key: string
@@ -19,41 +21,92 @@ export interface RecapView {
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`
-const pace = (s: number | null) => (s == null ? 'Not available' : formatPace(s))
+
+/**
+ * The recap is stored with English reason/note strings written by the server. Known ones are
+ * translated here by pattern; anything else is shown as stored.
+ */
+function reasonText(reason: string, t: TFunction): string {
+  if (reason === 'no activity') return t('recap.reasonNoActivity')
+  const m = /^(\d+) activity \(minimum (\d+)\)$/.exec(reason)
+  return m ? t('recap.reasonMinActivities', { n: m[1], min: m[2] }) : reason
+}
+
+function noteText(note: string, t: TFunction): string {
+  let m: RegExpExecArray | null
+  if ((m = /^(\d+)% of runs have no heart rate$/.exec(note))) return t('recap.noteNoHr', { pct: m[1] })
+  if ((m = /^(\d+)% of runs have no usable pace$/.exec(note))) return t('recap.noteNoPace', { pct: m[1] })
+  if ((m = /^(\d+)% of runs have no distance/.exec(note))) return t('recap.noteNoDistance', { pct: m[1] })
+  if (note.startsWith('Max heart rate estimated as 220')) return t('recap.noteMaxHrAge')
+  if (note === 'Max heart rate unknown, so no intensity split') return t('recap.noteMaxHrUnknown')
+  if (note.startsWith('A very large week was capped')) return t('recap.noteCapped')
+  if (note.startsWith('No qualifying weeks')) return t('recap.noteNoWeeks')
+  return note
+}
 
 /** Pure view model for the "What your plan is based on" section. Metric only (no units setting is read in the plan UI). */
-export function buildRecapView(recap: TrainingRecap): RecapView {
+export function buildRecapView(recap: TrainingRecap, locale: Locale = 'en'): RecapView {
+  const t = makeT(locale)
+  // Values are already rounded to 1 decimal; only the decimal separator depends on the language.
+  const km = (n: number) => (locale === 'fr' ? String(n).replace('.', ',') : String(n))
+  const pace = (s: number | null) => (s == null ? t('recap.notAvailable') : formatPace(s))
   const weeks = recap.weeks.map((w) => ({
     key: w.weekStart,
-    label: weekLabel(w.weekStart, addDays(w.weekStart, 6)),
+    label: weekLabel(w.weekStart, addDays(w.weekStart, 6), locale),
     used: w.qualifies,
     detail: w.qualifies
-      ? `${w.runKm} km · ${w.runCount} ${w.runCount === 1 ? 'run' : 'runs'}${w.capped ? ' (capped as an outlier)' : ''}`
-      : `Not used: ${w.reason}`,
+      ? t(w.runCount === 1 ? 'recap.runOne' : 'recap.runMany', { km: km(w.runKm), n: w.runCount }) +
+        (w.capped ? t('recap.capped') : '')
+      : t('recap.notUsed', { reason: reasonText(w.reason ?? '', t) }),
   }))
-  const t = recap.typical
+  const typ = recap.typical
   const facts = [
     {
-      label: 'Starting weekly volume',
-      value: `${recap.baseline.weeklyKm} km (${recap.baseline.source === 'history' ? 'from your recent weeks' : 'estimated from your training days'})`,
+      label: t('recap.startVolume'),
+      value: `${km(recap.baseline.weeklyKm)} km (${recap.baseline.source === 'history' ? t('recap.fromHistory') : t('recap.estimated')})`,
     },
-    { label: 'Typical easy pace', value: pace(t.easyPaceSPerKm) },
+    { label: t('recap.easyPace'), value: pace(typ.easyPaceSPerKm) },
     {
-      label: 'Typical long run',
-      value: t.longRunKm != null ? `${t.longRunKm} km at ${pace(t.longRunPaceSPerKm)}` : 'Not available',
+      label: t('recap.longRun'),
+      value:
+        typ.longRunKm != null
+          ? t('recap.longRunAt', { km: km(typ.longRunKm), pace: pace(typ.longRunPaceSPerKm) })
+          : t('recap.notAvailable'),
     },
     {
-      label: 'Intensity split',
+      label: t('recap.intensity'),
       value: recap.intensity
-        ? `${pct(recap.intensity.easy)} easy, ${pct(recap.intensity.moderate)} moderate, ${pct(recap.intensity.hard)} hard`
-        : 'Not available',
+        ? t('recap.intensityValue', {
+            easy: pct(recap.intensity.easy),
+            moderate: pct(recap.intensity.moderate),
+            hard: pct(recap.intensity.hard),
+          })
+        : t('recap.notAvailable'),
     },
-    ...(recap.trend ? [{ label: 'Trend', value: `${recap.trend.direction} (${recap.trend.changePct}% vs older weeks)` }] : []),
+    ...(recap.trend
+      ? [
+          {
+            label: t('recap.trend'),
+            value: t('recap.trendValue', {
+              direction: t(
+                recap.trend.direction === 'up'
+                  ? 'recap.trendUp'
+                  : recap.trend.direction === 'down'
+                    ? 'recap.trendDown'
+                    : 'recap.trendStable'
+              ),
+              pct: recap.trend.changePct,
+            }),
+          },
+        ]
+      : []),
   ]
   return {
-    summary: `${recap.qualifyingWeeks} of ${recap.weeks.length} recent weeks used${recap.sparse ? ' (limited history, so the plan starts conservatively)' : ''}`,
+    summary:
+      t('recap.summary', { used: recap.qualifyingWeeks, total: recap.weeks.length }) +
+      (recap.sparse ? t('recap.sparse') : ''),
     weeks,
     facts,
-    notes: recap.dataQuality.notes,
+    notes: recap.dataQuality.notes.map((n) => noteText(n, t)),
   }
 }

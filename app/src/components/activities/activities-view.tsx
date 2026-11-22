@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button'
 import { ActivityUploader } from './activity-uploader'
 import { AddActivityByVoice } from './add-activity-by-voice'
 import { StravaImportPanel } from '@/components/strava/strava-import-panel'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { sportLabel } from '@/lib/i18n/labels'
 import {
   SPORT_EMOJI,
-  SPORT_LABELS,
   formatDistance,
   formatDuration,
   formatPace,
@@ -35,6 +36,8 @@ interface ActivityRow {
 const SPORTS = ['all', 'run', 'football', 'gym', 'cycle', 'other']
 
 export function ActivitiesView({ initialActivities }: { initialActivities: ActivityRow[] }) {
+  const t = useT()
+  const locale = useLocale()
   const [showUpload, setShowUpload] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showStrava, setShowStrava] = useState(false)
@@ -48,7 +51,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-4xl">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">Activities</h1>
+        <h1 className="text-2xl font-bold text-[var(--foreground)]">{t('act.title')}</h1>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -58,7 +61,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
               setShowStrava(false)
             }}
           >
-            {showAdd ? 'Close' : 'Add by voice/text'}
+            {showAdd ? t('common.close') : t('act.addByVoice')}
           </Button>
           <Button
             variant="outline"
@@ -68,7 +71,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
               setShowAdd(false)
             }}
           >
-            {showStrava ? 'Close' : 'Import from Strava'}
+            {showStrava ? t('common.close') : t('act.importStrava')}
           </Button>
           <Button
             onClick={() => {
@@ -77,7 +80,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
               setShowStrava(false)
             }}
           >
-            {showUpload ? 'Close' : 'Upload'}
+            {showUpload ? t('common.close') : t('act.upload')}
           </Button>
         </div>
       </div>
@@ -119,7 +122,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
                 : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--muted)]')
             }
           >
-            {s === 'all' ? 'All' : (SPORT_EMOJI[s] ?? '') + ' ' + (SPORT_LABELS[s] ?? s)}
+            {s === 'all' ? t('act.all') : (SPORT_EMOJI[s] ?? '') + ' ' + sportLabel(t, s)}
           </button>
         ))}
       </div>
@@ -129,9 +132,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
         <Card className="border-dashed">
           <CardContent className="py-10 text-center">
             <p className="text-sm text-[var(--muted-foreground)]">
-              {filter === 'all'
-                ? 'No activities yet. Upload a .FIT, .GPX, or .TCX file to get started.'
-                : `No ${SPORT_LABELS[filter] ?? filter} activities.`}
+              {filter === 'all' ? t('act.emptyAll') : t('act.emptySport', { sport: sportLabel(t, filter) })}
             </p>
           </CardContent>
         </Card>
@@ -147,14 +148,14 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">
-                        {SPORT_LABELS[a.sport_type] ?? a.sport_type}
+                        {sportLabel(t, a.sport_type)}
                       </span>
                       <span className="text-xs text-[var(--muted-foreground)]">
-                        {timeAgo(a.started_at)}
+                        {timeAgo(a.started_at, undefined, locale)}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--muted-foreground)] flex-wrap">
-                      {a.distance_m ? <span>{formatDistance(a.distance_m)}</span> : null}
+                      {a.distance_m ? <span>{formatDistance(a.distance_m, 'metric', locale)}</span> : null}
                       {a.duration_s ? <span>{formatDuration(a.duration_s)}</span> : null}
                       {a.avg_pace_s_per_km ? <span>{formatPace(a.avg_pace_s_per_km)}</span> : null}
                       {a.avg_hr_bpm ? <span>{a.avg_hr_bpm} bpm</span> : null}
@@ -162,7 +163,7 @@ export function ActivitiesView({ initialActivities }: { initialActivities: Activ
                   </div>
                   {a.training_load ? (
                     <Badge variant="secondary" className="shrink-0 text-xs">
-                      Load {Math.round(a.training_load)}
+                      {t('act.load', { n: Math.round(a.training_load) })}
                     </Badge>
                   ) : null}
                 </CardContent>

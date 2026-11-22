@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { LoginForm } from './login-form'
+import { getT } from '@/lib/i18n/server'
 
 export const metadata = {
   title: 'Sign in — SportAI',
@@ -12,6 +13,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ redirectTo?: string; error?: string }>
 }) {
+  const { t } = await getT()
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -31,7 +33,7 @@ export default async function LoginPage({
             SportAI
           </h1>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Your AI-powered athletic coach
+            {t('login.tagline')}
           </p>
         </div>
 
@@ -42,9 +44,9 @@ export default async function LoginPage({
             className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400"
           >
             {error === 'auth_callback_failed'
-              ? 'Sign-in failed. Please try again.'
+              ? t('login.authFailed')
               : error === 'not_allowed'
-                ? "This account isn't on the access list for SportAI. Contact the owner if you think this is a mistake."
+                ? t('login.notAllowed')
                 : decodeURIComponent(error)}
           </div>
         )}
@@ -52,13 +54,13 @@ export default async function LoginPage({
         <LoginForm redirectTo={redirectTo} />
 
         <p className="text-center text-xs text-[var(--muted-foreground)]">
-          By signing in, you agree to our{' '}
+          {t('login.agreePrefix')}{' '}
           <a href="/terms" className="underline hover:text-[var(--foreground)]">
-            Terms
+            {t('login.terms')}
           </a>{' '}
-          and{' '}
+          {t('login.and')}{' '}
           <a href="/privacy" className="underline hover:text-[var(--foreground)]">
-            Privacy Policy
+            {t('login.privacy')}
           </a>
           .
         </p>

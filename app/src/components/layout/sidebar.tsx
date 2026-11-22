@@ -3,11 +3,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { useT } from '@/lib/i18n/client'
+import type { DictKey } from '@/lib/i18n/dictionaries/en'
 
-const navItems = [
+const navItems: { href: string; label: DictKey; icon: React.ReactNode }[] = [
   {
     href: '/dashboard',
-    label: 'Dashboard',
+    label: 'nav.dashboard',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -19,7 +21,7 @@ const navItems = [
   },
   {
     href: '/coach',
-    label: 'AI Coach',
+    label: 'nav.coach',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -28,7 +30,7 @@ const navItems = [
   },
   {
     href: '/plan',
-    label: 'Training Plan',
+    label: 'nav.plan',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -40,7 +42,7 @@ const navItems = [
   },
   {
     href: '/activities',
-    label: 'Activities',
+    label: 'nav.activities',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
@@ -49,7 +51,7 @@ const navItems = [
   },
   {
     href: '/routes',
-    label: 'Routes',
+    label: 'nav.routes',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <circle cx="6" cy="19" r="3" />
@@ -60,7 +62,7 @@ const navItems = [
   },
   {
     href: '/nutrition',
-    label: 'Nutrition',
+    label: 'nav.nutrition',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
@@ -73,7 +75,7 @@ const navItems = [
   },
   {
     href: '/settings',
-    label: 'Settings',
+    label: 'nav.settings',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
         <circle cx="12" cy="12" r="3" />
@@ -85,6 +87,7 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const t = useT()
 
   return (
     <aside className="hidden md:flex flex-col w-60 min-h-screen border-r border-[var(--border)] bg-[var(--card)] px-3 py-4 shrink-0">
@@ -97,7 +100,7 @@ export function Sidebar() {
       </Link>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-0.5" aria-label="Main navigation">
+      <nav className="flex-1 space-y-0.5" aria-label={t('nav.main')}>
         {navItems.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + '/')
           return (
@@ -113,7 +116,7 @@ export function Sidebar() {
               aria-current={active ? 'page' : undefined}
             >
               {item.icon}
-              {item.label}
+              {t(item.label)}
             </Link>
           )
         })}
@@ -130,7 +133,7 @@ export function Sidebar() {
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-          Sign out
+          {t('nav.signOut')}
         </button>
       </form>
     </aside>

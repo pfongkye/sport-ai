@@ -14,16 +14,19 @@ import { GeneratePlanForm } from './generate-plan-form'
 import { PlanRecap } from './plan-recap'
 import { ActivityCard } from './activity-card'
 import { SessionCard } from './session-card'
+import { useLocale, useT } from '@/lib/i18n/client'
+import type { TFunction } from '@/lib/i18n/translate'
+import type { Locale } from '@/lib/i18n/locales'
 import { dayLabel, prefillGoalDate, weekLabel } from './plan-format'
 
-function syncMessage(date: string, strava: StravaSyncStatus, imported: number): string {
-  const label = dayLabel(date)
-  if (strava === 'rate_limited') return 'Strava is rate limited, showing saved activities.'
-  if (strava === 'unauthorized') return 'Strava access expired. Reconnect it in Settings. Showing saved activities.'
-  if (strava === 'athlete_limit') return 'Strava is at its connection limit, showing saved activities.'
-  if (strava === 'error') return 'Could not reach Strava, showing saved activities.'
-  if (imported > 0) return `Synced ${label}: ${imported} new ${imported === 1 ? 'activity' : 'activities'}.`
-  return strava === 'not_connected' ? `${label}: showing saved activities. Connect Strava in Settings to import.` : `${label}: No new activities.`
+function syncMessage(date: string, strava: StravaSyncStatus, imported: number, t: TFunction, locale: Locale): string {
+  const day = dayLabel(date, locale)
+  if (strava === 'rate_limited') return t('plan.syncRateLimited')
+  if (strava === 'unauthorized') return t('plan.syncUnauthorized')
+  if (strava === 'athlete_limit') return t('plan.syncAthleteLimit')
+  if (strava === 'error') return t('plan.syncError')
+  if (imported > 0) return t(imported === 1 ? 'plan.syncedOne' : 'plan.syncedMany', { day, n: imported })
+  return t(strava === 'not_connected' ? 'plan.syncNotConnected' : 'plan.syncNone', { day })
 }
 
 interface Props {
@@ -56,6 +59,8 @@ function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
  */
 export function PlanView({ active, defaultGoal }: Props) {
   const router = useRouter()
+  const t = useT()
+  const locale = useLocale()
   const [announce, setAnnounce] = useState('')
   const [note, setNote] = useState('')
   const [showRegenerate, setShowRegenerate] = useState(false)
@@ -75,9 +80,9 @@ export function PlanView({ active, defaultGoal }: Props) {
           📅
         </p>
         <div>
-          <h2 className="text-lg font-semibold text-[var(--foreground)]">No active plan yet</h2>
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">{t('plan.noPlan')}</h2>
           <p className="text-sm text-[var(--muted-foreground)] mt-1 max-w-sm">
-            Generate a periodized plan from your goal, training days and recent load.
+            {t('plan.noPlanHelp')}
           </p>
         </div>
         <GeneratePlanForm
@@ -111,13 +116,13 @@ export function PlanView({ active, defaultGoal }: Props) {
         imported?: number
       }
       if (!res.ok) {
-        setAnnounce(json.error ?? 'Could not sync that day.')
+        setAnnounce(json.error ?? t('plan.syncFailed'))
         return
       }
-      setAnnounce(syncMessage(date, json.strava ?? 'error', json.imported ?? 0))
+      setAnnounce(syncMessage(date, json.strava ?? 'error', json.imported ?? 0, t, locale))
       router.refresh()
     } catch {
-      setAnnounce('Could not sync that day.')
+      setAnnounce(t('plan.syncFailed'))
     } finally {
       setSyncing(null)
     }
@@ -133,7 +138,7 @@ export function PlanView({ active, defaultGoal }: Props) {
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-[var(--foreground)] break-words">{plan.title}</h2>
           <p className="text-sm text-[var(--muted-foreground)]">
-            {dayLabel(plan.start_date)} → {dayLabel(plan.end_date)}
+            {dayLabel(plan.start_date, locale)} → {dayLabel(plan.end_date, locale)}
             {plan.goal ? ` · ${plan.goal}` : ''}
           </p>
         </div>
@@ -144,7 +149,7 @@ export function PlanView({ active, defaultGoal }: Props) {
           aria-expanded={showRegenerate}
           onClick={() => setShowRegenerate((v) => !v)}
         >
-          {showRegenerate ? 'Close' : 'Regenerate plan'}
+          {showRegenerate ? t('common.close') : t('plan.regenerate')}
         </Button>
       </div>
 
@@ -172,7 +177,7 @@ export function PlanView({ active, defaultGoal }: Props) {
 
       <PlanRecap recap={plan.recap} />
       {week && (
-        <section aria-label="Plan calendar" className="space-y-3">
+        <section aria-label={t('plan.calendar')} className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <Button
               type="button"
@@ -180,16 +185,16 @@ export function PlanView({ active, defaultGoal }: Props) {
               className="min-h-11 min-w-11"
               disabled={idx <= 0}
               onClick={() => setPicked(idx - 1)}
-              aria-label="Previous week"
+              aria-label={t('plan.prevWeek')}
             >
               <ChevronIcon direction="left" />
             </Button>
             <div className="text-center">
               <p className="text-sm font-semibold text-[var(--foreground)]" aria-live="polite">
-                Week {idx + 1} of {weeks.length}
+                {t('plan.weekOf', { n: idx + 1, total: weeks.length })}
               </p>
               <p className="text-xs text-[var(--muted-foreground)]">
-                {weekLabel(week.weekStart, addDays(week.weekStart, 6))}
+                {weekLabel(week.weekStart, addDays(week.weekStart, 6), locale)}
               </p>
               {idx !== defaultIdx && (
                 <button
@@ -197,7 +202,7 @@ export function PlanView({ active, defaultGoal }: Props) {
                   className="min-h-11 px-3 text-xs font-medium text-[var(--primary)] underline-offset-4 hover:underline"
                   onClick={() => setPicked(null)}
                 >
-                  Jump to this week
+                  {t('plan.jumpToThisWeek')}
                 </button>
               )}
             </div>
@@ -207,7 +212,7 @@ export function PlanView({ active, defaultGoal }: Props) {
               className="min-h-11 min-w-11"
               disabled={idx >= weeks.length - 1}
               onClick={() => setPicked(idx + 1)}
-              aria-label="Next week"
+              aria-label={t('plan.nextWeek')}
             >
               <ChevronIcon direction="right" />
             </Button>
@@ -220,7 +225,7 @@ export function PlanView({ active, defaultGoal }: Props) {
               return (
                 <li
                   key={day.date}
-                  aria-label={dayLabel(day.date)}
+                  aria-label={dayLabel(day.date, locale)}
                   className={cn(
                     'rounded-lg border p-2 space-y-2 min-w-0',
                     isToday
@@ -229,11 +234,11 @@ export function PlanView({ active, defaultGoal }: Props) {
                   )}
                 >
                   <p className="text-xs font-semibold text-[var(--muted-foreground)] flex items-center gap-2">
-                    {dayLabel(day.date)}
-                    {isToday && <span className="text-[var(--primary)]">Today</span>}
+                    {dayLabel(day.date, locale)}
+                    {isToday && <span className="text-[var(--primary)]">{t('plan.today')}</span>}
                   </p>
                   {items.length === 0 ? (
-                    <p className="text-xs text-[var(--muted-foreground)]">Rest</p>
+                    <p className="text-xs text-[var(--muted-foreground)]">{t('plan.rest')}</p>
                   ) : (
                     items.map((item) =>
                       item.kind === 'activity' ? (
@@ -263,10 +268,10 @@ export function PlanView({ active, defaultGoal }: Props) {
                       variant="outline"
                       className="min-h-11 w-full"
                       disabled={syncing !== null}
-                      aria-label={`Sync ${dayLabel(day.date)}`}
+                      aria-label={t('plan.syncAria', { day: dayLabel(day.date, locale) })}
                       onClick={() => syncDay(day.date)}
                     >
-                      {syncing === day.date ? 'Syncing…' : 'Sync'}
+                      {syncing === day.date ? t('plan.syncing') : t('plan.sync')}
                     </Button>
                   )}
                 </li>

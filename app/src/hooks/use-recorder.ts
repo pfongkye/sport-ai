@@ -10,7 +10,8 @@ export type RecorderState = 'idle' | 'recording' | 'error'
  */
 export function useRecorder() {
   const [state, setState] = useState<RecorderState>('idle')
-  const [error, setError] = useState<string | null>(null)
+  /** Dictionary key (voice.*) of the last error, translated by the caller. */
+  const [error, setError] = useState<'voice.unsupported' | 'voice.permissionDenied' | 'voice.startFailed' | null>(null)
   const mediaRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<BlobPart[]>([])
   const streamRef = useRef<MediaStream | null>(null)
@@ -26,7 +27,7 @@ export function useRecorder() {
     setError(null)
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setState('error')
-      setError('Recording not supported in this browser')
+      setError('voice.unsupported')
       return false
     }
     try {
@@ -46,8 +47,8 @@ export function useRecorder() {
       setState('error')
       setError(
         err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Microphone permission denied'
-          : 'Could not start recording'
+          ? 'voice.permissionDenied'
+          : 'voice.startFailed'
       )
       return false
     }

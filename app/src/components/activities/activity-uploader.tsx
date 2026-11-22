@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { http } from '@/lib/http'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/lib/i18n/client'
+import type { TFunction } from '@/lib/i18n/translate'
 
 type FileStatus = 'pending' | 'uploading' | 'created' | 'duplicate' | 'error'
 
@@ -36,6 +38,7 @@ async function snapshotFile(file: File): Promise<Blob> {
 
 export function ActivityUploader({ onDone }: { onDone?: () => void }) {
   const router = useRouter()
+  const t = useT()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [items, setItems] = useState<FileItem[]>([])
@@ -51,7 +54,7 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
       const key = `${file.name}-${file.size}-${Date.now()}-${Math.random()}`
       setItems((prev) => [
         ...prev,
-        { name: file.name, size: file.size, status: 'pending', message: 'Reading…', _key: key } as FileItem & { _key: string },
+        { name: file.name, size: file.size, status: 'pending', message: t('act.upload.reading'), _key: key } as FileItem & { _key: string },
       ])
       snapshotFile(file)
         .then((blob) => {
@@ -67,13 +70,13 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
           setItems((prev) =>
             prev.map((i) =>
               (i as FileItem & { _key?: string })._key === key
-                ? { ...i, status: 'error', message: 'Could not read file — re-pick it' }
+                ? { ...i, status: 'error', message: t('act.upload.readFailed') }
                 : i
             )
           )
         })
     })
-  }, [])
+  }, [t])
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -159,10 +162,10 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
         onDone?.()
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Network error'
+      const message = err instanceof Error ? err.message : t('common.networkError')
       setItems((prev) =>
         prev.map((i) =>
-          i.status === 'uploading' ? { ...i, status: 'error', message: `Upload failed: ${message}` } : i
+          i.status === 'uploading' ? { ...i, status: 'error', message: t('act.upload.failed', { message }) } : i
         )
       )
     } finally {
@@ -207,9 +210,9 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
         <p className="text-sm font-medium text-[var(--foreground)]">
-          Drop .FIT, .GPX, or .TCX files here
+          {t('act.upload.dropHere')}
         </p>
-        <p className="text-xs text-[var(--muted-foreground)]">or click to browse</p>
+        <p className="text-xs text-[var(--muted-foreground)]">{t('act.upload.orBrowse')}</p>
         <input
           ref={inputRef}
           type="file"
@@ -231,7 +234,7 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
               <StatusIcon status={item.status} />
               <span className="flex-1 truncate">{item.name}</span>
               <span className="text-xs text-[var(--muted-foreground)]">
-                {item.message ?? statusLabel(item.status)}
+                {item.message ?? statusLabel(item.status, t)}
               </span>
             </li>
           ))}
@@ -241,28 +244,28 @@ export function ActivityUploader({ onDone }: { onDone?: () => void }) {
       {(pendingCount > 0 || readingCount > 0) && (
         <Button className="w-full" onClick={upload} disabled={busy || pendingCount === 0}>
           {busy
-            ? 'Uploading…'
+            ? t('act.upload.uploading')
             : readingCount > 0
-              ? 'Reading files…'
-              : `Upload ${pendingCount} file${pendingCount > 1 ? 's' : ''}`}
+              ? t('act.upload.readingFiles')
+              : t(pendingCount === 1 ? 'act.upload.one' : 'act.upload.many', { n: pendingCount })}
         </Button>
       )}
     </div>
   )
 }
 
-function statusLabel(status: FileStatus): string {
+function statusLabel(status: FileStatus, t: TFunction): string {
   switch (status) {
     case 'pending':
-      return 'Ready'
+      return t('act.upload.ready')
     case 'uploading':
-      return 'Uploading…'
+      return t('act.upload.uploading')
     case 'created':
-      return 'Added'
+      return t('act.upload.added')
     case 'duplicate':
-      return 'Already uploaded'
+      return t('act.upload.duplicate')
     case 'error':
-      return 'Error'
+      return t('act.upload.error')
   }
 }
 

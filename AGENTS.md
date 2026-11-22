@@ -24,6 +24,41 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 
 ## Critical gotchas (in priority order)
 
+### 72. i18n (en/fr): own dictionaries, no URL prefix, locale = setting > cookie > Accept-Language > en
+Library choice: a small own solution (`app/src/lib/i18n/`), not next-intl. The app has no `/fr` URL prefix and only two languages; next-intl would add routing
+and middleware for no gain. Typed `dictionaries/en.ts` (source of keys) and `fr.ts` (type `Dictionary` fails tsc on a missing key; `i18n.test.ts` checks key and
+`{placeholder}` parity). Server: `getT()`/`getLocale()` (`lib/i18n/server.ts`, cached per request). Client: `useT()`/`useLocale()` via `I18nProvider` in the root layout.
+Precedence (`resolveLocale`): `user_settings.language` (signed in) > `lang` cookie > Accept-Language first visit > `en`. Invalid values are skipped. Only `en|fr`.
+Setting: `PATCH /api/settings/language` (`setUserLanguage`, validates, updates the existing column, sets the cookie), UI in Settings > Preferences, then `router.refresh()`.
+NO migration: `user_settings.language text NOT NULL DEFAULT 'en'` exists since 007. Validation is in code, not a CHECK, so a third language is a code change only.
+Existing messages, summaries and plans are NOT migrated or translated; they keep the language they were written in.
+Dates: `intlLocale()` (en-GB / fr-FR), `formatDate(..., locale)` and `dayLabel/weekLabel(..., locale)` default to English; pass the locale when a screen is translated.
+Translated: navigation (sidebar, mobile nav, header menu), login, settings, coach chat, chat sessions list/bar, kept notes, voice recorder labels, dashboard, plan (view,
+session/activity cards, generate form, recap), activities (list, detail, stat labels, chart titles, insight card, session notes, file uploader), page `<title>` for
+dashboard/plan/activities. Numbers and dates: `formatDistance(m, 'metric', locale)`, `formatNumber`, `timeAgo(date, tz, locale)`, `dayLabel/weekLabel(..., locale)`,
+`targetSummary(s, locale)`, `buildRecapView(recap, locale)`; sport and session type names via `sportLabel/sessionTypeLabel(t, value)` (`lib/i18n/labels.ts`; unknown
+free-text values are shown as stored). Stored recap reasons/notes are English strings; known ones are translated by pattern in `recap-format.ts`.
+NOT translated (still English): add-by-voice/text panel on Activities, Strava settings/import panel, routes, nutrition, onboarding, home-location editor, most API
+error strings (shown as returned), `<title>` of the other pages, Terms/Privacy, plan session `description`/`ai_notes` and plan title/goal (AI-written data, they keep
+the language they were generated in), activity map. Plan weekday names in the AI prompt context stay English (they are data for the model). Add keys to BOTH dictionaries when translating more.
+e2e: the stub remembers `user_settings.language` per access token (PATCH); use a unique token per test (`e2e/i18n.spec.ts`).
+
+### 73. AI replies follow the saved language, not the spoken or typed one
+`replyLanguageInstruction(language)` (`lib/i18n/locales.ts`) is appended to the coach system prompt (chat and activity insight), plan generation (title, goal, session
+titles and notes), chat summaries and activity-parse assumptions/notes. It says: always reply in English/French regardless of the language the athlete writes or
+speaks, keep tool names, ids and enum values (sport/session types) unchanged. Schema enums stay English. Not verified against a live LLM.
+
+### 74. Voice: Whisper auto-detects (default); Web Speech is opt-in; never `/audio/translations`
+Symptom: French speech came out English-looking. Likely cause (not verified with a live recording): the route pinned `language=en`, which makes Whisper write English.
+Fix (`lib/voice/whisper.ts`, route `api/ai/voice/transcribe`): no `language` parameter, `response_format=verbose_json`, returns `{text, language}`. The saved language is
+sent as a fallback hint and used for ONE retry only when the clip is under 2 s, has fewer than 3 words, or was detected as a language other than en/fr. The text
+stays editable in the composer as before. Still `/audio/transcriptions`; translations would force English.
+Web Speech API (`hooks/use-speech-recognition.ts`, `lib/voice/engine.ts`): implemented but NOT the default. Reasons: it cannot detect the language (needs `lang` up front,
+so it uses the saved language), Chrome/Edge send the audio to a vendor cloud service and need network, Firefox has no support, Safari support is partial. Whisper works on
+every browser and detects the language. Opt-in per device in Settings > Voice input (localStorage `voice:engine`), shown only when the browser has the API.
+Headless Chromium cannot run the real API: e2e only checks wiring with a fake `SpeechRecognition` (replace BOTH `SpeechRecognition` and `webkitSpeechRecognition`; the
+headless browser ships a non-working one). Read-aloud uses `speechLang(locale)` (en-US / fr-FR).
+
 ### 70. Calendar shows unlinked activities as read-only "Completed" cards; per-day Sync; AI matching is a later seam
 Symptom: a run done on a day with no planned session (or a different one) never appeared on the plan calendar.
 Decision: activities not referenced by any `planned_sessions.completed_activity_id` are loaded by `loadActivePlan` (`activities` field, bucketed by the
