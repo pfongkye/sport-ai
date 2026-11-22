@@ -15,7 +15,7 @@ re-learn them the hard way. Read this before touching Docker, Supabase, auth, or
 
 - `app/` — Next.js 16 (App Router, TypeScript, Tailwind 4). All application code.
 - `docker/` — Supabase self-hosted stack + the `app` service. Run compose from here.
-- `supabase/migrations/` — ordered SQL (`001`–`016`). Applied manually, NOT auto-run.
+- `supabase/migrations/` — ordered SQL (`001`–`018`). Applied manually, NOT auto-run.
 - `.kiro/specs/sportai-coaching-app/` — requirements, design, tasks (source of truth for scope).
 
 Run everything with an explicit env file: `docker compose --env-file .env <cmd>` from `docker/`.
@@ -39,6 +39,17 @@ AI-matching seam: a later matcher should set `completed_activity_id` and `status
 the card disappears on the next load once linked.
 e2e: Strava runs server-side, so the browser cannot mock it. `calendar-completed.spec.ts` uses the real not-connected path (stub `strava_connections` is
 empty) and `POST /__e2e/reveal-activities` on the stub to make a hidden fixture activity appear (`planActivities` in `fixtures.mjs`).
+
+### 60. Chat sessions: migration 018 must be applied MANUALLY before deploying
+Chats are rows in `coach_sessions`; `coaching_messages.session_id` links messages to a chat. Kept summaries live in
+`coach_memories`. Migration `supabase/migrations/018_coach_sessions.sql` is NOT auto-run: apply it (idempotent) BEFORE
+deploying this code, or the chat routes return errors. UI: `components/chat/{session-bar,session-list,kept-notes}.tsx`.
+- Delete asks inline: "Delete and keep summary" (one LLM call writes a `coach_memories` note, then the chat is deleted;
+  if summarizing fails nothing is deleted and the user can still "Delete everything"), "Delete everything" (no LLM) or Cancel.
+- Deleting is true deletion: messages and their embeddings are removed. Only the kept summary survives, and the user can
+  edit or delete it under "Kept notes". Chosen option over keeping raw history: a short summary bounds prompt size and privacy.
+- RAG retrieval searches across all sessions of the same user; kept notes are injected into new chats' prompts.
+- e2e: `e2e/chat-sessions.spec.ts` mocks all chat APIs in-spec (stateful); `mockBrowserApis` also mocks sessions/memories.
 
 ### 54. Race goal: the race date is always a slot, code owns the race session, limits come from the distance
 Symptom: a 10 km plan had marathon-sized long runs, no session on a race that fell on a non-training weekday (e.g. Sunday), and a day-before run.

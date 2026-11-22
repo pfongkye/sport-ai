@@ -6,6 +6,13 @@
  * (rows whose user_id differs are invisible).
  */
 type Row = Record<string, unknown>
+/** Reads a column; supports PostgREST JSON paths like `metadata->>kind`. */
+function getCol(r: Row, col: string): unknown {
+  if (!col.includes('->>')) return r[col]
+  const [base, key] = col.split('->>')
+  const obj = r[base] as Row | null | undefined
+  return obj ? obj[key] : undefined
+}
 type Op = 'select' | 'insert' | 'update' | 'delete'
 
 export interface FakeOptions {
@@ -86,11 +93,15 @@ export function makeFakeSupabase(opts: FakeOptions = {}) {
         return chain
       },
       eq(col: string, v: unknown) {
-        filters.push((r) => r[col] === v)
+        filters.push((r) => getCol(r, col) === v)
         return chain
       },
       in(col: string, vs: unknown[]) {
         filters.push((r) => vs.includes(r[col]))
+        return chain
+      },
+      neq(col: string, v: unknown) {
+        filters.push((r) => getCol(r, col) !== v)
         return chain
       },
       is(col: string, v: null) {
