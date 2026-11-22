@@ -13,9 +13,9 @@ interface RetrievedSnippet {
 }
 
 /**
- * Retrieve the most relevant past coaching messages for a query, via the
+ * Retrieve the most relevant past coaching messages for a precomputed query embedding, via the
  * pgvector hybrid search RPC (search_coaching_messages). Best-effort: returns
- * [] if embeddings are unavailable or the RPC errors — never throws.
+ * null if the embedding is missing or the RPC errors — never throws.
  *
  * `admin` should be a service-role client (the RPC is SECURITY DEFINER and we
  * pass p_user_id explicitly, so results stay scoped to the user).
@@ -23,10 +23,9 @@ interface RetrievedSnippet {
 export async function retrieveRelevantContext(
   admin: SupabaseClient<Database>,
   userId: string,
-  query: string,
-  userApiKey?: string | null
+  embedding: number[] | null,
+  options: { sessionId?: string | null; recallOtherChats?: boolean } = {}
 ): Promise<string | null> {
-  const embedding = await embedText(query, userApiKey)
   if (!embedding) return null
 
   try {
@@ -36,6 +35,8 @@ export async function retrieveRelevantContext(
       p_embedding: toPgVector(embedding),
       p_limit: RETRIEVAL_LIMIT,
       p_threshold: SIMILARITY_THRESHOLD,
+      // Chat-scoped unless the chat opted in to recalling other chats.
+      ...(!options.recallOtherChats && options.sessionId ? { p_session_id: options.sessionId } : {}),
     })
     if (error || !data?.length) return null
 

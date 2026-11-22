@@ -5,6 +5,7 @@ import { tzFromCookieHeader } from '@/lib/plan/timezone'
 import { resolveUserAISettings } from '@/lib/ai/provider'
 import { computeReadiness } from '@/lib/ai/readiness'
 import { retrieveRelevantContext, embedForStorage } from '@/lib/ai/memory'
+import { embedText, toPgVector } from '@/lib/ai/embeddings'
 import {
   createChatSession,
   DEFAULT_SESSION_TITLE,
@@ -121,12 +122,14 @@ export async function POST(request: Request) {
     )
   }
 
-  // RAG: retrieve relevant past context for this query and embed the user
-  // message for storage — both best-effort, run in parallel.
-  const [retrievedContext, userEmbedding] = await Promise.all([
-    retrieveRelevantContext(admin, user.id, lastUser.content, aiSettings.userApiKey),
-    embedForStorage(lastUser.content, aiSettings.userApiKey),
-  ])
+  // RAG: embed the user message ONCE (best-effort; null means no retrieval and no stored
+  // embedding), then reuse it for retrieval and for the stored row.
+  const queryEmbedding = await embedText(lastUser.content, aiSettings.userApiKey)
+  const userEmbedding = queryEmbedding ? toPgVector(queryEmbedding) : null
+  const retrievedContext = await retrieveRelevantContext(admin, user.id, queryEmbedding, {
+    sessionId,
+    recallOtherChats: session.recall_other_chats,
+  })
 
   // Persist the user's message immediately (tagged as chat, with embedding).
   await supabase.from('coaching_messages').insert({
