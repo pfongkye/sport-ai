@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { http } from '@/lib/http'
+import { useT } from '@/lib/i18n/client'
 
 export interface CoachMemory {
   id: string
@@ -17,6 +18,7 @@ interface KeptNotesProps {
 }
 
 export function KeptNotes({ memories, onChange }: KeptNotesProps) {
+  const t = useT()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
@@ -34,13 +36,13 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(data.error ?? 'Could not save the note.')
+        setError(data.error ?? t('notes.saveFailed'))
         return
       }
-      onChange(memories.map((x) => (x.id === m.id ? { ...x, ...data.memory } : x)), 'Note saved.')
+      onChange(memories.map((x) => (x.id === m.id ? { ...x, ...data.memory } : x)), t('notes.saved'))
       setEditingId(null)
     } catch {
-      setError('Could not save the note.')
+      setError(t('notes.saveFailed'))
     } finally {
       setBusy(false)
     }
@@ -53,26 +55,26 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
       const res = await http(`/api/ai/chat/memories/${m.id}`, { method: 'DELETE' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setError(data.error ?? 'Could not delete the note.')
+        setError(data.error ?? t('notes.deleteFailed'))
         return
       }
-      onChange(memories.filter((x) => x.id !== m.id), 'Note deleted.')
+      onChange(memories.filter((x) => x.id !== m.id), t('notes.deleted'))
       setConfirmingId(null)
     } catch {
-      setError('Could not delete the note.')
+      setError(t('notes.deleteFailed'))
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <section aria-label="Kept notes" className="space-y-2">
-      <h2 className="text-sm font-semibold text-[var(--foreground)]">Kept notes</h2>
+    <section aria-label={t('notes.title')} className="space-y-2">
+      <h2 className="text-sm font-semibold text-[var(--foreground)]">{t('notes.title')}</h2>
       <p className="text-xs text-[var(--muted-foreground)]">
-        The coach reads these notes in new chats. Edit or delete any note you no longer want it to use.
+        {t('notes.help')}
       </p>
       {memories.length === 0 && (
-        <p className="text-sm text-[var(--muted-foreground)]">No kept notes yet.</p>
+        <p className="text-sm text-[var(--muted-foreground)]">{t('notes.empty')}</p>
       )}
       <ul className="space-y-2">
         {memories.map((m) => (
@@ -83,7 +85,7 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
                 <textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  aria-label={`Edit note ${m.title}`}
+                  aria-label={t('notes.editAria', { title: m.title })}
                   rows={5}
                   maxLength={2000}
                   className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
@@ -95,10 +97,10 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
                 )}
                 <div className="flex gap-2">
                   <Button type="button" className="min-h-11" disabled={busy || !draft.trim()} onClick={() => void save(m)}>
-                    Save
+                    {t('notes.save')}
                   </Button>
                   <Button type="button" variant="ghost" className="min-h-11" disabled={busy} onClick={() => setEditingId(null)}>
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </div>
               </>
@@ -108,10 +110,10 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
                 {confirmingId === m.id ? (
                   <div
                     role="alertdialog"
-                    aria-label={`Confirm deleting note ${m.title}`}
+                    aria-label={t('notes.confirmDeleteAria', { title: m.title })}
                     className="space-y-2 rounded-md border border-[var(--destructive)] p-2"
                   >
-                    <p className="text-xs text-[var(--foreground)]">Delete this note? The coach will forget it.</p>
+                    <p className="text-xs text-[var(--foreground)]">{t('notes.confirmDelete')}</p>
                     {error && (
                       <p role="alert" className="text-xs text-[var(--destructive)]">
                         {error}
@@ -119,10 +121,10 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
                     )}
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" variant="destructive" className="min-h-11" disabled={busy} onClick={() => void remove(m)}>
-                        Delete note
+                        {t('notes.deleteNote')}
                       </Button>
                       <Button type="button" variant="ghost" className="min-h-11" disabled={busy} autoFocus onClick={() => setConfirmingId(null)}>
-                        Keep
+                        {t('notes.keep')}
                       </Button>
                     </div>
                   </div>
@@ -132,26 +134,26 @@ export function KeptNotes({ memories, onChange }: KeptNotesProps) {
                       type="button"
                       variant="outline"
                       className="min-h-11"
-                      aria-label={`Edit note ${m.title}`}
+                      aria-label={t('notes.editAria', { title: m.title })}
                       onClick={() => {
                         setError(null)
                         setDraft(m.summary)
                         setEditingId(m.id)
                       }}
                     >
-                      Edit
+                      {t('notes.edit')}
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       className="min-h-11 text-[var(--destructive)]"
-                      aria-label={`Delete note ${m.title}`}
+                      aria-label={t('notes.deleteAria', { title: m.title })}
                       onClick={() => {
                         setError(null)
                         setConfirmingId(m.id)
                       }}
                     >
-                      Delete
+                      {t('notes.delete')}
                     </Button>
                   </div>
                 )}

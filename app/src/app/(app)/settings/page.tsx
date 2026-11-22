@@ -2,6 +2,8 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { StravaSettings } from '@/components/strava/strava-settings'
 import { HomeLocationEditor } from '@/components/routes/home-location-editor'
+import { Preferences } from '@/components/settings/preferences'
+import { getT } from '@/lib/i18n/server'
 
 export const metadata: Metadata = { title: 'Settings' }
 
@@ -11,6 +13,7 @@ export default async function SettingsPage({
   searchParams: Promise<{ strava?: string }>
 }) {
   const { strava } = await searchParams
+  const { t } = await getT()
   const supabase = await createClient()
   const {
     data: { user },
@@ -35,22 +38,29 @@ export default async function SettingsPage({
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-2xl">
       <div>
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">Settings</h1>
+        <h1 className="text-2xl font-bold text-[var(--foreground)]">{t('settings.title')}</h1>
         <p className="text-sm text-[var(--muted-foreground)] mt-1">
-          Connect data sources and manage your preferences.
+          {t('settings.subtitle')}
         </p>
       </div>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-[var(--muted-foreground)] uppercase tracking-wide">
-          Integrations
+          {t('settings.preferences')}
+        </h2>
+        <Preferences />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-[var(--muted-foreground)] uppercase tracking-wide">
+          {t('settings.integrations')}
         </h2>
         <StravaSettings initialConnection={connection ?? null} initialStatus={strava} />
       </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-[var(--muted-foreground)] uppercase tracking-wide">
-          Location
+          {t('settings.location')}
         </h2>
         <HomeLocationEditor
           initial={{

@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { intlLocale, type Locale } from '@/lib/i18n/locales'
 
 export interface ChatSession {
   id: string
@@ -21,11 +23,13 @@ interface SessionListProps {
   onDelete: (id: string, keepSummary: boolean) => Promise<string | null>
 }
 
-function dateLabel(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+function dateLabel(iso: string, locale: Locale) {
+  return new Date(iso).toLocaleDateString(intlLocale(locale), { month: 'short', day: 'numeric' })
 }
 
 export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: SessionListProps) {
+  const t = useT()
+  const locale = useLocale()
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [pending, setPending] = useState<'keep' | 'all' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,7 +44,7 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
   }
 
   if (sessions.length === 0) {
-    return <p className="text-sm text-[var(--muted-foreground)]">No chats yet.</p>
+    return <p className="text-sm text-[var(--muted-foreground)]">{t('coach.noChats')}</p>
   }
 
   return (
@@ -62,12 +66,12 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
                 )}
               >
                 <span className="block truncate text-sm font-medium text-[var(--foreground)]">{s.title}</span>
-                <span className="block text-xs text-[var(--muted-foreground)]">{dateLabel(s.updated_at)}</span>
+                <span className="block text-xs text-[var(--muted-foreground)]">{dateLabel(s.updated_at, locale)}</span>
               </button>
               <button
                 type="button"
                 disabled={busy}
-                aria-label={`Delete chat ${s.title}`}
+                aria-label={t('coach.deleteChatAria', { title: s.title })}
                 aria-expanded={confirming}
                 onClick={() => {
                   setError(null)
@@ -85,12 +89,11 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
             {confirming && (
               <div
                 role="alertdialog"
-                aria-label={`Confirm deleting chat ${s.title}`}
+                aria-label={t('coach.confirmDeleteAria', { title: s.title })}
                 className="m-2 space-y-2 rounded-md border border-[var(--destructive)] p-2"
               >
                 <p className="text-xs text-[var(--foreground)]">
-                  This chat will be deleted and cannot be restored. Keep a short summary so the coach
-                  remembers the key points?
+                  {t('coach.deleteExplain')}
                 </p>
                 {error && (
                   <p role="alert" className="text-xs text-[var(--destructive)]">
@@ -104,7 +107,7 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
                     disabled={pending !== null}
                     onClick={() => void run(s.id, true)}
                   >
-                    {pending === 'keep' ? 'Summarizing…' : 'Delete and keep summary'}
+                    {pending === 'keep' ? t('coach.summarizingShort') : t('coach.deleteKeep')}
                   </Button>
                   <Button
                     type="button"
@@ -113,7 +116,7 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
                     disabled={pending !== null}
                     onClick={() => void run(s.id, false)}
                   >
-                    {pending === 'all' ? 'Deleting…' : 'Delete everything'}
+                    {pending === 'all' ? t('coach.deletingShort') : t('coach.deleteAll')}
                   </Button>
                   <Button
                     type="button"
@@ -123,7 +126,7 @@ export function SessionList({ sessions, activeId, busy, onSelect, onDelete }: Se
                     autoFocus
                     onClick={() => setConfirmingId(null)}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </div>
               </div>

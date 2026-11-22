@@ -1,6 +1,7 @@
 import { formatDistance, formatDuration } from '@/lib/utils'
 import { diffDays } from '@/lib/plan/dates'
 import { MIN_GOAL_LEAD_DAYS } from '@/lib/ai/workflows/plan-skeleton'
+import { intlLocale, type Locale } from '@/lib/i18n/locales'
 
 /** Race date to pre-fill when regenerating: the old end date, unless it is too close or past (submit would fail). */
 export function prefillGoalDate(endDate: string, today: string): string {
@@ -8,8 +9,8 @@ export function prefillGoalDate(endDate: string, today: string): string {
 }
 
 /** `2026-10-12` → "Mon 12 Oct". UTC-based so the label never shifts with the viewer's timezone. */
-export function dayLabel(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
+export function dayLabel(iso: string, locale: Locale = 'en'): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString(intlLocale(locale), {
     timeZone: 'UTC',
     weekday: 'short',
     day: 'numeric',
@@ -17,9 +18,9 @@ export function dayLabel(iso: string): string {
   })
 }
 
-export function weekLabel(weekStart: string, weekEnd: string): string {
+export function weekLabel(weekStart: string, weekEnd: string, locale: Locale = 'en'): string {
   const f = (iso: string) =>
-    new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
+    new Date(`${iso}T00:00:00Z`).toLocaleDateString(intlLocale(locale), {
       timeZone: 'UTC',
       day: 'numeric',
       month: 'short',

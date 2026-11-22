@@ -5,6 +5,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { http } from '@/lib/http'
 import { cn } from '@/lib/utils'
+import { useLocale, useT } from '@/lib/i18n/client'
+import { speechLang } from '@/lib/i18n/locales'
 import { VoiceRecorder } from './voice-recorder'
 import { SessionBar } from './session-bar'
 import { SessionList, type ChatSession } from './session-list'
@@ -16,14 +18,16 @@ interface Msg {
   content: string
 }
 
-const SUGGESTIONS = [
-  'How was my last run?',
-  "What should I do today?",
-  'Am I ready for a hard session?',
-  'How is my training load trending?',
-]
+const SUGGESTION_KEYS = [
+  'coach.suggestion1',
+  'coach.suggestion2',
+  'coach.suggestion3',
+  'coach.suggestion4',
+] as const
 
 export function ChatInterface() {
+  const t = useT()
+  const locale = useLocale()
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -115,7 +119,7 @@ export function ChatInterface() {
         setSessionId(list[0].id)
         void loadHistory(list[0].id)
       } else {
-        setLoadError('Could not load your chats. Reload the page to try again.')
+        setLoadError(t('coach.loadFailed'))
         setLoadingHistory(false)
       }
     }
@@ -123,7 +127,7 @@ export function ChatInterface() {
     return () => {
       cancelled = true
     }
-  }, [createSession, loadHistory])
+  }, [createSession, loadHistory, t])
 
   // Kept notes load when the panel is first opened.
   const memoriesLoaded = useRef(false)
@@ -146,14 +150,14 @@ export function ChatInterface() {
     setSessionId(id)
     setPanelOpen(false)
     void loadHistory(id)
-    setStatus('Chat opened.')
+    setStatus(t('coach.chatOpened'))
   }
 
   async function newChat() {
     if (streaming) return
     const created = await createSession()
     if (!created) {
-      setStatus('Could not start a new chat.')
+      setStatus(t('coach.newChatFailed'))
       return
     }
     setSessions((prev) => [created, ...prev])
@@ -162,26 +166,26 @@ export function ChatInterface() {
     setMessages([])
     setLoadingHistory(false)
     setPanelOpen(false)
-    setStatus('New chat started.')
+    setStatus(t('coach.newChatStarted'))
   }
 
   /** Resolves to an error message, or null on success. */
   async function deleteSession(id: string, keepSummary: boolean): Promise<string | null> {
-    setStatus(keepSummary ? 'Summarizing the chat…' : 'Deleting the chat…')
+    setStatus(keepSummary ? t('coach.summarizing') : t('coach.deleting'))
     try {
       const r = await http(`/api/ai/chat/sessions/${id}?keepHistory=${keepSummary}`, { method: 'DELETE' })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) {
-        const msg = d.error ?? 'Could not delete the chat.'
-        setStatus(keepSummary ? `Could not keep a summary. The chat was not deleted. ${msg}` : msg)
+        const msg = d.error ?? t('coach.deleteFailed')
+        setStatus(keepSummary ? t('coach.keepFailedStatus', { message: msg }) : msg)
         return keepSummary
-          ? `${msg} The chat was not deleted. You can try again or choose Delete everything.`
+          ? t('coach.keepFailed', { message: msg })
           : msg
       }
       const remaining = sessions.filter((s) => s.id !== id)
       setSessions(remaining)
       if (d.memory) setMemories((prev) => [d.memory as CoachMemory, ...prev])
-      setStatus(keepSummary ? 'Chat deleted. A summary was added to Kept notes.' : 'Chat deleted.')
+      setStatus(keepSummary ? t('coach.deletedWithSummary') : t('coach.deleted'))
       if (id === sessionId) {
         if (remaining[0]) {
           setSessionId(remaining[0].id)
@@ -196,14 +200,14 @@ export function ChatInterface() {
             setLoadingHistory(false)
           } else {
             setSessionId(null)
-            setLoadError('Could not start a new chat. Reload the page to try again.')
+            setLoadError(t('coach.newChatReload'))
           }
         }
       }
       return null
     } catch {
-      setStatus('Could not delete the chat.')
-      return 'Could not delete the chat.'
+      setStatus(t('coach.deleteFailed'))
+      return t('coach.deleteFailed')
     }
   }
 
@@ -229,10 +233,10 @@ export function ChatInterface() {
       window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(clean)
       u.rate = 1.05
-      u.lang = 'en-US' // app is English-only for now; TODO(i18n): user language
+      u.lang = speechLang(locale)
       window.speechSynthesis.speak(u)
     },
-    [speakEnabled]
+    [speakEnabled, locale]
   )
 
   // Keep the view pinned to the bottom, but only if the user is already near it.
@@ -290,7 +294,7 @@ export function ChatInterface() {
       })
 
       if (!res.ok || !res.body) {
-        const err = await res.json().catch(() => ({ error: 'Request failed' }))
+        const err = await res.json().catch(() => ({ error: t('coach.requestFailed') }))
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
@@ -315,14 +319,14 @@ export function ChatInterface() {
       if (!acc.trim()) {
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: '⚠️ No response. Try again.' } : m
+            m.id === assistantId ? { ...m, content: t('coach.noResponse') } : m
           )
         )
       } else {
         speak(acc)
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Network error'
+      const message = err instanceof Error ? err.message : t('coach.networkError')
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, content: `⚠️ ${message}` } : m))
       )
@@ -337,7 +341,7 @@ export function ChatInterface() {
   return (
     <div className="flex flex-col h-full">
       <SessionBar
-        title={sessions.find((x) => x.id === sessionId)?.title ?? 'New chat'}
+        title={sessions.find((x) => x.id === sessionId)?.title ?? t('coach.newChat')}
         open={panelOpen}
         busy={streaming}
         canCreate={messages.length > 0}
@@ -353,8 +357,8 @@ export function ChatInterface() {
           className="shrink-0 max-h-[55%] overflow-y-auto border-b border-[var(--border)] bg-[var(--card)] px-4 md:px-6 py-3"
         >
           <div className="max-w-2xl mx-auto space-y-5">
-            <section aria-label="Chats" className="space-y-2">
-              <h2 className="text-sm font-semibold text-[var(--foreground)]">Chats</h2>
+            <section aria-label={t('coach.chats')} className="space-y-2">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">{t('coach.chats')}</h2>
               <SessionList
                 sessions={sessions}
                 activeId={sessionId}
@@ -377,7 +381,7 @@ export function ChatInterface() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
         <div className="max-w-2xl mx-auto space-y-4">
           {loadingHistory && (
-            <p className="text-center text-sm text-[var(--muted-foreground)]">Loading…</p>
+            <p className="text-center text-sm text-[var(--muted-foreground)]">{t('coach.loading')}</p>
           )}
 
           {loadError && (
@@ -392,19 +396,19 @@ export function ChatInterface() {
                 🤖
               </p>
               <div>
-                <p className="font-medium text-[var(--foreground)]">Ask your AI coach</p>
+                <p className="font-medium text-[var(--foreground)]">{t('coach.askTitle')}</p>
                 <p className="text-sm text-[var(--muted-foreground)] mt-1">
-                  It knows your activities, training load, and goal.
+                  {t('coach.askSubtitle')}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2 justify-center pt-2">
-                {SUGGESTIONS.map((s) => (
+                {SUGGESTION_KEYS.map((key) => (
                   <button
-                    key={s}
-                    onClick={() => send(s)}
+                    key={key}
+                    onClick={() => send(t(key))}
                     className="rounded-full border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
                   >
-                    {s}
+                    {t(key)}
                   </button>
                 ))}
               </div>
@@ -469,7 +473,7 @@ export function ChatInterface() {
                 send(input)
               }
             }}
-            placeholder="Ask your coach, or tap the mic…"
+            placeholder={t('coach.placeholder')}
             rows={1}
             className="flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-40 overflow-y-auto"
           />
@@ -477,8 +481,8 @@ export function ChatInterface() {
             type="button"
             onClick={() => setSpeakEnabled((s) => !s)}
             aria-pressed={speakEnabled}
-            aria-label={speakEnabled ? 'Disable read-aloud' : 'Enable read-aloud'}
-            title={speakEnabled ? 'Read-aloud on' : 'Read-aloud off'}
+            aria-label={speakEnabled ? t('coach.readAloudOn') : t('coach.readAloudOff')}
+            title={speakEnabled ? t('coach.readAloudOnTitle') : t('coach.readAloudOffTitle')}
             className={cn(
               'shrink-0 flex items-center justify-center size-10 rounded-xl transition-colors',
               speakEnabled
@@ -503,7 +507,7 @@ export function ChatInterface() {
             type="submit"
             disabled={streaming || !sessionId || !input.trim()}
             className="shrink-0 flex items-center justify-center size-10 rounded-xl bg-[var(--primary)] text-white disabled:opacity-40 transition-opacity"
-            aria-label="Send"
+            aria-label={t('coach.send')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden>
               <line x1="22" y1="2" x2="11" y2="13" />
@@ -517,8 +521,9 @@ export function ChatInterface() {
 }
 
 function TypingDots() {
+  const t = useT()
   return (
-    <span className="inline-flex gap-1 py-1" aria-label="Coach is typing">
+    <span className="inline-flex gap-1 py-1" aria-label={t('coach.typing')}>
       {[0, 1, 2].map((i) => (
         <span
           key={i}

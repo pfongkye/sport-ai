@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/lib/i18n/client'
 
 interface LoginFormProps {
   redirectTo?: string
@@ -41,6 +42,7 @@ const GoogleIcon = (
 
 export function LoginForm({ redirectTo }: LoginFormProps) {
   const [loading, setLoading] = useState(false)
+  const t = useT()
   const supabase = createClient()
 
   async function signInWithGoogle() {
@@ -66,7 +68,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
         className="w-full h-11 gap-3 font-medium"
         onClick={signInWithGoogle}
         disabled={loading}
-        aria-label="Sign in with Google"
+        aria-label={t('login.googleAria')}
       >
         {loading ? (
           <svg
@@ -81,7 +83,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
         ) : (
           GoogleIcon
         )}
-        Continue with Google
+        {t('login.google')}
       </Button>
     </div>
   )

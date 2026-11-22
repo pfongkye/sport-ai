@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { intlLocale, type Locale } from '@/lib/i18n/locales'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -63,16 +64,17 @@ export const SESSION_TYPE_LABELS: Record<string, string> = {
 }
 
 /** Format a date to a readable string */
-// TODO(i18n): use the active locale (user_settings.language) instead of hardcoded en-GB.
 export function formatDate(
   date: string | Date,
   format: 'short' | 'long' = 'short',
   /** IANA zone to show the date in; omit to use the runtime's zone (UTC on the server). */
-  timeZone?: string
+  timeZone?: string,
+  /** Active locale; defaults to English (en-GB output, as before). */
+  locale: Locale = 'en'
 ): string {
   const d = typeof date === 'string' ? new Date(date) : date
   if (format === 'long') {
-    return d.toLocaleDateString('en-GB', {
+    return d.toLocaleDateString(intlLocale(locale), {
       timeZone,
       weekday: 'long',
       day: 'numeric',
@@ -80,7 +82,7 @@ export function formatDate(
       year: 'numeric',
     })
   }
-  return d.toLocaleDateString('en-GB', {
+  return d.toLocaleDateString(intlLocale(locale), {
     timeZone,
     day: 'numeric',
     month: 'short',
