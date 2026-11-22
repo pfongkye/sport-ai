@@ -42,8 +42,8 @@ export const en = {
   'settings.languageHelp':
     'Used for the app, the coach replies and generated plans. Existing messages and plans keep the language they were written in.',
   'settings.voiceEngine': 'Voice input',
-  'settings.voiceWhisper': 'Server transcription (detects your language)',
-  'settings.voiceBrowser': 'Browser speech recognition (uses your language setting)',
+  'settings.voiceWhisper': 'Server (detects your language)',
+  'settings.voiceBrowser': 'Browser (uses your language setting)',
   'settings.voiceHelp':
     'Server transcription works in every browser and detects the language you speak. Browser speech recognition is live, but it needs the language set above, may send audio to the browser vendor, and is not available everywhere. Either way you can edit the text before using it.',
   'settings.languageError': 'Could not save the language. Try again.',

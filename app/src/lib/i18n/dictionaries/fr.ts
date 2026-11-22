@@ -40,8 +40,8 @@ export const fr: Dictionary = {
   'settings.languageHelp':
     "Utilisée pour l'application, les réponses du coach et les plans générés. Les messages et plans existants gardent la langue dans laquelle ils ont été écrits.",
   'settings.voiceEngine': 'Saisie vocale',
-  'settings.voiceWhisper': 'Transcription par le serveur (détecte votre langue)',
-  'settings.voiceBrowser': 'Reconnaissance vocale du navigateur (utilise la langue choisie)',
+  'settings.voiceWhisper': 'Serveur (détecte la langue)',
+  'settings.voiceBrowser': 'Navigateur (langue choisie)',
   'settings.voiceHelp':
     "La transcription par le serveur fonctionne dans tous les navigateurs et détecte la langue que vous parlez. La reconnaissance vocale du navigateur est instantanée, mais elle exige la langue définie ci-dessus, peut envoyer l'audio à l'éditeur du navigateur et n'est pas disponible partout. Dans les deux cas, vous pouvez modifier le texte avant de l'utiliser.",
   'settings.languageError': "Impossible d'enregistrer la langue. Réessayez.",
@@ -49,7 +49,7 @@ export const fr: Dictionary = {
   // Coach / chat
   'coach.title': 'Coach IA',
   'coach.chats': 'Discussions',
-  'coach.newChat': 'Nouvelle discussion',
+  'coach.newChat': 'Nouveau chat',
   'coach.noChats': 'Aucune discussion pour le moment.',
   'coach.loading': 'Chargement…',
   'coach.askTitle': 'Posez une question à votre coach IA',

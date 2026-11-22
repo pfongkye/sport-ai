@@ -7,6 +7,7 @@
 //   GET /rest/v1/<table>   -> rows from fixtures.TABLES (filters are ignored;
 //                             single/maybeSingle -> first row, `limit` honoured)
 //   DELETE /rest/v1/planned_sessions -> removes the matching fixture rows (per access token)
+//   PATCH /rest/v1/user_settings {language} -> remembered per access token (GET returns it back)
 //   other /rest/v1 writes  -> 201 with an empty body
 //
 // Plan state is opt-in and per bearer token: tokens starting with `e2e-plan-` see an active plan
@@ -73,8 +74,25 @@ http
         }
         return send(res, 200, single ? hit[0] : hit)
       }
+      if (req.method === 'PATCH' && table === 'user_settings') {
+        let raw = ''
+        req.on('data', (c) => (raw += c))
+        req.on('end', () => {
+          try {
+            const { language } = JSON.parse(raw || '{}')
+            if (typeof language === 'string') state.language = language
+          } catch {
+            // ignore malformed bodies, like any other stubbed write
+          }
+          send(res, 204)
+        })
+        return
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 201)
       let rows = TABLES[table] ?? []
+      if (table === 'user_settings' && state.language) {
+        rows = [{ user_id: USER.id, language: state.language, timezone: 'UTC' }]
+      }
       if (plan && table === 'training_plans') rows = plan.training_plans
       if (plan && table === 'activities') rows = planActivities().filter((a) => !a.hidden || state.revealed)
       if (plan && table === 'planned_sessions') rows = applyFilters(liveSessions(), url.searchParams)
