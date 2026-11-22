@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { resolveUserAISettings } from '@/lib/ai/provider'
+import { transcribeAudio, WhisperError } from '@/lib/voice/whisper'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -9,23 +10,17 @@ const MAX_AUDIO_BYTES = 25 * 1024 * 1024 // Whisper API limit
 
 /**
  * POST /api/ai/voice/transcribe
- * Multipart form with field "audio" (a recorded blob).
- * Returns { text } — transcribed in the SPOKEN language (no translation).
+ * Multipart form: "audio" (a recorded blob) and optional "language" (the athlete's saved
+ * language, 'en' | 'fr', used only as a fallback hint).
+ * Returns { text, language } where `language` is the detected (or hinted) ISO-639-1 code.
  *
- * DECISION (do not change without asking the user): use `/audio/transcriptions`
- * with an explicit `language` hint. We deliberately do NOT use
- * `/audio/translations` (which force-outputs English) — the user chose
- * transcription so the text stays in the language spoken. Whisper's
- * auto-detection can misfire on short/accented clips (e.g. English mis-detected
- * as French), so we pin the expected language. English-only for now → `language=en`.
- *
- * When i18n lands: source the hint from the user's language preference
- * (user_settings.language) instead of the hardcoded default below.
+ * DECISION (do not change without asking the user): `/audio/transcriptions`, never
+ * `/audio/translations`. The language is auto-detected (no pinned `language`), so the
+ * text stays in the language spoken. See lib/voice/whisper.ts for the retry rules.
  *
  * Whisper is OpenAI-only, so this always uses the OpenAI key (user's if set for
  * the openai provider, else the system key) regardless of the chat provider.
  */
-const TRANSCRIBE_LANGUAGE = 'en' // ISO-639-1; TODO(i18n): use user_settings.language
 export async function POST(request: Request) {
   const supabase = await createClient()
   const {
@@ -62,40 +57,18 @@ export async function POST(request: Request) {
     )
   }
 
-  // Forward to OpenAI Whisper. Re-wrap the blob so the multipart filename/type
-  // are set correctly for the API.
-  const buffer = Buffer.from(await audio.arrayBuffer())
-  const oaForm = new FormData()
-  oaForm.append('file', new Blob([buffer], { type: audio.type || 'audio/webm' }), 'audio.webm')
-  oaForm.append('model', 'whisper-1')
-  oaForm.append('response_format', 'json')
-  // Pin the language so Whisper doesn't mis-detect (e.g. English → French) on
-  // short/accented clips. This is a spoken-language HINT — text stays in the
-  // language spoken. Do NOT switch to /audio/translations (see file header).
-  oaForm.append('language', TRANSCRIBE_LANGUAGE)
-
-  let text = ''
   try {
-    // Transcription (NOT translation) — preserves the spoken language.
-    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}` },
-      body: oaForm,
+    const result = await transcribeAudio({
+      audio: new Blob([Buffer.from(await audio.arrayBuffer())], { type: audio.type || 'audio/webm' }),
+      apiKey: openaiKey,
+      hint: form.get('language') ?? settings?.language,
     })
-    if (!res.ok) {
-      const errBody = await res.text()
-      console.error('[voice/transcribe] whisper error', res.status, errBody.slice(0, 300))
-      return NextResponse.json(
-        { error: `Transcription failed (${res.status})` },
-        { status: 502 }
-      )
-    }
-    const json = (await res.json()) as { text?: string }
-    text = (json.text ?? '').trim()
+    return NextResponse.json({ text: result.text, language: result.language })
   } catch (err) {
+    if (err instanceof WhisperError) {
+      return NextResponse.json({ error: err.message }, { status: 502 })
+    }
     console.error('[voice/transcribe] request failed', err)
     return NextResponse.json({ error: 'Transcription request failed' }, { status: 502 })
   }
-
-  return NextResponse.json({ text })
 }
