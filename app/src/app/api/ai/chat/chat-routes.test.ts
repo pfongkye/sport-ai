@@ -16,7 +16,7 @@ vi.mock('@/lib/ai/chat-sessions/summarize', async (orig) => ({
 }))
 
 import { GET as listSessions, POST as createSession } from './sessions/route'
-import { DELETE as deleteSession } from './sessions/[id]/route'
+import { DELETE as deleteSession, PATCH as patchSession } from './sessions/[id]/route'
 import { GET as listMemories } from './memories/route'
 import { PATCH as patchMemory, DELETE as deleteMemory } from './memories/[id]/route'
 import { GET as history } from './history/route'
@@ -66,6 +66,29 @@ describe('sessions list/create', () => {
     const { session } = await res.json()
     expect(session.title).toBe('New chat')
     expect(current!.tables.coach_sessions.find((s) => s.id === session.id)?.user_id).toBe('u1')
+  })
+})
+
+describe('PATCH sessions/[id]', () => {
+  it('401 signed out', async () => {
+    authUser = null
+    expect((await patchSession(req('PATCH', 'http://x/api', { recallOtherChats: true }), ctx('s1'))).status).toBe(401)
+  })
+  it('400 for a missing or non-boolean value', async () => {
+    expect((await patchSession(req('PATCH', 'http://x/api', {}), ctx('s1'))).status).toBe(400)
+    expect((await patchSession(req('PATCH', 'http://x/api', { recallOtherChats: 'yes' }), ctx('s1'))).status).toBe(400)
+    expect((await patchSession(new Request('http://x/api', { method: 'PATCH', body: 'nope' }), ctx('s1'))).status).toBe(400)
+  })
+  it('404 for unknown and foreign ids, leaving them untouched', async () => {
+    expect((await patchSession(req('PATCH', 'http://x/api', { recallOtherChats: true }), ctx('nope'))).status).toBe(404)
+    expect((await patchSession(req('PATCH', 'http://x/api', { recallOtherChats: true }), ctx('s9'))).status).toBe(404)
+    expect(current!.tables.coach_sessions.find((s) => s.id === 's9')?.recall_other_chats).toBeUndefined()
+  })
+  it('updates the own session', async () => {
+    const res = await patchSession(req('PATCH', 'http://x/api', { recallOtherChats: true }), ctx('s1'))
+    expect(res.status).toBe(200)
+    expect((await res.json()).session.recall_other_chats).toBe(true)
+    expect(current!.tables.coach_sessions.find((s) => s.id === 's1')?.recall_other_chats).toBe(true)
   })
 })
 

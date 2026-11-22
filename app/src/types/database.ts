@@ -315,6 +315,7 @@ export type _Database = {
           title: string
           created_at: string
           updated_at: string
+          recall_other_chats: boolean
         }
         Insert: {
           id?: string
@@ -322,10 +323,12 @@ export type _Database = {
           title?: string
           created_at?: string
           updated_at?: string
+          recall_other_chats?: boolean
         }
         Update: {
           title?: string
           updated_at?: string
+          recall_other_chats?: boolean
         }
       }
       coach_memories: {
