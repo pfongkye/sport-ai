@@ -547,6 +547,8 @@ start another. Deleting asks whether to keep a short summary so the coach rememb
 listed under **Kept notes**, where you can edit or delete them. This needs migration `018_coach_sessions.sql`, applied
 manually before deploying: `docker exec -i sportai-db psql -U postgres -d postgres < supabase/migrations/018_coach_sessions.sql`.
 If chats fail to load after an upgrade, the migration is the first thing to check.
+Coach retrieval is per chat: a new chat starts clean and only recalls its own messages, activity notes and Kept notes. Turn on "Use other chats as memory" in the Chats panel to let a chat also recall your other chats.
+This needs migration `019_coach_retrieval.sql` (also manual; apply without `psql -1` because it builds an index concurrently).
 
 Set a **home location** in Settings → Location to use as the default route start. You can also
 pick "My location" (uses the browser's geolocation) or type a place on the Routes page.

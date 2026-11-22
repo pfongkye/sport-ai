@@ -15,7 +15,7 @@ re-learn them the hard way. Read this before touching Docker, Supabase, auth, or
 
 - `app/` — Next.js 16 (App Router, TypeScript, Tailwind 4). All application code.
 - `docker/` — Supabase self-hosted stack + the `app` service. Run compose from here.
-- `supabase/migrations/` — ordered SQL (`001`–`018`). Applied manually, NOT auto-run.
+- `supabase/migrations/` — ordered SQL (`001`–`019`). Applied manually, NOT auto-run.
 - `.kiro/specs/sportai-coaching-app/` — requirements, design, tasks (source of truth for scope).
 
 Run everything with an explicit env file: `docker compose --env-file .env <cmd>` from `docker/`.
@@ -23,6 +23,16 @@ Run everything with an explicit env file: `docker compose --env-file .env <cmd>`
 ---
 
 ## Critical gotchas (in priority order)
+
+### 71. Coach retrieval: one embedding per message, per-chat scope, HNSW index (migration 019, apply MANUALLY)
+Symptom: a new chat "remembered" other chats, each message paid for two identical embedding calls, and similarity search on the IVFFlat index (lists=100, probes=1, built on an empty table) could miss rows.
+Cause: the chat route embedded the user message twice (retrieval and storage) and the RPC searched all of a user's rows.
+Fix: the route calls `embedText` once and passes the vector to `retrieveRelevantContext(admin, userId, embedding, {sessionId, recallOtherChats})` and to the stored row.
+`coach_sessions.recall_other_chats` (default false, `PATCH /api/ai/chat/sessions/[id]` with `{recallOtherChats: boolean}`) controls scope: off sends `p_session_id`, so the
+RPC returns that chat's rows plus rows with no session (mirrored activity notes); on omits it (all rows). Kept notes in `coach_memories` always apply. Threshold 0.3 and limit 5 unchanged.
+Migration `019_coach_retrieval.sql` adds the column, replaces the RPC (drops the old 6-arg signature), and swaps IVFFlat for HNSW. It uses `CREATE INDEX CONCURRENTLY`, so apply it
+WITHOUT `psql -1` and not inside BEGIN; a failed build leaves an INVALID index to drop and re-run. Apply BEFORE deploying: the RPC call with `p_session_id` fails on the old function.
+HNSW filters by user/session after the index scan (ef_search 40); `hnsw.iterative_scan` (pgvector >= 0.8) is documented in the migration but not set.
 
 ### 70. Calendar shows unlinked activities as read-only "Completed" cards; per-day Sync; AI matching is a later seam
 Symptom: a run done on a day with no planned session (or a different one) never appeared on the plan calendar.
@@ -48,7 +58,7 @@ deploying this code, or the chat routes return errors. UI: `components/chat/{ses
   if summarizing fails nothing is deleted and the user can still "Delete everything"), "Delete everything" (no LLM) or Cancel.
 - Deleting is true deletion: messages and their embeddings are removed. Only the kept summary survives, and the user can
   edit or delete it under "Kept notes". Chosen option over keeping raw history: a short summary bounds prompt size and privacy.
-- RAG retrieval searches across all sessions of the same user; kept notes are injected into new chats' prompts.
+- RAG retrieval is scoped to the current chat by default (see #71); kept notes are injected into new chats' prompts.
 - e2e: `e2e/chat-sessions.spec.ts` mocks all chat APIs in-spec (stateful); `mockBrowserApis` also mocks sessions/memories.
 
 ### 54. Race goal: the race date is always a slot, code owns the race session, limits come from the distance
