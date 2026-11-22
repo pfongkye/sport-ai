@@ -1,6 +1,7 @@
 import { generateObject } from 'ai'
 import { resolveUserAISettings, resolveModel } from './provider'
 import { parsedDraftSchema, type ParsedDraft } from '@/lib/activities/draft-schema'
+import { DEFAULT_LOCALE, LANGUAGE_NAMES, isLocale } from '@/lib/i18n/locales'
 import type { ActivityDraft } from '@/types/activity'
 
 /** Bounded parse time so a slow model doesn't hang the request (spec Req 6.2). */
@@ -91,6 +92,7 @@ export async function parseActivity(
     'CRITICAL: never invent or estimate a metric that was not stated. Leave anything unstated as null (or [] for strength). Do not guess HR, pace, calories, RPE, etc.',
     'Put any leftover descriptive detail (how it felt, conditions) into notes; otherwise notes=null.',
     'Set confidence="high" only when the sport and the main metrics are clearly stated; otherwise "low".',
+    `The athlete may speak any language. Write assumptions and notes in ${LANGUAGE_NAMES[isLocale(settings?.language) ? settings.language : DEFAULT_LOCALE]}; keep sport types and field values as specified.`,
   ].join('\n')
 
   let parsed: ParsedDraft
